@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import GamePhase, GameState
 from ai_werewolf.graph.nodes import initialize_game_node
+from ai_werewolf.llm.model_config import default_provider_configs, default_role_model_bindings
+from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import evaluate_winner
 from ai_werewolf.seeds.agents import default_agents
@@ -40,6 +42,22 @@ class GameSession:
 router = APIRouter(prefix="/games", tags=["games"])
 _games: dict[str, GameSession] = {}
 _role_registry = BuiltInRoleRegistry()
+_game_repository: Any | None = None
+_model_registry = ModelProviderRegistry()
+for provider_config in default_provider_configs():
+    _model_registry.register(build_provider(provider_config))
+_role_model_bindings = default_role_model_bindings()
+
+
+def configure_game_repository(repository: Any | None) -> None:
+    global _game_repository
+    _game_repository = repository
+
+
+def configure_model_registry(registry: ModelProviderRegistry, role_model_bindings: list) -> None:
+    global _model_registry, _role_model_bindings
+    _model_registry = registry
+    _role_model_bindings = role_model_bindings
 
 
 def _event(event_type: str, message: str, **payload: Any) -> dict[str, Any]:
@@ -101,6 +119,7 @@ def _frontend_state(session: GameSession) -> dict[str, Any]:
                 "sheriff": player.sheriff,
                 "display_name": _display_name(player.player_id, session),
                 "avatar_url": _avatar_url(player.player_id, session),
+                "model_provider_id": _model_provider_for_role(player.role_key),
                 "speaking": state.phase == GamePhase.DAY_SPEECH and player.is_human,
                 "voted": player.player_id in session.voted_player_ids,
             }
@@ -127,6 +146,14 @@ def _append_ai_speeches(session: GameSession) -> None:
         session.public_events.append(
             _event("speech", f"{name}：我先保留意见，重点看今天谁在强行带节奏。", actor_id=player.player_id)
         )
+
+
+def _model_provider_for_role(role_key: str) -> str:
+    return _model_registry.provider_for_role(role_key, _role_model_bindings).config.provider_id
+
+
+def _player_model_bindings(state: GameState) -> dict[str, str]:
+    return {player.player_id: _model_provider_for_role(player.role_key) for player in state.players}
 
 
 def _finish_or_next_night(session: GameSession) -> None:
@@ -213,6 +240,8 @@ def create_game(request: CreateGameRequest):
         public_events=[_event("game_created", f"{board.name} 已创建，等待开始。")],
     )
     _games[state.game_id] = session
+    if _game_repository is not None:
+        _game_repository.save_game(state, request.human_player_id, _player_model_bindings(state))
     return _frontend_state(session)
 
 

@@ -43,6 +43,7 @@ export interface PlayerStateDto {
   sheriff: boolean;
   display_name: string;
   avatar_url: string | null;
+  model_provider_id?: string;
   speaking: boolean;
   voted: boolean;
 }

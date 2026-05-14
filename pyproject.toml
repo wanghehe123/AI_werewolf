@@ -7,6 +7,7 @@ dependencies = [
   "uvicorn",
   "pydantic>=2",
   "sqlmodel",
+  "psycopg[binary]",
   "langgraph",
   "pytest",
   "pytest-asyncio",
@@ -16,3 +17,6 @@ dependencies = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+include = ["ai_werewolf*"]
