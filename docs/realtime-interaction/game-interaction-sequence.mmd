@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+    participant P as 玩家
+    participant FE as 前端游戏桌
+    participant API as REST API
+    participant SSE as SSE事件流
+    participant ORC as PhaseOrchestrator
+    participant AI as AIActionScheduler
+    participant LLM as ModelProvider
+    participant DB as EventOutbox/DB
+
+    P->>FE: 进入游戏桌
+    FE->>API: GET /games/{id}
+    API-->>FE: state_snapshot
+    FE->>SSE: GET /games/{id}/stream
+    SSE-->>FE: state_snapshot / action_required
+
+    P->>FE: 提交阶段动作
+    FE->>API: POST /games/{id}/actions
+    API->>ORC: validate + advance
+    ORC->>DB: append player_action
+    DB-->>SSE: publish player_action
+    SSE-->>FE: player_action / phase_changed
+
+    ORC->>AI: create AI decision tasks
+    AI->>LLM: prompt with public/private context
+    LLM-->>AI: structured decision
+    AI->>ORC: validated AI action
+    ORC->>DB: append ai_action/public_event/private_event
+    DB-->>SSE: publish events
+    SSE-->>FE: ai_thinking / player_spoke / vote_cast
+
+    ORC->>ORC: resolve rules and win condition
+    ORC->>DB: append state_snapshot
+    DB-->>SSE: publish state_snapshot
+    SSE-->>FE: scene updates by phase
+    FE-->>P: 展示新阶段、时间线、可操作按钮

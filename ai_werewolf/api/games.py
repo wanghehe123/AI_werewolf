@@ -30,10 +30,10 @@ from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerPrivateInfo
 from ai_werewolf.domain.roles import Faction
 from ai_werewolf.graph.nodes import initialize_game_node
+from ai_werewolf.llm.action_scheduler import AIActionScheduler
 from ai_werewolf.llm.model_config import default_provider_configs, default_role_model_bindings
 from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider
 from ai_werewolf.llm.player_decider import PlayerDecider
-from ai_werewolf.llm.prompt_builder import build_speech_prompt, build_vote_prompt
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import evaluate_winner
 from ai_werewolf.seeds.agents import default_agents
@@ -99,6 +99,7 @@ _games: dict[str, GameSession] = {}
 
 # 角色注册表（内置角色定义）
 _role_registry = BuiltInRoleRegistry()
+_ai_action_scheduler = AIActionScheduler(_role_registry)
 
 # 数据库持久化仓库（可选，通过 configure_game_repository 注入）
 _game_repository: Any | None = None
@@ -217,6 +218,19 @@ def _build_private_infos(state: GameState) -> dict[str, PlayerPrivateInfo]:
     return infos
 
 
+def _ai_request_for_player(session: GameSession, player_id: str):
+    """为当前阶段的指定 AI 玩家生成 Prompt 请求。"""
+    context = _build_game_context(session)
+    tasks = _ai_action_scheduler.schedule(
+        state=session.state,
+        agents=session.agents,
+        private_infos=session.private_infos,
+        game_context=context,
+        pending_last_words_player_id=session.pending_last_words_player_id,
+    )
+    return next((task for task in tasks if task.player_id == player_id), None)
+
+
 # ==================== AI 决策函数 ====================
 
 def _get_ai_speech(session: GameSession, player_id: str) -> str:
@@ -248,20 +262,12 @@ def _get_ai_speech(session: GameSession, player_id: str) -> str:
         provider = _model_registry.provider_for_role(player.role_key, _role_model_bindings)
         decider = PlayerDecider(provider)
 
-        # 构建游戏上下文（之前所有公开事件）
-        context = _build_game_context(session)
-
-        # 构建发言 Prompt
-        alive_ids = [p.player_id for p in state.players if p.alive]
-        prompt = build_speech_prompt(
-            agent=agent,
-            role_key=player.role_key,
-            game_context=context,
-            alive_players=alive_ids,
-        )
+        request = _ai_request_for_player(session, player_id)
+        if request is None:
+            return "我暂时没有想说的。"
 
         # 调用 LLM 获取决策
-        decision = decider.decide(prompt)
+        decision = decider.decide(request.prompt)
         return decision.speech
 
     except Exception:
@@ -293,17 +299,11 @@ def _get_ai_vote(session: GameSession, player_id: str) -> tuple[str | None, str]
         provider = _model_registry.provider_for_role(player.role_key, _role_model_bindings)
         decider = PlayerDecider(provider)
 
-        context = _build_game_context(session)
-        alive_ids = [p.player_id for p in state.players if p.alive]
-        prompt = build_vote_prompt(
-            agent=agent,
-            role_key=player.role_key,
-            game_context=context,
-            alive_players=alive_ids,
-            self_id=player_id,
-        )
+        request = _ai_request_for_player(session, player_id)
+        if request is None:
+            return None, "弃票"
 
-        decision = decider.decide(prompt)
+        decision = decider.decide(request.prompt)
 
         # 验证投票目标是否合法（必须是存活的玩家，不能投自己）
         target = decision.target_id

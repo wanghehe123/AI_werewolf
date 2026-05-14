@@ -113,6 +113,8 @@ class PlayerDecider:
         Returns:
             安全的发言字符串
         """
+        if not isinstance(raw, dict):
+            return "我先观察一下局势。"
         speech = raw.get("speech", "")
         if isinstance(speech, str) and speech.strip() and is_safe_speech(speech):
             return speech[:200]  # 限制长度
