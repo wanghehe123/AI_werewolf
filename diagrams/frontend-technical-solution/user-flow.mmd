@@ -1,0 +1,18 @@
+sequenceDiagram
+  participant U as 用户
+  participant FE as 前端
+  participant BE as 后端
+  participant SSE as 游戏事件流
+
+  U->>FE: 进入大厅
+  FE->>BE: GET /admin/boards, GET /admin/agents
+  BE-->>FE: 返回启用板子和 Agent
+  U->>FE: 选择板子和 AI 玩家
+  FE->>BE: POST /games
+  BE-->>FE: 返回初始 GameState
+  FE->>SSE: GET /games/{id}/stream
+  SSE-->>FE: phase_changed / player_spoke / action_required
+  FE->>FE: 根据 phase 切换 Scene
+  U->>FE: 提交动作
+  FE->>BE: POST /games/{id}/actions
+  BE-->>FE: 返回 accepted 或 validation error
