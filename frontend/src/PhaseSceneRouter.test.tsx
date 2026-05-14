@@ -9,7 +9,8 @@ const phases: Array<[GameStateDto["phase"], string]> = [
   ["night", "夜晚行动"],
   ["day_announcement", "昨夜信息"],
   ["day_speech", "白天发言"],
-  ["day_vote", "放逐投票"],
+  ["exile_vote", "放逐投票"],
+  ["last_words", "遗言"],
   ["game_over", "游戏复盘"]
 ];
 

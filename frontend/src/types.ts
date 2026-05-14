@@ -31,7 +31,16 @@ export interface AgentProfile {
   enabled: boolean;
 }
 
-export type GamePhase = "setup" | "night" | "day_announcement" | "day_speech" | "day_vote" | "game_over";
+export type GamePhase =
+  | "setup"
+  | "night"
+  | "day_announcement"
+  | "sheriff_election"
+  | "sheriff_speech"
+  | "day_speech"
+  | "exile_vote"
+  | "last_words"
+  | "game_over";
 
 export interface PlayerStateDto {
   player_id: string;

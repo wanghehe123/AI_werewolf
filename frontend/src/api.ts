@@ -21,14 +21,16 @@ async function requestJson<T>(path: string, init?: RequestInit, baseUrl = apiBas
   if (!response.ok) {
     let message = response.statusText;
     try {
-      const body = (await response.json()) as { detail?: string };
-      message = body.detail ?? message;
+      const body = (await response.json()) as { message?: string; detail?: string };
+      message = body.message ?? body.detail ?? message;
     } catch {
       // Keep the HTTP status text when the backend does not return JSON.
     }
     throw new ApiError(response.status, message);
   }
-  return (await response.json()) as T;
+  const json = await response.json() as { code: number; message: string; data: T };
+  // Extract data from unified response format { code, message, data }
+  return json.data;
 }
 
 export function fetchBoards(baseUrl?: string): Promise<BoardConfig[]> {

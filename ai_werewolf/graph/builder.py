@@ -4,8 +4,6 @@ from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
 def build_phase_plan(board: BoardConfig, role_registry: BuiltInRoleRegistry) -> list[str]:
     phases = ["initialize_game"]
-    if board.sheriff_enabled:
-        phases.append("sheriff_election")
 
     night_actions: dict[str, int] = {}
     for role_count in board.roles:
@@ -18,8 +16,9 @@ def build_phase_plan(board: BoardConfig, role_registry: BuiltInRoleRegistry) -> 
         "resolve_night",
         "day_announcement",
         "speech_round",
-        "vote_round",
+        "exile_vote",
         "resolve_vote",
+        "last_words",
         "check_win_condition",
     ])
     return phases

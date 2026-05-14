@@ -3,7 +3,7 @@ from ai_werewolf.graph.builder import build_phase_plan
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
 
-def test_phase_plan_includes_sheriff_when_enabled():
+def test_phase_plan_uses_exile_vote_and_last_words_without_sheriff_runtime_phase():
     board = BoardConfig(
         board_id="board",
         name="8人预女猎",
@@ -21,5 +21,7 @@ def test_phase_plan_includes_sheriff_when_enabled():
     phases = build_phase_plan(board, BuiltInRoleRegistry())
 
     assert phases[0] == "initialize_game"
-    assert "sheriff_election" in phases
+    assert "sheriff_election" not in phases
     assert phases.index("wolf_kill") < phases.index("seer_check")
+    assert "exile_vote" in phases
+    assert "last_words" in phases

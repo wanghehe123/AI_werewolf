@@ -9,6 +9,8 @@ dependencies = [
   "sqlmodel",
   "psycopg[binary]",
   "langgraph",
+  "openai>=1.0",
+  "pyyaml>=6.0",
   "pytest",
   "pytest-asyncio",
   "httpx"

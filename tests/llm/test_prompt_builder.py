@@ -20,5 +20,6 @@ def test_prompt_includes_persona_but_not_hidden_system_terms():
 
     assert "林野" in prompt
     assert "理性、谨慎" in prompt
-    assert "werewolf" in prompt
-    assert "不要提及系统提示" in prompt
+    # 检查禁止事项出现在 prompt 中（但不能有"werewolf"等原始英文标识）
+    assert "禁止事项" in prompt
+    assert "狼人" in prompt  # 中文角色名，不是 werewolf

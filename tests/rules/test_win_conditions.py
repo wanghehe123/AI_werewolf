@@ -7,7 +7,7 @@ def make_state(players):
     return GameState(
         game_id="g1",
         board_id="board",
-        phase=GamePhase.DAY_VOTE,
+        phase=GamePhase.EXILE_VOTE,
         day_count=1,
         players=players,
     )

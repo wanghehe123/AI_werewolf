@@ -1,16 +1,28 @@
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class GamePhase(StrEnum):
     SETUP = "setup"
     SHERIFF_ELECTION = "sheriff_election"
+    SHERIFF_SPEECH = "sheriff_speech"
     NIGHT = "night"
     DAY_ANNOUNCEMENT = "day_announcement"
     DAY_SPEECH = "day_speech"
-    DAY_VOTE = "day_vote"
+    EXILE_VOTE = "exile_vote"
+    LAST_WORDS = "last_words"
     GAME_OVER = "game_over"
+
+
+class PlayerPrivateInfo(BaseModel):
+    wolf_teammates: list[str] = Field(default_factory=list)
+    seer_results: list[dict] = Field(default_factory=list)
+    witch_medicine: dict[str, bool] = Field(default_factory=lambda: {"save": True, "poison": True})
+    guard_history: list[str] = Field(default_factory=list)
+    hunter_can_shoot: bool = True
+    charmed_by: str | None = None
+    sheriff_target: str | None = None
 
 
 class PlayerState(BaseModel):

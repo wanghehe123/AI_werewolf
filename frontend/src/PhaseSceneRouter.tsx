@@ -71,7 +71,7 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
     );
   }
 
-  if (game.phase === "day_vote") {
+  if (game.phase === "exile_vote") {
     return (
       <section className="scene-panel">
         <p className="scene-kicker">VOTE</p>
@@ -98,6 +98,19 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
             弃票
           </button>
         </div>
+      </section>
+    );
+  }
+
+  if (game.phase === "last_words") {
+    return (
+      <section className="scene-panel">
+        <p className="scene-kicker">LAST WORDS</p>
+        <h2>遗言</h2>
+        <p>{lastMessage(game) ?? "出局玩家留下遗言，随后进入下一阶段。"}</p>
+        <button className="primary-action" disabled={pending} onClick={() => onSubmitAction({ action_type: "continue" })}>
+          继续
+        </button>
       </section>
     );
   }

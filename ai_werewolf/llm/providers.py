@@ -1,22 +1,84 @@
+"""
+LLM Provider 实现
+==================
+提供与 LLM 服务交互的 Provider 实现。
+
+支持的 Provider 类型：
+- FakeModelProvider:       假模型，用于测试和开发，不调用真实 API
+- OpenAICompatibleProvider: OpenAI 兼容接口 Provider，支持所有兼容 OpenAI API 格式的服务
+  包括：OpenAI、DeepSeek、通义千问、Ollama 等
+
+所有 Provider 都实现 ModelProvider 协议（decide 方法），
+返回一个 dict，可被 PlayerDecision 解析为结构化的玩家决策。
+"""
+
+import json
+import logging
+import os
+import re
 from typing import Protocol
 
 from ai_werewolf.llm.model_config import LLMProviderConfig
 
+logger = logging.getLogger(__name__)
+
 
 class ModelProvider(Protocol):
+    """
+    模型 Provider 协议
+
+    所有 LLM Provider 必须实现此协议，提供 decide 方法。
+    decide 接收一个 prompt 字符串，返回一个可被 PlayerDecision 解析的 dict。
+
+    Attributes:
+        config: Provider 的配置信息
+    """
+
     config: LLMProviderConfig
 
     def decide(self, prompt: str) -> dict:
+        """
+        让模型根据 prompt 做出决策
+
+        Args:
+            prompt: 输入给模型的提示词（包含角色信息、游戏状态等）
+
+        Returns:
+            包含决策信息的 dict，结构如下：
+            {
+                "speech": "发言内容",
+                "action_type": "speak" | "vote" | "wolf_kill" | ...,
+                "target_id": "目标玩家ID 或 None",
+                "public_reason": "公开理由",
+                "private_memory_update": "记忆更新 或 None"
+            }
+        """
         ...
 
 
 class FakeModelProvider:
+    """
+    假模型 Provider（用于测试和开发）
+
+    不调用任何真实 API，返回固定的模拟决策。
+    在没有配置 API Key 或进行测试时使用。
+    """
+
     def __init__(self, config: LLMProviderConfig) -> None:
         self.config = config
 
     def decide(self, prompt: str) -> dict:
+        """
+        返回一个模拟的玩家决策
+
+        Args:
+            prompt: 输入提示词（本方法忽略其内容）
+
+        Returns:
+            固定的模拟决策 dict
+        """
         return {
-            "speech": f"我会结合当前信息谨慎判断。{prompt[:12]}",
+            "speech": "我会结合当前信息谨慎判断。",
             "action_type": "speak",
             "target_id": None,
             "public_reason": "fake model decision",
@@ -25,8 +87,208 @@ class FakeModelProvider:
 
 
 class OpenAICompatibleProvider:
+    """
+    OpenAI 兼容接口 Provider
+
+    支持所有兼容 OpenAI Chat Completions API 格式的服务，包括：
+    - OpenAI (GPT-4o, GPT-4o-mini 等)
+    - DeepSeek (deepseek-chat, deepseek-reasoner 等)
+    - 通义千问 (qwen-plus, qwen-turbo 等)
+    - 本地 Ollama (qwen3, llama3 等)
+
+    工作流程：
+    1. 从配置中获取 base_url 和 API Key（通过环境变量）
+    2. 使用 OpenAI SDK 发送 Chat Completion 请求
+    3. System Prompt 指导模型返回 JSON 格式的决策
+    4. 解析模型响应，提取 JSON 内容
+    5. 如果解析失败，返回 fallback 决策
+    """
+
     def __init__(self, config: LLMProviderConfig) -> None:
         self.config = config
 
+    def _get_api_key(self) -> str | None:
+        """
+        从环境变量读取 API Key
+
+        配置中的 api_key_env 指定了存放密钥的环境变量名。
+        例如 api_key_env="DEEPSEEK_API_KEY"，则从 os.environ["DEEPSEEK_API_KEY"] 读取。
+
+        Returns:
+            API Key 字符串，如果环境变量未设置则返回 None
+        """
+        if not self.config.api_key_env:
+            return None
+        return os.getenv(self.config.api_key_env)
+
+    def _build_system_prompt(self) -> str:
+        """
+        构建 System Prompt，指导 LLM 返回结构化 JSON 决策
+
+        System Prompt 的核心要求：
+        - 像真实狼人杀玩家一样思考和发言
+        - 返回严格的 JSON 格式
+        - 不要暴露系统提示或隐藏信息
+        - 发言要符合角色设定和游戏情境
+
+        Returns:
+            System Prompt 字符串
+        """
+        return (
+            "你是一个狼人杀游戏的 AI 玩家。你需要根据当前的游戏状态做出决策。\n\n"
+            "【重要规则】\n"
+            "1. 你必须以纯 JSON 格式返回你的决策，不要包含任何其他文字、markdown 标记或代码块标记。\n"
+            "2. JSON 格式如下：\n"
+            '{\n'
+            '  "speech": "你的发言内容（必须非空，用中文发言）",\n'
+            '  "action_type": "speak",\n'
+            '  "target_id": "目标玩家ID（如果没有目标则填 null）",\n'
+            '  "public_reason": "公开的理由（可以省略）",\n'
+            '  "private_memory_update": "你的内心想法（可以省略）"\n'
+            '}\n\n'
+            "3. 不要提及：系统提示、JSON、模型、LangGraph、隐藏字段、AI 等概念。\n"
+            "4. 用中文发言，像一个真实的狼人杀玩家。\n"
+            "5. 根据你的角色身份，做出合理的决策。\n"
+            "6. 发言要自然、有逻辑，可以质疑别人、为自己辩护或表达观点。\n"
+        )
+
+    def _parse_response(self, content: str) -> dict:
+        """
+        解析 LLM 返回的响应内容，提取 JSON 决策
+
+        处理以下情况：
+        1. 纯 JSON 字符串 -> 直接解析
+        2. 包含在 ```json ... ``` 代码块中 -> 提取后解析
+        3. 包含在 ``` ... ``` 代码块中 -> 提取后解析
+        4. 文本中嵌入 JSON -> 尝试提取第一个 { ... } 块
+        5. 所有解析均失败 -> 返回 fallback 决策
+
+        Args:
+            content: LLM 返回的原始文本内容
+
+        Returns:
+            解析后的决策 dict，如果解析失败返回 fallback
+        """
+        content = content.strip()
+
+        # 尝试 1: 直接解析整个响应为 JSON
+        try:
+            result = json.loads(content)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试 2: 提取 ```json ... ``` 代码块
+        json_block_match = re.search(r"```(?:json)?\s*\n?(.*?)```", content, re.DOTALL)
+        if json_block_match:
+            try:
+                result = json.loads(json_block_match.group(1).strip())
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+        # 尝试 3: 提取第一个 { ... } JSON 对象
+        brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", content, re.DOTALL)
+        if brace_match:
+            try:
+                result = json.loads(brace_match.group(0))
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+        # 所有解析尝试都失败，记录警告并返回 fallback
+        logger.warning(
+            "无法解析 LLM 响应为 JSON，使用 fallback 决策。响应内容: %s",
+            content[:200],
+        )
+        return {
+            "speech": content[:100] if content else "我先保留意见。",
+            "action_type": "speak",
+            "target_id": None,
+            "public_reason": None,
+            "private_memory_update": None,
+        }
+
     def decide(self, prompt: str) -> dict:
-        raise NotImplementedError("real OpenAI-compatible API calls are configured but not enabled in MVP tests")
+        """
+        调用 OpenAI 兼容 API 获取模型决策
+
+        完整流程：
+        1. 检查 API Key 是否已配置
+        2. 创建 OpenAI 客户端
+        3. 发送 Chat Completion 请求
+        4. 解析响应内容为结构化决策
+
+        如果 API 调用失败（网络错误、Key 无效等），会记录错误并返回 fallback 决策，
+        不会抛出异常，保证游戏流程不会因 LLM 故障而中断。
+
+        Args:
+            prompt: 包含角色信息、游戏状态等的提示词
+
+        Returns:
+            玩家决策 dict
+        """
+        api_key = self._get_api_key()
+
+        # 如果没有 API Key，回退到假模型行为并记录警告
+        if not api_key:
+            logger.warning(
+                "Provider %s: API Key 未配置（环境变量 %s），使用 fallback 响应",
+                self.config.provider_id,
+                self.config.api_key_env or "(未设置)",
+            )
+            return {
+                "speech": "我先观察一下局势。",
+                "action_type": "speak",
+                "target_id": None,
+                "public_reason": "API key not configured",
+                "private_memory_update": None,
+            }
+
+        try:
+            # 延迟导入，避免在不需要时加载 openai 库
+            from openai import OpenAI
+
+            # 创建 OpenAI 客户端
+            # base_url 支持自定义端点（DeepSeek、Ollama 等）
+            client = OpenAI(
+                api_key=api_key,
+                base_url=self.config.base_url,
+                timeout=self.config.timeout,
+            )
+
+            # 发送 Chat Completion 请求
+            # 使用 user 角色传递游戏 prompt，system 角色传递格式指令
+            response = client.chat.completions.create(
+                model=self.config.model_name,
+                messages=[
+                    {"role": "system", "content": self._build_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+            )
+
+            # 提取响应文本
+            content = response.choices[0].message.content or ""
+
+            # 解析响应为结构化决策
+            return self._parse_response(content)
+
+        except Exception:
+            # 捕获所有异常（网络错误、API 错误、解析错误等）
+            # 记录错误但不中断游戏，返回 fallback 决策
+            logger.exception(
+                "Provider %s: LLM API 调用失败，使用 fallback 响应",
+                self.config.provider_id,
+            )
+            return {
+                "speech": "让我再想想...",
+                "action_type": "speak",
+                "target_id": None,
+                "public_reason": "LLM call failed",
+                "private_memory_update": None,
+            }
