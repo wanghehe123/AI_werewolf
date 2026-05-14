@@ -14,6 +14,7 @@ LLM 配置管理 API
 
 from fastapi import APIRouter, HTTPException, status
 
+from ai_werewolf.api.responses import success_response
 from ai_werewolf.api.games import configure_model_registry
 from ai_werewolf.llm.model_config import (
     LLMProviderConfig,
@@ -44,7 +45,7 @@ def _sync_game_registry() -> None:
 
 
 @router.post("/providers", status_code=status.HTTP_201_CREATED)
-def create_provider(provider: LLMProviderConfig) -> LLMProviderConfig:
+def create_provider(provider: LLMProviderConfig) -> dict:
     """
     创建新的 LLM Provider
 
@@ -59,22 +60,22 @@ def create_provider(provider: LLMProviderConfig) -> LLMProviderConfig:
     """
     _providers[provider.provider_id] = provider
     _sync_game_registry()
-    return provider
+    return success_response(data=provider)
 
 
 @router.get("/providers")
-def list_providers() -> list[LLMProviderConfig]:
+def list_providers() -> dict:
     """
     列出所有已配置的 LLM Provider
 
     Returns:
         Provider 配置列表
     """
-    return list(_providers.values())
+    return success_response(data=list(_providers.values()))
 
 
 @router.post("/role-bindings", status_code=status.HTTP_201_CREATED)
-def create_role_binding(binding: RoleModelBinding) -> RoleModelBinding:
+def create_role_binding(binding: RoleModelBinding) -> dict:
     """
     创建或更新角色-模型绑定
 
@@ -94,15 +95,15 @@ def create_role_binding(binding: RoleModelBinding) -> RoleModelBinding:
         raise HTTPException(status_code=404, detail=f"unknown provider: {binding.provider_id}")
     _bindings[binding.role_key] = binding
     _sync_game_registry()
-    return binding
+    return success_response(data=binding)
 
 
 @router.get("/role-bindings")
-def list_role_bindings() -> list[RoleModelBinding]:
+def list_role_bindings() -> dict:
     """
     列出所有角色-模型绑定
 
     Returns:
         绑定列表
     """
-    return list(_bindings.values())
+    return success_response(data=list(_bindings.values()))

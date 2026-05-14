@@ -24,4 +24,5 @@ def test_admin_can_create_agent_persona():
     response = client.post("/admin/agents", json=payload)
 
     assert response.status_code == 201
-    assert response.json()["agent_id"] == "agent_custom"
+    assert response.json()["code"] == 0
+    assert response.json()["data"]["agent_id"] == "agent_custom"

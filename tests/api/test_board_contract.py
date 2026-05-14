@@ -9,4 +9,5 @@ def test_list_boards_returns_array_for_frontend_editor():
     response = client.get("/admin/boards")
 
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    assert response.json()["code"] == 0
+    assert isinstance(response.json()["data"], list)

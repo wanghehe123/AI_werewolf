@@ -22,4 +22,5 @@ def test_admin_can_create_board():
     response = client.post("/admin/boards", json=payload)
 
     assert response.status_code == 201
-    assert response.json()["board_id"] == "board_custom"
+    assert response.json()["code"] == 0
+    assert response.json()["data"]["board_id"] == "board_custom"

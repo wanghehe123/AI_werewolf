@@ -13,4 +13,5 @@ def test_create_game_requires_matching_agent_count():
     })
 
     assert response.status_code == 400
-    assert "agent count" in response.json()["detail"]
+    assert response.json()["code"] == 400
+    assert "agent count" in response.json()["message"]

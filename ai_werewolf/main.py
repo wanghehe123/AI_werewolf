@@ -12,14 +12,17 @@ AI 狼人杀 FastAPI 应用入口
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from ai_werewolf.api.agents import router as agents_router
 from ai_werewolf.api.boards import router as boards_router
 from ai_werewolf.api.games import configure_game_repository, configure_model_registry, router as games_router
 from ai_werewolf.api.llm_config import router as llm_config_router
 from ai_werewolf.api.public import router as public_router
+from ai_werewolf.api.responses import error_response, success_response
 from ai_werewolf.llm.model_registry import build_registry_from_yaml
 from ai_werewolf.storage.factory import build_game_repository, persistence_enabled
 
@@ -75,10 +78,25 @@ def create_app() -> FastAPI:
     app.include_router(llm_config_router)   # LLM 配置管理
     app.include_router(games_router)        # 游戏核心接口
 
+    # ---- 统一异常响应 ----
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error_response(message=str(exc.detail), code=exc.status_code),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(_, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=error_response(message="validation error", code=422, data=exc.errors()),
+        )
+
     # ---- 健康检查 ----
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict:
+        return success_response(data={"status": "ok"})
 
     return app
 

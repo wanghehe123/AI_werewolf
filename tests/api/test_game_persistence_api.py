@@ -27,11 +27,12 @@ def test_create_game_persists_game_roles_and_model_bindings():
     )
 
     assert response.status_code == 200
+    response_data = response.json()["data"]
     assert len(repository.saved) == 1
     state, human_player_id, player_model_bindings = repository.saved[0]
-    assert state.game_id == response.json()["game_id"]
+    assert state.game_id == response_data["game_id"]
     assert human_player_id == "human"
-    assert set(player_model_bindings) == {player["player_id"] for player in response.json()["players"]}
-    assert all("model_provider_id" in player for player in response.json()["players"])
+    assert set(player_model_bindings) == {player["player_id"] for player in response_data["players"]}
+    assert all("model_provider_id" in player for player in response_data["players"])
 
     configure_game_repository(None)

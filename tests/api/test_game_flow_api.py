@@ -13,7 +13,7 @@ def create_beginner_game(client: TestClient) -> dict:
         },
     )
     assert response.status_code == 200
-    return response.json()
+    return response.json()["data"]
 
 
 def post_action(client: TestClient, game_id: str, action_type: str, **extra) -> dict:
@@ -27,7 +27,7 @@ def post_action(client: TestClient, game_id: str, action_type: str, **extra) -> 
         },
     )
     assert response.status_code == 200
-    return response.json()
+    return response.json()["data"]
 
 
 def test_create_game_returns_persisted_frontend_game_state():
@@ -38,11 +38,12 @@ def test_create_game_returns_persisted_frontend_game_state():
 
     assert created["game_id"] != "game_pending"
     assert fetched.status_code == 200
-    assert fetched.json()["game_id"] == created["game_id"]
-    assert fetched.json()["phase"] == "setup"
-    assert fetched.json()["human_player_id"] == "human"
-    assert "allowed_actions" in fetched.json()
-    assert fetched.json()["players"][0]["display_name"] == "你"
+    fetched_data = fetched.json()["data"]
+    assert fetched_data["game_id"] == created["game_id"]
+    assert fetched_data["phase"] == "setup"
+    assert fetched_data["human_player_id"] == "human"
+    assert "allowed_actions" in fetched_data
+    assert fetched_data["players"][0]["display_name"] == "你"
 
 
 def test_game_flow_advances_through_mvp_phases():

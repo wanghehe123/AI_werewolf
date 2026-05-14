@@ -26,6 +26,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ai_werewolf.api.responses import success_response
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerPrivateInfo
 from ai_werewolf.domain.roles import Faction
@@ -758,7 +759,7 @@ def create_game(request: CreateGameRequest):
     if _game_repository is not None:
         _game_repository.save_game(state, request.human_player_id, _player_model_bindings(state))
 
-    return _frontend_state(session)
+    return success_response(data=_frontend_state(session))
 
 
 @router.get("/{game_id}")
@@ -772,7 +773,7 @@ def get_game(game_id: str):
     Returns:
         前端渲染所需的完整游戏状态
     """
-    return _frontend_state(_get_session(game_id))
+    return success_response(data=_frontend_state(_get_session(game_id)))
 
 
 @router.post("/{game_id}/actions")
@@ -792,4 +793,4 @@ def submit_action(game_id: str, action: SubmitActionRequest):
     """
     session = _get_session(game_id)
     _advance_game(session, action)
-    return _frontend_state(session)
+    return success_response(data=_frontend_state(session))
