@@ -17,8 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from ai_werewolf.api.agents import router as agents_router
-from ai_werewolf.api.boards import router as boards_router
+from ai_werewolf.api.admin import router as admin_router
 from ai_werewolf.api.games import configure_game_repository, configure_model_registry, router as games_router
 from ai_werewolf.api.llm_config import router as llm_config_router
 from ai_werewolf.api.public import router as public_router
@@ -73,8 +72,7 @@ def create_app() -> FastAPI:
 
     # ---- 注册路由 ----
     app.include_router(public_router)       # 公开接口（板子列表、AI 列表）
-    app.include_router(boards_router)       # 板子管理
-    app.include_router(agents_router)       # AI 玩家管理
+    app.include_router(admin_router)        # 后台管理
     app.include_router(llm_config_router)   # LLM 配置管理
     app.include_router(games_router)        # 游戏核心接口
 

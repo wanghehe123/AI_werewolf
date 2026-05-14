@@ -97,3 +97,79 @@ export interface SubmitActionInput {
   target_player_id?: string | null;
   content?: string | null;
 }
+
+export interface AdminSessionDto {
+  authenticated: boolean;
+}
+
+export interface AdminPlayerDto {
+  player_id: string;
+  name: string;
+  is_ai: boolean;
+  agent_id: string | null;
+  created_at?: string;
+}
+
+export interface AdminAgentDto {
+  agent_id: string;
+  name: string;
+  avatar_url: string | null;
+  avatar_prompt: string | null;
+  persona: string;
+  speech_style: string;
+  reasoning_level: number;
+  deception_level: number;
+  aggression_level: number;
+  cooperation_level: number;
+  risk_preference: "conservative" | "balanced" | "aggressive";
+  memory_style: string;
+  default_model_provider_id?: string | null;
+  enabled: boolean;
+  created_at?: string;
+}
+
+export interface AdminBoardRoleDto {
+  board_id?: string;
+  role_key: string;
+  count: number;
+}
+
+export interface AdminBoardDto {
+  board_id: string;
+  name: string;
+  description: string | null;
+  min_players: number;
+  max_players: number;
+  sheriff_enabled: boolean;
+  enabled: boolean;
+  roles: AdminBoardRoleDto[];
+  created_at?: string;
+}
+
+export interface AdminRoleDto {
+  role_key: string;
+  name: string;
+  faction: string;
+  description: string | null;
+  night_action: boolean;
+  enabled: boolean;
+}
+
+export interface AdminGameDto {
+  game_id: string;
+  board_id: string;
+  human_player_id: string;
+  phase: string;
+  day_count: number;
+  winner: string | null;
+  players?: Array<{
+    player_id: string;
+    agent_id: string | null;
+    seat: number;
+    role_key: string;
+    alive: boolean;
+    is_human: boolean;
+    sheriff: boolean;
+    model_provider_id: string;
+  }>;
+}

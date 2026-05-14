@@ -171,6 +171,33 @@ def test_board_repository_get_roles():
     assert len(result) == 2
 
 
+def test_agent_repository_updates_enabled_and_model_provider():
+    mock_session = MagicMock()
+    mock_agent = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_agent)
+    repo = AgentRepository(session=mock_session)
+
+    updated = repo.update("agent-123", enabled=False, default_model_provider_id="glm")
+
+    assert updated is mock_agent
+    assert mock_agent.enabled is False
+    assert mock_agent.default_model_provider_id == "glm"
+    mock_session.commit.assert_called_once()
+
+
+def test_board_repository_replaces_roles_atomically():
+    mock_session = MagicMock()
+    mock_session.exec.return_value.all.return_value = [MagicMock()]
+    repo = BoardRepository(session=mock_session)
+
+    roles = repo.replace_roles("board-123", [{"role_key": "werewolf", "count": 2}])
+
+    assert len(roles) == 1
+    assert roles[0].role_key == "werewolf"
+    assert roles[0].count == 2
+    mock_session.commit.assert_called_once()
+
+
 def test_role_metadata_repository_list_all():
     mock_session = MagicMock()
     repo = RoleMetadataRepository(session=mock_session)

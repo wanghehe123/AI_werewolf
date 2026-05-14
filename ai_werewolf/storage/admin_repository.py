@@ -1,4 +1,3 @@
-from typing import Optional
 from sqlmodel import Session, select
 
 from ai_werewolf.storage.models import Player, AgentProfileRecord, Board, BoardRole, RoleMetadata
@@ -51,18 +50,39 @@ class AgentRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def create(self, name: str, persona: str, speech_style: str, reasoning_level: int = 3,
-               deception_level: int = 3, aggression_level: int = 3, cooperation_level: int = 3) -> AgentProfileRecord:
+    def create(
+        self,
+        name: str,
+        persona: str,
+        speech_style: str,
+        reasoning_level: int = 3,
+        deception_level: int = 3,
+        aggression_level: int = 3,
+        cooperation_level: int = 3,
+        agent_id: str | None = None,
+        avatar_url: str | None = None,
+        avatar_prompt: str | None = None,
+        risk_preference: str = "balanced",
+        memory_style: str = "focus_on_votes",
+        default_model_provider_id: str | None = None,
+        enabled: bool = True,
+    ) -> AgentProfileRecord:
         agent = AgentProfileRecord(
+            **({"agent_id": agent_id} if agent_id else {}),
             name=name,
             profile_json={},
+            avatar_url=avatar_url,
+            avatar_prompt=avatar_prompt,
             persona=persona,
             speech_style=speech_style,
             reasoning_level=reasoning_level,
             deception_level=deception_level,
             aggression_level=aggression_level,
             cooperation_level=cooperation_level,
-            enabled=True
+            risk_preference=risk_preference,
+            memory_style=memory_style,
+            default_model_provider_id=default_model_provider_id,
+            enabled=enabled,
         )
         self.session.add(agent)
         self.session.commit()
@@ -100,9 +120,9 @@ class BoardRepository:
         self.session = session
 
     def create(self, name: str, description: str | None = None, min_players: int = 6,
-               max_players: int = 12, sheriff_enabled: bool = True) -> Board:
+               max_players: int = 12, sheriff_enabled: bool = True, enabled: bool = True) -> Board:
         board = Board(name=name, description=description, min_players=min_players,
-                       max_players=max_players, sheriff_enabled=sheriff_enabled)
+                       max_players=max_players, sheriff_enabled=sheriff_enabled, enabled=enabled)
         self.session.add(board)
         self.session.commit()
         self.session.refresh(board)
@@ -131,10 +151,36 @@ class BoardRepository:
     def get_roles(self, board_id: str) -> list[BoardRole]:
         return list(self.session.exec(select(BoardRole).where(BoardRole.board_id == board_id)).all())
 
+    def update(self, board_id: str, **kwargs) -> Board | None:
+        board = self.get_by_id(board_id)
+        if not board:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(board, key) and value is not None:
+                setattr(board, key, value)
+        self.session.commit()
+        self.session.refresh(board)
+        return board
+
+    def replace_roles(self, board_id: str, roles: list[dict]) -> list[BoardRole]:
+        existing = list(self.session.exec(select(BoardRole).where(BoardRole.board_id == board_id)).all())
+        for role in existing:
+            self.session.delete(role)
+        new_roles = [
+            BoardRole(board_id=board_id, role_key=item["role_key"], count=item["count"])
+            for item in roles
+        ]
+        for role in new_roles:
+            self.session.add(role)
+        self.session.commit()
+        return new_roles
+
     def delete(self, board_id: str) -> bool:
         board = self.get_by_id(board_id)
         if not board:
             return False
+        for role in self.get_roles(board_id):
+            self.session.delete(role)
         self.session.delete(board)
         self.session.commit()
         return True

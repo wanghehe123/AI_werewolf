@@ -5,6 +5,8 @@ from ai_werewolf.main import create_app
 
 def test_admin_can_create_agent_persona():
     client = TestClient(create_app())
+    login = client.post("/admin/login", params={"username": "admin", "password": "admin"})
+    cookies = {"session_id": login.json()["data"]["session_id"]}
     payload = {
         "agent_id": "agent_custom",
         "name": "后台智能体",
@@ -21,7 +23,7 @@ def test_admin_can_create_agent_persona():
         "enabled": True,
     }
 
-    response = client.post("/admin/agents", json=payload)
+    response = client.post("/admin/agents", json=payload, cookies=cookies)
 
     assert response.status_code == 201
     assert response.json()["code"] == 0

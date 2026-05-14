@@ -61,17 +61,22 @@ class Player(SQLModel, table=True):
 class AgentProfileRecord(SQLModel, table=True):
     __tablename__ = "agent_profiles"
 
-    agent_id: str = Field(primary_key=True)
-    name: str
-    profile_json: dict[str, Any] = Field(sa_column=Column(JSON))
+    agent_id: str = Field(primary_key=True, default_factory=lambda: str(uuid.uuid4()))
+    name: str = Field(index=True)
+    avatar_url: str | None = None
+    avatar_prompt: str | None = None
+    profile_json: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     enabled: bool = True
-    # 新增字段
-    persona: str | None = None
-    speech_style: str | None = None
+    persona: str = ""
+    speech_style: str = ""
     reasoning_level: int = Field(default=3)
     deception_level: int = Field(default=3)
     aggression_level: int = Field(default=3)
     cooperation_level: int = Field(default=3)
+    risk_preference: str = Field(default="balanced")
+    memory_style: str = Field(default="focus_on_votes")
+    default_model_provider_id: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # 板子表
@@ -92,7 +97,7 @@ class Board(SQLModel, table=True):
 # 板子角色关联表
 class BoardRole(SQLModel, table=True):
     __tablename__ = "board_roles"
-    board_id: str = Field(foreign_key="boards.board_id")
+    board_id: str = Field(primary_key=True, foreign_key="boards.board_id")
     role_key: str = Field(primary_key=True)
     count: int = Field(default=1)
     board: Board | None = Relationship(back_populates="roles")

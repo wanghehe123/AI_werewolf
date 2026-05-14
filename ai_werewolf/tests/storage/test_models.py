@@ -16,3 +16,28 @@ def test_board_has_roles():
     role = BoardRole(role_key="werewolf", count=2)
     board.roles.append(role)
     assert len(board.roles) == 1
+
+
+def test_agent_profile_record_contains_admin_editable_fields():
+    from ai_werewolf.storage.models import AgentProfileRecord
+
+    agent = AgentProfileRecord(
+        name="林野",
+        persona="理性谨慎",
+        speech_style="短句克制",
+        avatar_prompt="冷静的年轻侦探",
+        risk_preference="balanced",
+        memory_style="focus_on_votes",
+        default_model_provider_id="deepseek",
+    )
+
+    assert agent.agent_id
+    assert agent.avatar_prompt == "冷静的年轻侦探"
+    assert agent.default_model_provider_id == "deepseek"
+
+
+def test_board_role_uses_board_and_role_as_identity():
+    role = BoardRole(board_id="board_a", role_key="werewolf", count=2)
+
+    assert role.board_id == "board_a"
+    assert role.role_key == "werewolf"

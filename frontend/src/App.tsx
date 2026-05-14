@@ -1,10 +1,36 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Route, Routes, useParams } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
-import { createGame, fetchAgents, fetchBoards, fetchGame, submitGameAction } from "./api";
+import {
+  adminLogin,
+  adminLogout,
+  createAdminAgent,
+  createAdminBoard,
+  createAdminPlayer,
+  fetchAdminAgents,
+  fetchAdminBoards,
+  fetchAdminGames,
+  fetchAdminPlayers,
+  fetchAdminRoles,
+  fetchAgents,
+  fetchBoards,
+  fetchGame,
+  seedAdminRoles,
+  createGame,
+  submitGameAction
+} from "./api";
+import { AdminAgentsPage } from "./admin/AdminAgentsPage";
+import { AdminBoardsPage } from "./admin/AdminBoardsPage";
+import { AdminDashboardPage } from "./admin/AdminDashboardPage";
+import { AdminGamesPage } from "./admin/AdminGamesPage";
+import { AdminLayout } from "./admin/AdminLayout";
+import { AdminLoginPage } from "./admin/AdminLoginPage";
+import { AdminLlmPage } from "./admin/AdminLlmPage";
+import { AdminPlayersPage } from "./admin/AdminPlayersPage";
+import { AdminRolesPage } from "./admin/AdminRolesPage";
 import { GameTable } from "./GameTable";
 import { LobbyPage } from "./LobbyPage";
-import type { AgentProfile, BoardConfig, GameStateDto, SubmitActionInput } from "./types";
+import type { AdminAgentDto, AdminBoardDto, AdminGameDto, AdminPlayerDto, AdminRoleDto, AgentProfile, BoardConfig, GameStateDto, SubmitActionInput } from "./types";
 
 export function App() {
   return (
@@ -12,6 +38,16 @@ export function App() {
       <Routes>
         <Route path="/" element={<LobbyRoute />} />
         <Route path="/games/:gameId" element={<GameRoute />} />
+        <Route path="/admin/login" element={<AdminLoginRoute />} />
+        <Route path="/admin" element={<AdminShellRoute />}>
+          <Route index element={<AdminDashboardPage />} />
+          <Route path="players" element={<AdminPlayersRoute />} />
+          <Route path="agents" element={<AdminAgentsRoute />} />
+          <Route path="boards" element={<AdminBoardsRoute />} />
+          <Route path="roles" element={<AdminRolesRoute />} />
+          <Route path="llm" element={<AdminLlmPage />} />
+          <Route path="games" element={<AdminGamesRoute />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );
@@ -86,5 +122,108 @@ function StatusScreen({ title, detail }: { title: string; detail: string }) {
       <h1>{title}</h1>
       <p>{detail}</p>
     </main>
+  );
+}
+
+function AdminLoginRoute() {
+  const navigate = useNavigate();
+  return (
+    <AdminLoginPage
+      login={async (username, password) => {
+        await adminLogin(username, password);
+        navigate("/admin");
+      }}
+    />
+  );
+}
+
+function AdminShellRoute() {
+  const navigate = useNavigate();
+  return (
+    <AdminLayout
+      logout={async () => {
+        await adminLogout();
+        navigate("/admin/login");
+      }}
+    />
+  );
+}
+
+function useAdminData<T>(load: () => Promise<T[]>) {
+  const [items, setItems] = useState<T[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      setError(null);
+      setItems(await load());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "后台数据加载失败");
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  return { items, error, refresh };
+}
+
+function AdminPlayersRoute() {
+  const { items, error, refresh } = useAdminData<AdminPlayerDto>(fetchAdminPlayers);
+  if (error) {
+    return <AdminStatus title="玩家加载失败" detail={error} />;
+  }
+  return <AdminPlayersPage players={items} onRefresh={refresh} onCreate={async (payload) => void (await createAdminPlayer(payload))} />;
+}
+
+function AdminAgentsRoute() {
+  const { items, error, refresh } = useAdminData<AdminAgentDto>(fetchAdminAgents);
+  if (error) {
+    return <AdminStatus title="AI 加载失败" detail={error} />;
+  }
+  return <AdminAgentsPage agents={items} onRefresh={refresh} onCreate={async (payload) => void (await createAdminAgent(payload))} />;
+}
+
+function AdminBoardsRoute() {
+  const { items, error, refresh } = useAdminData<AdminBoardDto>(fetchAdminBoards);
+  if (error) {
+    return <AdminStatus title="板子加载失败" detail={error} />;
+  }
+  return <AdminBoardsPage boards={items} onRefresh={refresh} onCreate={async (payload) => void (await createAdminBoard(payload))} />;
+}
+
+function AdminRolesRoute() {
+  const { items, error, refresh } = useAdminData<AdminRoleDto>(fetchAdminRoles);
+  if (error) {
+    return <AdminStatus title="角色加载失败" detail={error} />;
+  }
+  return (
+    <AdminRolesPage
+      roles={items}
+      onRefresh={refresh}
+      onSeed={async () => {
+        await seedAdminRoles();
+        await refresh();
+      }}
+    />
+  );
+}
+
+function AdminGamesRoute() {
+  const { items, error, refresh } = useAdminData<AdminGameDto>(fetchAdminGames);
+  if (error) {
+    return <AdminStatus title="游戏记录加载失败" detail={error} />;
+  }
+  return <AdminGamesPage games={items} onRefresh={refresh} />;
+}
+
+function AdminStatus({ title, detail }: { title: string; detail: string }) {
+  return (
+    <section className="admin-page">
+      <p className="scene-kicker">ADMIN</p>
+      <h2>{title}</h2>
+      <p className="error-text">{detail}</p>
+    </section>
   );
 }

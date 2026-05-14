@@ -1,4 +1,16 @@
-import type { AgentProfile, BoardConfig, CreateGameRequest, GameStateDto, SubmitActionInput } from "./types";
+import type {
+  AdminAgentDto,
+  AdminBoardDto,
+  AdminGameDto,
+  AdminPlayerDto,
+  AdminRoleDto,
+  AdminSessionDto,
+  AgentProfile,
+  BoardConfig,
+  CreateGameRequest,
+  GameStateDto,
+  SubmitActionInput
+} from "./types";
 
 const defaultBaseUrl = "http://127.0.0.1:8000";
 
@@ -18,19 +30,24 @@ export function apiBaseUrl(): string {
 
 async function requestJson<T>(path: string, init?: RequestInit, baseUrl = apiBaseUrl()): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, init);
+  let body: { code?: number; message?: string; detail?: string; data?: T } | null = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
   if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const body = (await response.json()) as { message?: string; detail?: string };
-      message = body.message ?? body.detail ?? message;
-    } catch {
-      // Keep the HTTP status text when the backend does not return JSON.
-    }
+    const message = body?.message ?? body?.detail ?? response.statusText;
     throw new ApiError(response.status, message);
   }
-  const json = await response.json() as { code: number; message: string; data: T };
-  // Extract data from unified response format { code, message, data }
-  return json.data;
+  if (body && typeof body.code === "number" && body.code !== 0) {
+    throw new ApiError(body.code, body.message ?? "请求失败");
+  }
+  return body?.data as T;
+}
+
+function adminInit(init?: RequestInit): RequestInit {
+  return { ...init, credentials: "include" };
 }
 
 export function fetchBoards(baseUrl?: string): Promise<BoardConfig[]> {
@@ -71,4 +88,73 @@ export function submitGameAction(gameId: string, payload: SubmitActionInput, bas
     },
     baseUrl
   );
+}
+
+export function adminLogin(username: string, password: string, baseUrl?: string): Promise<{ session_id: string }> {
+  const params = new URLSearchParams({ username, password });
+  return requestJson<{ session_id: string }>(`/admin/login?${params.toString()}`, adminInit({ method: "POST" }), baseUrl);
+}
+
+export function adminLogout(baseUrl?: string): Promise<null> {
+  return requestJson<null>("/admin/logout", adminInit({ method: "POST" }), baseUrl);
+}
+
+export function fetchAdminSession(baseUrl?: string): Promise<AdminSessionDto> {
+  return requestJson<AdminSessionDto>("/admin/session", adminInit(), baseUrl);
+}
+
+export function fetchAdminPlayers(baseUrl?: string): Promise<AdminPlayerDto[]> {
+  return requestJson<AdminPlayerDto[]>("/admin/players", adminInit(), baseUrl);
+}
+
+export function createAdminPlayer(payload: { name: string; is_ai: boolean; agent_id?: string | null }, baseUrl?: string): Promise<AdminPlayerDto> {
+  return requestJson<AdminPlayerDto>(
+    "/admin/players",
+    adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
+export function fetchAdminAgents(baseUrl?: string): Promise<AdminAgentDto[]> {
+  return requestJson<AdminAgentDto[]>("/admin/agents", adminInit(), baseUrl);
+}
+
+export function createAdminAgent(payload: Partial<AdminAgentDto> & { name: string; persona: string; speech_style: string }, baseUrl?: string): Promise<AdminAgentDto> {
+  return requestJson<AdminAgentDto>(
+    "/admin/agents",
+    adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
+export function fetchAdminBoards(baseUrl?: string): Promise<AdminBoardDto[]> {
+  return requestJson<AdminBoardDto[]>("/admin/boards", adminInit(), baseUrl);
+}
+
+export function createAdminBoard(payload: Omit<AdminBoardDto, "board_id" | "roles" | "created_at">, baseUrl?: string): Promise<AdminBoardDto> {
+  return requestJson<AdminBoardDto>(
+    "/admin/boards",
+    adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
+export function replaceAdminBoardRoles(boardId: string, roles: Array<{ role_key: string; count: number }>, baseUrl?: string): Promise<AdminBoardDto["roles"]> {
+  return requestJson<AdminBoardDto["roles"]>(
+    `/admin/boards/${boardId}/roles`,
+    adminInit({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roles }) }),
+    baseUrl
+  );
+}
+
+export function fetchAdminRoles(baseUrl?: string): Promise<AdminRoleDto[]> {
+  return requestJson<AdminRoleDto[]>("/admin/roles", adminInit(), baseUrl);
+}
+
+export function seedAdminRoles(baseUrl?: string): Promise<AdminRoleDto[]> {
+  return requestJson<AdminRoleDto[]>("/admin/roles/seed", adminInit({ method: "POST" }), baseUrl);
+}
+
+export function fetchAdminGames(baseUrl?: string): Promise<AdminGameDto[]> {
+  return requestJson<AdminGameDto[]>("/admin/games", adminInit(), baseUrl);
 }

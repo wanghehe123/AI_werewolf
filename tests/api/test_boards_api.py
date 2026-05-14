@@ -5,22 +5,19 @@ from ai_werewolf.main import create_app
 
 def test_admin_can_create_board():
     client = TestClient(create_app())
+    login = client.post("/admin/login", params={"username": "admin", "password": "admin"})
+    cookies = {"session_id": login.json()["data"]["session_id"]}
     payload = {
-        "board_id": "board_custom",
         "name": "后台配置板子",
-        "roles": [
-            {"role_key": "werewolf", "count": 1},
-            {"role_key": "villager", "count": 2},
-        ],
+        "description": "后台创建的测试板子",
+        "min_players": 3,
+        "max_players": 3,
         "sheriff_enabled": False,
-        "speech_rule": "seat_order",
-        "vote_rule": "single_vote",
-        "win_condition": "wolves_eliminated_or_parity",
         "enabled": True,
     }
 
-    response = client.post("/admin/boards", json=payload)
+    response = client.post("/admin/boards", json=payload, cookies=cookies)
 
     assert response.status_code == 201
     assert response.json()["code"] == 0
-    assert response.json()["data"]["board_id"] == "board_custom"
+    assert response.json()["data"]["name"] == "后台配置板子"

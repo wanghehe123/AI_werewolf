@@ -5,8 +5,10 @@ from ai_werewolf.main import create_app
 
 def test_list_boards_returns_array_for_frontend_editor():
     client = TestClient(create_app())
+    login = client.post("/admin/login", params={"username": "admin", "password": "admin"})
+    cookies = {"session_id": login.json()["data"]["session_id"]}
 
-    response = client.get("/admin/boards")
+    response = client.get("/admin/boards", cookies=cookies)
 
     assert response.status_code == 200
     assert response.json()["code"] == 0
