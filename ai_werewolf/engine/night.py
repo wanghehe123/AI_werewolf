@@ -35,7 +35,7 @@ class NightResolver:
         state = session.state
         context = build_game_context(session)
         events: list[dict[str, Any]] = []
-
+        # 优化点，统一封装为夜晚存在行动的角色，通过策略模式和注册期模式直接包起来
         # 1. Wolf kill
         wolf_target_id = self._collect_wolf_kill(session, context)
 
@@ -55,7 +55,7 @@ class NightResolver:
         state.phase = GamePhase.DAY_ANNOUNCEMENT
         if deaths:
             death_names = [display_name(pid, session) for pid in deaths]
-            events.append(event("night_result", f"昨夜，{', '.join(death_names)} 倒在了血泊中。"))
+            events.append(event("night_result", f"昨夜，玩家{', '.join(death_names)} 出局。"))
         else:
             events.append(event("night_result", "昨夜平安夜，没有玩家出局。"))
 
