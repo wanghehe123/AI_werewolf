@@ -142,3 +142,51 @@ def test_night_result_events():
 
     result_events = [e for e in events if e["event_type"] == "night_result"]
     assert len(result_events) == 1
+
+
+def test_beginner_night_announces_only_roles_present_in_board_order():
+    """6-player beginner board should announce wolf and seer steps, never witch/guard."""
+    players = [
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="villager", alive=True, is_human=True),
+        PlayerState(player_id="w1", agent_id="w1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="w2", agent_id="w2", seat=3, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="seer1", agent_id="seer1", seat=4, role_key="seer", alive=True, is_human=False),
+        PlayerState(player_id="v1", agent_id="v1", seat=5, role_key="villager", alive=True, is_human=False),
+        PlayerState(player_id="v2", agent_id="v2", seat=6, role_key="villager", alive=True, is_human=False),
+    ]
+    agents = {
+        "w1": _default_agents()["w1"],
+        "w2": _default_agents()["w2"],
+        "seer1": _default_agents()["seer1"],
+    }
+    session = _make_session(players, agents)
+    resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+
+    def mock_decide(session, player_id, context):
+        if player_id == "w1":
+            return _mock_decision(action_type="wolf_kill", target_id="human")
+        if player_id == "seer1":
+            return _mock_decision(action_type="seer_check", target_id="w1")
+        return _mock_decision(action_type="speak", target_id=None)
+
+    with patch.object(resolver, "_get_ai_decision", side_effect=mock_decide):
+        events = resolver.resolve(session)
+
+    event_types = [event["event_type"] for event in events]
+    assert event_types == [
+        "night_step_started",
+        "night_step_finished",
+        "night_step_started",
+        "night_step_finished",
+        "phase_changed",
+        "night_result",
+    ]
+    messages = [event["payload"]["message"] for event in events]
+    assert messages[:4] == [
+        "狼人开始行动。",
+        "狼人行动完成。",
+        "预言家开始行动。",
+        "预言家行动完成。",
+    ]
+    assert all("女巫" not in message and "守卫" not in message for message in messages)
+    assert event_types.index("night_result") > event_types.index("night_step_finished")

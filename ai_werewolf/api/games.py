@@ -6,21 +6,25 @@ REST API 端点：创建游戏、查询状态、提交行动。
 """
 
 import logging
+import asyncio
+import json
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ai_werewolf.api.responses import success_response
 from ai_werewolf.domain.game_state import GameState
-from ai_werewolf.engine.context import build_private_infos
+from ai_werewolf.engine.context import build_game_context, build_private_infos
+from ai_werewolf.engine.helpers import event as _event
 from ai_werewolf.engine.helpers import frontend_state
 from ai_werewolf.engine.orchestrator import PhaseOrchestrator
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.graph.nodes import initialize_game_node
-from ai_werewolf.llm.model_config import default_provider_configs, default_role_model_bindings
-from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider
+from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding, load_llm_config_from_yaml
+from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider, build_registry_from_yaml
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.seeds.agents import default_agents
 from ai_werewolf.seeds.boards import default_boards
@@ -53,9 +57,21 @@ _role_registry = BuiltInRoleRegistry()
 _game_repository: Any | None = None
 
 _model_registry = ModelProviderRegistry()
-for provider_config in default_provider_configs():
-    _model_registry.register(build_provider(provider_config))
-_role_model_bindings = default_role_model_bindings()
+_role_model_bindings: list = []
+
+# 从 config/llm.yaml 加载 LLM 配置（优先）；若 YAML 不可用则注册 fake 回退
+try:
+    _model_registry, _role_model_bindings = build_registry_from_yaml()
+    logger.info("LLM 配置从 config/llm.yaml 加载成功，已注册 %d 个 Provider", len(_model_registry.all_provider_ids()))
+except Exception:
+    logger.exception("从 config/llm.yaml 加载 LLM 配置失败，使用 fake 回退")
+    _model_registry.register(build_provider(LLMProviderConfig(
+        provider_id="default", provider_type="fake", model_name="fake-default",
+    )))
+    _role_model_bindings = [
+        RoleModelBinding(role_key=r, provider_id="default")
+        for r in ["werewolf", "seer", "witch", "hunter", "villager"]
+    ]
 
 _orchestrator = PhaseOrchestrator(_model_registry, _role_registry, _role_model_bindings)
 
@@ -108,22 +124,16 @@ def create_game(request: CreateGameRequest):
     if len(selected_agents) != board.player_count - 1:
         raise HTTPException(status_code=400, detail="agent count must fill board seats after human player")
 
-    state = initialize_game_node(board, request.human_player_id, selected_agents, seed=1)
+    state = initialize_game_node(board, request.human_player_id, selected_agents, seed=None)
     state.game_id = f"game_{uuid4().hex[:12]}"
 
     session = GameSession(
         state=state,
         agents={agent.agent_id: agent for agent in selected_agents},
         human_player_id=request.human_player_id,
-        public_events=[{
-            "event_type": "game_created",
-            "actor_id": None,
-            "target_id": None,
-            "payload": {"message": f"{board.name} 已创建，等待开始。"},
-            "public": True,
-        }],
         private_infos=build_private_infos(state.players),
     )
+    session.append_public_event("game_created", f"{board.name} 已创建，等待开始。")
 
     _games[state.game_id] = session
 
@@ -142,4 +152,70 @@ def get_game(game_id: str):
 def submit_action(game_id: str, action: SubmitActionRequest):
     session = _get_session(game_id)
     _orchestrator.advance(session, action.model_dump())
-    return success_response(data=frontend_state(session, _model_registry, _role_model_bindings))
+    data = frontend_state(session, _model_registry, _role_model_bindings)
+    session.publish_stream_event("state_snapshot", {"game_state": data})
+    return success_response(data=data)
+
+
+@router.get("/{game_id}/stream")
+async def stream_game(
+    game_id: str,
+    request: Request,
+    player_id: str = "human",
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+):
+    session = _get_session(game_id)
+
+    async def event_generator():
+        if last_event_id:
+            for stream_event in replay_stream_events(session, last_event_id):
+                yield format_sse(stream_event)
+        else:
+            yield format_sse(build_state_snapshot_event(session, player_id=player_id))
+
+        next_index = len(session.stream_events)
+        while not await request.is_disconnected():
+            while next_index < len(session.stream_events):
+                yield format_sse(session.stream_events[next_index])
+                next_index += 1
+            await asyncio.sleep(0.2)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def build_state_snapshot_event(session: GameSession, player_id: str = "human") -> dict[str, Any]:
+    return {
+        "event_id": f"evt_snapshot_{session.stream_event_seq + 1:06d}",
+        "event_type": "state_snapshot",
+        "game_id": session.state.game_id,
+        "phase": session.state.phase.value,
+        "day_count": session.state.day_count,
+        "visibility": "self",
+        "actor_id": None,
+        "target_id": player_id,
+        "payload": {"game_state": frontend_state(session, _model_registry, _role_model_bindings)},
+        "created_at": session.stream_events[-1]["created_at"] if session.stream_events else None,
+    }
+
+
+def replay_stream_events(session: GameSession, last_event_id: str | None) -> list[dict[str, Any]]:
+    if not last_event_id:
+        return list(session.stream_events)
+    for index, stream_event in enumerate(session.stream_events):
+        if stream_event["event_id"] == last_event_id:
+            return session.stream_events[index + 1:]
+    return list(session.stream_events)
+
+
+def format_sse(stream_event: dict[str, Any]) -> str:
+    data = json.dumps(stream_event, ensure_ascii=False)
+    return f"id: {stream_event['event_id']}\nevent: {stream_event['event_type']}\ndata: {data}\n\n"
+
+
+def _get_ai_speech(session: GameSession, player_id: str) -> str:
+    """Compatibility helper used by older integration tests."""
+    return _orchestrator._get_ai_speech(session, player_id, build_game_context(session))

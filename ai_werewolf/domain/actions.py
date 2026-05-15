@@ -10,7 +10,9 @@ class PlayerActionType(StrEnum):
     SEER_CHECK = "seer_check"
     WITCH_SAVE = "witch_save"
     WITCH_POISON = "witch_poison"
+    GUARD = "guard"
     HUNTER_SHOOT = "hunter_shoot"
+    NO_ACTION = "no_action"
     RUN_FOR_SHERIFF = "run_for_sheriff"
     WITHDRAW_SHERIFF_RUN = "withdraw_sheriff_run"
 

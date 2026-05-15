@@ -68,6 +68,44 @@ export interface GameEventDto {
   public: boolean;
 }
 
+export interface GameStreamEventDto {
+  event_id: string;
+  event_type:
+    | "state_snapshot"
+    | "phase_changed"
+    | "night_step_started"
+    | "night_step_finished"
+    | "speech_delta"
+    | "speech_completed"
+    | "current_speaker_changed"
+    | "ai_thinking"
+    | string;
+  game_id: string;
+  phase: GamePhase;
+  day_count: number;
+  visibility: "public" | "self" | "system" | string;
+  actor_id: string | null;
+  target_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface StateSnapshotPayload {
+  game_state: GameStateDto;
+}
+
+export interface SpeechDeltaPayload {
+  player_id: string;
+  label: string;
+  delta: string;
+  speech: string;
+}
+
+export interface StreamingSpeechDto {
+  label: string;
+  speech: string;
+}
+
 export interface PlayerActionOptionDto {
   action_type: string;
   label: string;

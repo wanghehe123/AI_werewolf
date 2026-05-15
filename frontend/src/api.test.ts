@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, createGame, fetchBoards } from "./api";
+import { ApiError, createGame, fetchBoards, subscribeGameStream } from "./api";
 
 describe("api client", () => {
   afterEach(() => {
@@ -32,5 +32,22 @@ describe("api client", () => {
     await expect(
       createGame({ board_id: "board_6_beginner", human_player_id: "human", agent_ids: [] }, "http://api.local")
     ).rejects.toMatchObject(new ApiError(400, "agent count must match"));
+  });
+
+  it("subscribes to the game SSE stream with the player id", () => {
+    const addEventListener = vi.fn();
+    const close = vi.fn();
+    const eventSourceMock = vi.fn().mockImplementation(function EventSourceMock() {
+      return { addEventListener, close };
+    });
+    vi.stubGlobal("EventSource", eventSourceMock);
+
+    const subscription = subscribeGameStream("game_1", { playerId: "human", onEvent: vi.fn() }, "http://api.local");
+
+    expect(eventSourceMock).toHaveBeenCalledWith("http://api.local/games/game_1/stream?player_id=human");
+    expect(addEventListener).toHaveBeenCalledWith("state_snapshot", expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith("speech_delta", expect.any(Function));
+    subscription.close();
+    expect(close).toHaveBeenCalled();
   });
 });

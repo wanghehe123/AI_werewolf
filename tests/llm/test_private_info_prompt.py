@@ -33,3 +33,33 @@ def test_villager_private_info_omits_empty_sections():
     text = format_private_info(PlayerPrivateInfo(), role_key="villager")
 
     assert text == ""
+
+
+def test_private_info_can_render_player_ids_as_seat_labels():
+    labels = {
+        "agent_akai": "2号 阿凯",
+        "agent_moyu": "3号 墨鱼",
+        "agent_linye": "4号 林野",
+    }
+
+    wolf_text = format_private_info(
+        PlayerPrivateInfo(
+            wolf_teammates=["agent_akai", "agent_moyu"],
+        ),
+        role_key="werewolf",
+        player_label=lambda player_id: labels[player_id],
+    )
+    seer_text = format_private_info(
+        PlayerPrivateInfo(
+            seer_results=[{"round": "night1", "target": "agent_linye", "result": "werewolf"}],
+        ),
+        role_key="seer",
+        player_label=lambda player_id: labels[player_id],
+    )
+
+    assert "2号 阿凯" in wolf_text
+    assert "3号 墨鱼" in wolf_text
+    assert "4号 林野" in seer_text
+    assert "agent_akai" not in wolf_text
+    assert "agent_moyu" not in wolf_text
+    assert "agent_linye" not in seer_text

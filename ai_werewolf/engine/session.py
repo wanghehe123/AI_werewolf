@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from ai_werewolf.domain.agents import AgentProfile
@@ -36,3 +37,61 @@ class GameSession:
     witch_has_poison: bool = True
     private_infos: dict[str, PlayerPrivateInfo] = field(default_factory=dict)
     pending_last_words_player_id: str | None = None
+    stream_events: list[dict[str, Any]] = field(default_factory=list)
+    stream_event_seq: int = 0
+
+    def publish_stream_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        actor_id: str | None = None,
+        target_id: str | None = None,
+        visibility: str = "public",
+    ) -> dict[str, Any]:
+        """Append an SSE-ready event to the in-memory stream log."""
+        self.stream_event_seq += 1
+        stream_event = {
+            "event_id": f"evt_{self.stream_event_seq:06d}",
+            "event_type": event_type,
+            "game_id": self.state.game_id,
+            "phase": self.state.phase.value,
+            "day_count": self.state.day_count,
+            "visibility": visibility,
+            "actor_id": actor_id,
+            "target_id": target_id,
+            "payload": payload or {},
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        self.stream_events.append(stream_event)
+        return stream_event
+
+    def append_public_event(
+        self,
+        event_type: str,
+        message: str,
+        *,
+        actor_id: str | None = None,
+        target_id: str | None = None,
+        visibility: str = "public",
+        publish_stream: bool = True,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        """Append a legacy public event and mirror it into the SSE stream."""
+        public_event = {
+            "event_type": event_type,
+            "actor_id": actor_id,
+            "target_id": target_id,
+            "payload": {"message": message, **payload},
+            "public": visibility == "public",
+        }
+        self.public_events.append(public_event)
+        if publish_stream:
+            self.publish_stream_event(
+                event_type,
+                public_event["payload"],
+                actor_id=actor_id,
+                target_id=target_id,
+                visibility=visibility,
+            )
+        return public_event

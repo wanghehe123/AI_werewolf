@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterator
 from typing import Protocol
 
 from ai_werewolf.llm.model_config import LLMProviderConfig
@@ -55,6 +56,15 @@ class ModelProvider(Protocol):
         """
         ...
 
+    def stream_speech(self, prompt: str) -> Iterator[str]:
+        """Yield speech text chunks for real-time display."""
+        ...
+
+
+def _chunk_text(text: str, size: int = 6) -> Iterator[str]:
+    for index in range(0, len(text), size):
+        yield text[index:index + size]
+
 
 class FakeModelProvider:
     """
@@ -84,6 +94,10 @@ class FakeModelProvider:
             "public_reason": "fake model decision",
             "private_memory_update": None,
         }
+
+    def stream_speech(self, prompt: str) -> Iterator[str]:
+        """Return stable chunks for tests and local development."""
+        yield from _chunk_text(self.decide(prompt)["speech"])
 
 
 class OpenAICompatibleProvider:
@@ -141,15 +155,23 @@ class OpenAICompatibleProvider:
             "2. JSON 格式如下：\n"
             '{\n'
             '  "speech": "你的发言内容（必须非空，用中文发言）",\n'
-            '  "action_type": "speak",\n'
+            '  "action_type": "<根据你的行动选择对应值>",\n'
             '  "target_id": "目标玩家ID（如果没有目标则填 null）",\n'
-            '  "public_reason": "公开的理由（可以省略）",\n'
-            '  "private_memory_update": "你的内心想法（可以省略）"\n'
+            '  "public_reason": "公开的理由（可以为 null）",\n'
+            '  "private_memory_update": "你的内心想法（可以为 null）"\n'
             '}\n\n'
-            "3. 不要提及：系统提示、JSON、模型、LangGraph、隐藏字段、AI 等概念。\n"
-            "4. 用中文发言，像一个真实的狼人杀玩家。\n"
-            "5. 根据你的角色身份，做出合理的决策。\n"
-            "6. 发言要自然、有逻辑，可以质疑别人、为自己辩护或表达观点。\n"
+            "3. action_type 的有效取值：speak、vote、wolf_kill、seer_check、witch_save、witch_poison、guard、hunter_shoot、no_action\n"
+            "4. 不要提及：系统提示、JSON、模型、LangGraph、隐藏字段、AI 等概念。\n"
+            "5. 用中文发言，像一个真实的狼人杀玩家。\n"
+            "6. 根据你的角色身份，做出合理的决策。\n"
+            "7. 发言要自然、有逻辑，可以质疑别人、为自己辩护或表达观点。\n"
+        )
+
+    def _build_speech_stream_system_prompt(self) -> str:
+        return (
+            "你是一个狼人杀游戏的 AI 玩家。请根据用户提供的游戏状态直接输出你的公开发言正文。\n"
+            "不要输出 JSON、Markdown、代码块、解释或系统信息。\n"
+            "不要提及 prompt、模型、AI、隐藏字段。只用中文自然发言。"
         )
 
     def _parse_response(self, content: str) -> dict:
@@ -160,7 +182,7 @@ class OpenAICompatibleProvider:
         1. 纯 JSON 字符串 -> 直接解析
         2. 包含在 ```json ... ``` 代码块中 -> 提取后解析
         3. 包含在 ``` ... ``` 代码块中 -> 提取后解析
-        4. 文本中嵌入 JSON -> 尝试提取第一个 { ... } 块
+        4. 文本中嵌入 JSON -> 尝试用括号匹配提取
         5. 所有解析均失败 -> 返回 fallback 决策
 
         Args:
@@ -169,18 +191,21 @@ class OpenAICompatibleProvider:
         Returns:
             解析后的决策 dict，如果解析失败返回 fallback
         """
-        content = content.strip()
+        # 移除控制字符（除了 \n \r \t），避免 JSON 解析失败
+        import unicodedata
+        cleaned = "".join(ch for ch in content if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t")
+        cleaned = cleaned.strip()
 
         # 尝试 1: 直接解析整个响应为 JSON
         try:
-            result = json.loads(content)
+            result = json.loads(cleaned)
             if isinstance(result, dict):
                 return result
         except json.JSONDecodeError:
             pass
 
         # 尝试 2: 提取 ```json ... ``` 代码块
-        json_block_match = re.search(r"```(?:json)?\s*\n?(.*?)```", content, re.DOTALL)
+        json_block_match = re.search(r"```(?:json)?\s*\n?(.*?)```", cleaned, re.DOTALL)
         if json_block_match:
             try:
                 result = json.loads(json_block_match.group(1).strip())
@@ -189,15 +214,37 @@ class OpenAICompatibleProvider:
             except json.JSONDecodeError:
                 pass
 
-        # 尝试 3: 提取第一个 { ... } JSON 对象
-        brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", content, re.DOTALL)
-        if brace_match:
-            try:
-                result = json.loads(brace_match.group(0))
-                if isinstance(result, dict):
-                    return result
-            except json.JSONDecodeError:
-                pass
+        # 尝试 3: 用括号计数提取最外层 JSON 对象（支持任意嵌套层级）
+        start = cleaned.find("{")
+        if start != -1:
+            depth = 0
+            in_string = False
+            escape = False
+            for i in range(start, len(cleaned)):
+                ch = cleaned[i]
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            result = json.loads(cleaned[start:i + 1])
+                            if isinstance(result, dict):
+                                return result
+                        except json.JSONDecodeError:
+                            pass
+                        break
 
         # 所有解析尝试都失败，记录警告并返回 fallback
         logger.warning(
@@ -292,3 +339,43 @@ class OpenAICompatibleProvider:
                 "public_reason": "LLM call failed",
                 "private_memory_update": None,
             }
+
+    def stream_speech(self, prompt: str) -> Iterator[str]:
+        """Stream plain public speech text; fall back to chunked non-stream output."""
+        api_key = self._get_api_key()
+        if not api_key:
+            yield from _chunk_text(self.decide(prompt)["speech"])
+            return
+
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=api_key,
+                base_url=self.config.base_url,
+                timeout=self.config.timeout,
+            )
+            stream = client.chat.completions.create(
+                model=self.config.model_name,
+                messages=[
+                    {"role": "system", "content": self._build_speech_stream_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                stream=True,
+            )
+            emitted = False
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    emitted = True
+                    yield delta
+            if not emitted:
+                yield from _chunk_text(self.decide(prompt)["speech"])
+        except Exception:
+            logger.exception(
+                "Provider %s: LLM 流式发言失败，使用 fallback 分片",
+                self.config.provider_id,
+            )
+            yield from _chunk_text(self.decide(prompt)["speech"])

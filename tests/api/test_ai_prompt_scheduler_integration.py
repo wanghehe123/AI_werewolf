@@ -54,7 +54,7 @@ def test_api_ai_speech_uses_scheduler_prompt_with_private_info():
         assert speech == "我会基于查验结果发言。"
         assert provider.prompts
         assert "查验结果" in provider.prompts[0]
-        assert "night1 查验 human：好人阵营" in provider.prompts[0]
+        assert "night1 查验 1号 你：好人阵营" in provider.prompts[0]
         assert "当前阶段：day_speech" in provider.prompts[0]
     finally:
         default_registry = ModelProviderRegistry()

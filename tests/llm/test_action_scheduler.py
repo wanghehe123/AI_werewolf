@@ -30,7 +30,7 @@ def test_night_scheduler_creates_tasks_only_for_alive_ai_with_night_actions():
     wolf_task = next(task for task in tasks if task.player_id == "wolf_ai")
     assert "狼队友" in wolf_task.private_info
     assert "第 1 夜降临" in wolf_task.context
-    assert "night_kill" in wolf_task.prompt
+    assert "wolf_kill" in wolf_task.prompt
 
 
 def test_day_speech_and_exile_vote_scheduler_create_tasks_for_alive_ai_in_seat_order():

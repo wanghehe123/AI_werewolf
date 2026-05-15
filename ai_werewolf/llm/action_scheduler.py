@@ -13,6 +13,7 @@ from ai_werewolf.llm.prompt_builder import (
 )
 from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
+from ai_werewolf.seeds.boards import default_boards
 
 
 PromptKind = Literal["night_action", "day_speech", "exile_vote", "last_words"]
@@ -54,20 +55,20 @@ class AIActionScheduler:
     ) -> list[AIActionRequest]:
         if state.phase == GamePhase.NIGHT:
             return [
-                self._build_request(state, player, agents[player.player_id], private_infos, game_context, "night_action")
+                self._build_request(state, player, agents[player.player_id], agents, private_infos, game_context, "night_action")
                 for player in self._alive_ai_players(state, agents)
                 if self._has_night_action(player.role_key)
             ]
 
         if state.phase == GamePhase.DAY_SPEECH:
             return [
-                self._build_request(state, player, agents[player.player_id], private_infos, game_context, "day_speech")
+                self._build_request(state, player, agents[player.player_id], agents, private_infos, game_context, "day_speech")
                 for player in self._alive_ai_players(state, agents)
             ]
 
         if state.phase == GamePhase.EXILE_VOTE:
             return [
-                self._build_request(state, player, agents[player.player_id], private_infos, game_context, "exile_vote")
+                self._build_request(state, player, agents[player.player_id], agents, private_infos, game_context, "exile_vote")
                 for player in self._alive_ai_players(state, agents)
             ]
 
@@ -75,7 +76,7 @@ class AIActionScheduler:
             player = state.player_by_id(pending_last_words_player_id)
             if not player.is_human and player.player_id in agents:
                 return [
-                    self._build_request(state, player, agents[player.player_id], private_infos, game_context, "last_words")
+                    self._build_request(state, player, agents[player.player_id], agents, private_infos, game_context, "last_words")
                 ]
 
         return []
@@ -85,16 +86,21 @@ class AIActionScheduler:
         state: GameState,
         player: PlayerState,
         agent: AgentProfile,
+        agents: dict[str, AgentProfile],
         private_infos: dict[str, PlayerPrivateInfo],
         game_context: str,
         prompt_kind: PromptKind,
     ) -> AIActionRequest:
+        references = self._player_references(state, agents)
         private_info = format_private_info(
             private_infos.get(player.player_id, PlayerPrivateInfo()),
             role_key=player.role_key,
+            player_label=lambda player_id: references.get(player_id, player_id),
         )
         round_info = self._round_info(state)
         alive_players = state.alive_player_ids()
+        board_context = self._board_context(state)
+        enabled_role_keys = {state_player.role_key for state_player in state.players}
 
         if prompt_kind == "night_action":
             prompt = build_night_action_prompt(
@@ -106,6 +112,9 @@ class AIActionScheduler:
                 alive_players=alive_players,
                 game_context=game_context,
                 private_info=private_info,
+                board_context=board_context,
+                player_references=references,
+                enabled_role_keys=enabled_role_keys,
             )
         elif prompt_kind == "day_speech":
             prompt = build_speech_prompt(
@@ -116,6 +125,9 @@ class AIActionScheduler:
                 game_context=game_context,
                 alive_players=alive_players,
                 private_info=private_info,
+                board_context=board_context,
+                player_references=references,
+                enabled_role_keys=enabled_role_keys,
             )
         elif prompt_kind == "exile_vote":
             prompt = build_vote_prompt(
@@ -127,6 +139,9 @@ class AIActionScheduler:
                 alive_players=alive_players,
                 self_id=player.player_id,
                 private_info=private_info,
+                board_context=board_context,
+                player_references=references,
+                enabled_role_keys=enabled_role_keys,
             )
         else:
             prompt = build_last_words_prompt(
@@ -137,6 +152,9 @@ class AIActionScheduler:
                 game_context=game_context,
                 alive_players=alive_players,
                 private_info=private_info,
+                board_context=board_context,
+                player_references=references,
+                enabled_role_keys=enabled_role_keys,
             )
 
         return AIActionRequest(
@@ -172,3 +190,28 @@ class AIActionScheduler:
     def _round_info(self, state: GameState) -> str:
         prefix = "night" if state.phase == GamePhase.NIGHT else "day"
         return f"{prefix}{state.day_count}"
+
+    def _player_references(self, state: GameState, agents: dict[str, AgentProfile]) -> dict[str, str]:
+        references: dict[str, str] = {}
+        for player in state.players:
+            if player.is_human:
+                display = "你"
+            else:
+                agent = agents.get(player.player_id)
+                display = agent.name if agent is not None else player.player_id
+            references[player.player_id] = f"{player.seat}号 {display}"
+        return references
+
+    def _board_context(self, state: GameState) -> str:
+        board_name = next((board.name for board in default_boards() if board.board_id == state.board_id), state.board_id)
+        role_counts: dict[str, int] = {}
+        for player in state.players:
+            role_counts[player.role_key] = role_counts.get(player.role_key, 0) + 1
+        roles = []
+        for role_key, count in role_counts.items():
+            try:
+                role_name = self.role_registry.get(role_key).name
+            except KeyError:
+                role_name = role_key
+            roles.append(f"{role_name}x{count}")
+        return f"板子：{board_name}；角色构成：{'、'.join(roles)}；胜利条件：狼人全部出局或狼人达到人数优势。"

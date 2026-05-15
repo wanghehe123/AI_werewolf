@@ -22,6 +22,8 @@ LLM Prompt 构建器
 }
 """
 
+from collections.abc import Callable
+
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import PlayerPrivateInfo
 
@@ -37,6 +39,9 @@ def build_player_prompt(
     dead_players: list[str] | None = None,
     action_hint: str = "",
     private_info: str = "",
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
 ) -> str:
     """
     构建 AI 玩家的完整 Prompt（基于通用提示词规范）
@@ -117,7 +122,7 @@ def build_player_prompt(
     ])
 
     # ---- 角色特定约束 ----
-    role_constraints = _get_role_constraints(role_key)
+    role_constraints = _get_role_constraints(role_key, enabled_role_keys)
     parts.extend([
         "=" * 40,
         "【角色约束】",
@@ -125,6 +130,16 @@ def build_player_prompt(
         *role_constraints,
         "",
     ])
+
+    # ---- 板子信息 ----
+    if board_context:
+        parts.extend([
+            "=" * 40,
+            "【板子信息】",
+            "=" * 40,
+            board_context,
+            "",
+        ])
 
     # ---- 游戏状态 ----
     parts.extend([
@@ -139,13 +154,24 @@ def build_player_prompt(
 
     # ---- 存活玩家 ----
     if alive_players:
-        parts.append(f"存活玩家：{', '.join(alive_players)}")
+        parts.append(f"存活玩家：{', '.join(_format_player_options(alive_players, player_references))}")
         parts.append("")
 
     # ---- 死亡玩家 ----
     if dead_players:
-        parts.append(f"已出局玩家：{', '.join(dead_players)}")
+        parts.append(f"已出局玩家：{', '.join(_format_player_options(dead_players, player_references))}")
         parts.append("")
+
+    if player_references:
+        parts.extend([
+            "=" * 40,
+            "【玩家编号】",
+            "=" * 40,
+            "发言时称呼其他玩家必须使用座位编号和玩家名，不要直接念玩家ID。",
+            "行动选择的 target_id 字段仍必须填写括号前的真实玩家ID。",
+            *_format_player_reference_lines(player_references),
+            "",
+        ])
 
     # ---- 私有信息（如狼队友、查验结果）----
     if private_info:
@@ -193,13 +219,7 @@ def build_player_prompt(
         "}",
         "",
         "【action_type 枚举说明】：",
-        "- speak: 发言或遗言",
-        "- vote: 放逐投票",
-        "- wolf_kill: 狼人夜晚击杀",
-        "- seer_check: 预言家查验",
-        "- witch_save: 女巫使用解药",
-        "- witch_poison: 女巫使用毒药",
-        "- hunter_shoot: 猎人开枪",
+        *_action_enum_lines(enabled_role_keys),
         "",
     ])
 
@@ -230,6 +250,9 @@ def build_speech_prompt(
     game_context: str,
     alive_players: list[str],
     private_info: str = "",
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
 ) -> str:
     """
     构建白天发言阶段的 Prompt
@@ -272,6 +295,9 @@ def build_speech_prompt(
         alive_players=alive_players,
         action_hint=action_hint,
         private_info=private_info,
+        board_context=board_context,
+        player_references=player_references,
+        enabled_role_keys=enabled_role_keys,
     )
 
 
@@ -284,6 +310,9 @@ def build_vote_prompt(
     alive_players: list[str],
     self_id: str,
     private_info: str = "",
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
 ) -> str:
     """
     构建投票阶段的 Prompt
@@ -308,7 +337,7 @@ def build_vote_prompt(
 
     action_hint = (
         f"现在是投票阶段。请选择你要投票放逐的玩家。\n"
-        f"可投票玩家：{', '.join(votable)}\n"
+        f"可投票玩家：{', '.join(_format_player_options(votable, player_references))}\n"
         "规则：\n"
         "1. 在 target 字段填入你要投票的玩家 ID\n"
         "2. 如果选择弃票，target 填 null\n"
@@ -325,6 +354,9 @@ def build_vote_prompt(
         alive_players=votable,
         action_hint=action_hint,
         private_info=private_info,
+        board_context=board_context,
+        player_references=player_references,
+        enabled_role_keys=enabled_role_keys,
     )
 
 
@@ -336,6 +368,9 @@ def build_last_words_prompt(
     game_context: str,
     alive_players: list[str],
     private_info: str = "",
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
 ) -> str:
     """
     构建遗言阶段的 Prompt。
@@ -360,6 +395,9 @@ def build_last_words_prompt(
         alive_players=alive_players,
         action_hint=action_hint,
         private_info=private_info,
+        board_context=board_context,
+        player_references=player_references,
+        enabled_role_keys=enabled_role_keys,
     )
 
 
@@ -372,12 +410,15 @@ def build_night_action_prompt(
     alive_players: list[str],
     game_context: str = "",
     private_info: str = "",
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
 ) -> str:
     """
     构建夜晚行动阶段的 Prompt
 
     根据角色的夜晚技能，构建对应的行动 prompt：
-    - 狼人：选择要击杀的玩家（night_kill）
+    - 狼人：选择要击杀的玩家（wolf_kill）
     - 预言家：选择要查验的玩家（check）
     - 女巫：决定是否用药（save/poison）
     - 守卫：选择要守护的玩家（guard）
@@ -397,13 +438,13 @@ def build_night_action_prompt(
     """
     # 根据角色和行动类型构建提示
     if role_key == "werewolf":
-        action_hint = _build_wolf_action_hint(alive_players)
+        action_hint = _build_wolf_action_hint(alive_players, player_references, enabled_role_keys)
     elif role_key == "seer":
-        action_hint = _build_seer_action_hint(alive_players)
+        action_hint = _build_seer_action_hint(alive_players, player_references)
     elif role_key == "witch":
         action_hint = _build_witch_action_hint(private_info)
     elif role_key == "guardian":
-        action_hint = _build_guardian_action_hint(alive_players)
+        action_hint = _build_guardian_action_hint(alive_players, player_references)
     else:
         action_hint = "你是普通村民，夜晚没有行动，请选择 no_action。"
 
@@ -417,21 +458,30 @@ def build_night_action_prompt(
         alive_players=alive_players,
         action_hint=action_hint,
         private_info=private_info,
+        board_context=board_context,
+        player_references=player_references,
+        enabled_role_keys=enabled_role_keys,
     )
 
 
-def format_private_info(private_info: PlayerPrivateInfo, role_key: str) -> str:
+def format_private_info(
+    private_info: PlayerPrivateInfo,
+    role_key: str,
+    player_label: Callable[[str], str] | None = None,
+) -> str:
     """把结构化私有信息转换为仅当前角色可见的 Prompt 文本。"""
     lines: list[str] = []
+    label = player_label or (lambda player_id: player_id)
 
     if role_key in {"werewolf", "wolf_king", "wolf_beauty"} and private_info.wolf_teammates:
-        lines.append(f"狼队友：{', '.join(private_info.wolf_teammates)}")
+        lines.append(f"狼队友：{', '.join(label(player_id) for player_id in private_info.wolf_teammates)}")
 
     if role_key == "seer" and private_info.seer_results:
         lines.append("查验结果：")
         for result in private_info.seer_results:
             camp = "狼人阵营" if result.get("result") == "werewolf" else "好人阵营"
-            lines.append(f"- {result.get('round')} 查验 {result.get('target')}：{camp}")
+            target = result.get("target")
+            lines.append(f"- {result.get('round')} 查验 {label(target) if target else target}：{camp}")
 
     if role_key == "witch" and private_info.witch_medicine:
         save = "可用" if private_info.witch_medicine.get("save", False) else "已使用"
@@ -439,7 +489,7 @@ def format_private_info(private_info: PlayerPrivateInfo, role_key: str) -> str:
         lines.append(f"女巫药品：解药{save}，毒药{poison}")
 
     if role_key in {"guard", "guardian"} and private_info.guard_history:
-        lines.append(f"守卫历史：{', '.join(private_info.guard_history)}")
+        lines.append(f"守卫历史：{', '.join(label(player_id) for player_id in private_info.guard_history)}")
 
     if role_key == "hunter":
         status = "可以开枪" if private_info.hunter_can_shoot else "不能开枪"
@@ -454,23 +504,33 @@ def format_private_info(private_info: PlayerPrivateInfo, role_key: str) -> str:
     return "\n".join(lines)
 
 
-def _build_wolf_action_hint(alive_players: list[str]) -> str:
+def _build_wolf_action_hint(
+    alive_players: list[str],
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
+) -> str:
     """构建狼人夜晚行动提示"""
+    visible_specials = [
+        role
+        for key, role in [("seer", "预言家"), ("witch", "女巫"), ("hunter", "猎人"), ("guardian", "守卫"), ("guard", "守卫")]
+        if enabled_role_keys is None or key in enabled_role_keys
+    ]
+    special_hint = "、".join(dict.fromkeys(visible_specials)) or "关键好人"
     return (
         "你是狼人，现在是夜晚狼队交流时间。\n"
         "你可以选择一个玩家作为今晚的击杀目标。\n"
         "刀人优先考虑：\n"
-        "1. 明确神职（预言家、女巫、猎人等）\n"
+        f"1. 明确神职或关键身份（当前板子可能存在：{special_hint}）\n"
         "2. 强逻辑好人\n"
         "3. 已坐实身份的玩家\n"
         "4. 对狼队威胁最大的人\n"
         "5. 能制造白天混乱的刀口\n"
-        f"可选择的目标：{', '.join(alive_players)}\n"
-        "在 target 字段填入目标玩家 ID，action 填 night_kill。"
+        f"可选择的目标：{', '.join(_format_player_options(alive_players, player_references))}\n"
+        "在 target 字段填入目标玩家 ID，action_type 填 wolf_kill。"
     )
 
 
-def _build_seer_action_hint(alive_players: list[str]) -> str:
+def _build_seer_action_hint(alive_players: list[str], player_references: dict[str, str] | None = None) -> str:
     """构建预言家查验提示"""
     return (
         "你是预言家，现在是夜晚。\n"
@@ -480,8 +540,8 @@ def _build_seer_action_hint(alive_players: list[str]) -> str:
         "2. 白天焦点位\n"
         "3. 站边关键位\n"
         "4. 可能影响投票归票的人\n"
-        f"可查验的目标：{', '.join(alive_players)}\n"
-        "在 target 字段填入要查验的玩家 ID，action 填 check。"
+        f"可查验的目标：{', '.join(_format_player_options(alive_players, player_references))}\n"
+        "在 target 字段填入要查验的玩家 ID，action_type 填 seer_check。"
     )
 
 
@@ -498,9 +558,9 @@ def _build_witch_action_hint(private_info: str) -> str:
         "解药一般优先救：明确好人、关键神职、强逻辑玩家\n"
         "毒药一般用于：狼面极高的人、悍跳失败的人、发言明显聊爆的人\n"
         "\n"
-        "如果选择 save，target 填被救玩家 ID；\n"
-        "如果选择 poison，target 填被毒玩家 ID；\n"
-        "如果选择 no_action，target 填 null。"
+        "如果选择救，action_type 填 witch_save，target 填被救玩家 ID；\n"
+        "如果选择毒，action_type 填 witch_poison，target 填被毒玩家 ID；\n"
+        "如果什么都不做，action_type 填 no_action，target 填 null。"
     )
     # 如果有死亡信息，追加到提示中
     if private_info and "死亡" in private_info:
@@ -508,7 +568,7 @@ def _build_witch_action_hint(private_info: str) -> str:
     return base
 
 
-def _build_guardian_action_hint(alive_players: list[str]) -> str:
+def _build_guardian_action_hint(alive_players: list[str], player_references: dict[str, str] | None = None) -> str:
     """构建守卫守护提示"""
     return (
         "你是守卫，现在是夜晚。\n"
@@ -518,8 +578,8 @@ def _build_guardian_action_hint(alive_players: list[str]) -> str:
         "2. 明确好人\n"
         "3. 强逻辑玩家\n"
         "注意：不能连续两晚守护同一个人。\n"
-        f"可守护的目标：{', '.join(alive_players)}\n"
-        "在 target 字段填入要守护的玩家 ID，action 填 guard。"
+        f"可守护的目标：{', '.join(_format_player_options(alive_players, player_references))}\n"
+        "在 target 字段填入要守护的玩家 ID，action_type 填 guard。"
     )
 
 
@@ -580,7 +640,43 @@ def _risk_preference_cn(pref: str) -> str:
     return mapping.get(pref, pref)
 
 
-def _get_role_constraints(role_key: str) -> list[str]:
+def _format_player_options(player_ids: list[str], references: dict[str, str] | None) -> list[str]:
+    if not references:
+        return player_ids
+    return [f"{player_id}（{references.get(player_id, player_id)}）" for player_id in player_ids]
+
+
+def _format_player_reference_lines(references: dict[str, str]) -> list[str]:
+    return [f"- {player_id}（{label}）" for player_id, label in references.items()]
+
+
+def _action_enum_lines(enabled_role_keys: set[str] | None = None) -> list[str]:
+    lines = [
+        "- speak: 发言或遗言",
+        "- vote: 放逐投票",
+    ]
+    role_actions = [
+        ("werewolf", "- wolf_kill: 狼人夜晚击杀"),
+        ("seer", "- seer_check: 预言家查验"),
+        ("witch", "- witch_save: 女巫使用解药"),
+        ("witch", "- witch_poison: 女巫使用毒药"),
+        ("guard", "- guard: 守卫守护"),
+        ("guardian", "- guard: 守卫守护"),
+        ("hunter", "- hunter_shoot: 猎人开枪"),
+    ]
+    seen: set[str] = set()
+    for role_key, line in role_actions:
+        if enabled_role_keys is not None and role_key not in enabled_role_keys:
+            continue
+        if line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
+    lines.append("- no_action: 当前无需行动")
+    return lines
+
+
+def _get_role_constraints(role_key: str, enabled_role_keys: set[str] | None = None) -> list[str]:
     """
     获取角色特定的约束规则
 

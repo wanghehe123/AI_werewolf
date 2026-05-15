@@ -11,6 +11,7 @@ AI 玩家决策器
 """
 
 import logging
+from collections.abc import Iterator
 from typing import Protocol
 
 from ai_werewolf.llm.safety import is_safe_speech
@@ -28,6 +29,9 @@ class DecisionModel(Protocol):
     """
 
     def decide(self, prompt: str) -> dict:
+        ...
+
+    def stream_speech(self, prompt: str) -> Iterator[str]:
         ...
 
 
@@ -99,6 +103,26 @@ class PlayerDecider:
             )
 
         return decision
+
+    def stream_speech(self, prompt: str) -> Iterator[str]:
+        """Yield safe speech chunks, falling back to normal decision if needed."""
+        if not hasattr(self.model, "stream_speech"):
+            yield self.decide(prompt).speech
+            return
+
+        chunks: list[str] = []
+        try:
+            for chunk in self.model.stream_speech(prompt):
+                chunks.append(chunk)
+                yield chunk
+        except Exception:
+            logger.exception("LLM 流式发言失败，回退到普通决策")
+            yield self.decide(prompt).speech
+            return
+
+        speech = "".join(chunks)
+        if speech and not is_safe_speech(speech):
+            logger.warning("不安全的流式发言被过滤: %s", speech[:100])
 
     def _safe_fallback_speech(self, raw: dict) -> str:
         """

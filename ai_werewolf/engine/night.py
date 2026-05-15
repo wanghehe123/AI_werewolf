@@ -6,7 +6,7 @@ from typing import Any
 
 from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
 from ai_werewolf.engine.context import build_game_context
-from ai_werewolf.engine.helpers import display_name, event
+from ai_werewolf.engine.helpers import display_name, event, player_label, player_references
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
 from ai_werewolf.llm.player_decider import PlayerDecider
@@ -37,24 +37,41 @@ class NightResolver:
         events: list[dict[str, Any]] = []
         # 优化点，统一封装为夜晚存在行动的角色，通过策略模式和注册期模式直接包起来
         # 1. Wolf kill
+        if self._has_alive_role(session, {"werewolf"}):
+            events.append(event("night_step_started", "狼人开始行动。", step="werewolf"))
         wolf_target_id = self._collect_wolf_kill(session, context)
+        if self._has_alive_role(session, {"werewolf"}):
+            events.append(event("night_step_finished", "狼人行动完成。", step="werewolf"))
 
         # 2. Seer check
+        if self._has_alive_role(session, {"seer"}):
+            events.append(event("night_step_started", "预言家开始行动。", step="seer"))
         self._collect_seer_check(session, context)
+        if self._has_alive_role(session, {"seer"}):
+            events.append(event("night_step_finished", "预言家行动完成。", step="seer"))
 
         # 3. Guard protect
+        if self._has_alive_role(session, {"guard", "guardian"}):
+            events.append(event("night_step_started", "守卫开始行动。", step="guard"))
         guard_target_id = self._collect_guard(session, context)
+        if self._has_alive_role(session, {"guard", "guardian"}):
+            events.append(event("night_step_finished", "守卫行动完成。", step="guard"))
 
         # 4. Witch decision (needs to know wolf target)
+        if self._has_alive_role(session, {"witch"}):
+            events.append(event("night_step_started", "女巫开始行动。", step="witch"))
         witch_poison_target = self._collect_witch(session, context, wolf_target_id)
+        if self._has_alive_role(session, {"witch"}):
+            events.append(event("night_step_finished", "女巫行动完成。", step="witch"))
 
         # 5. Resolve deaths
         deaths = self._resolve_deaths(session, wolf_target_id, guard_target_id, witch_poison_target)
 
         # 6. Record deaths and set phase
         state.phase = GamePhase.DAY_ANNOUNCEMENT
+        events.append(event("phase_changed", "天亮了，所有玩家睁眼。"))
         if deaths:
-            death_names = [display_name(pid, session) for pid in deaths]
+            death_names = [player_label(pid, session) for pid in deaths]
             events.append(event("night_result", f"昨夜，玩家{', '.join(death_names)} 出局。"))
         else:
             events.append(event("night_result", "昨夜平安夜，没有玩家出局。"))
@@ -67,8 +84,10 @@ class NightResolver:
         if not alive_wolves:
             return None
 
-        # Use first wolf as representative
-        wolf = alive_wolves[0]
+        # Use first AI wolf as representative; skip human wolves
+        wolf = next((w for w in alive_wolves if not w.is_human), None)
+        if wolf is None:
+            return None
         decision = self._get_ai_decision(session, wolf.player_id, context)
 
         target_id = self._validate_target(decision.target_id, session.state, exclude_wolves=True)
@@ -149,16 +168,16 @@ class NightResolver:
             # First night: witch can save self. After first night: cannot save self.
             can_save_self = session.state.day_count == 1
             if wolf_target_id == alive_witch.player_id and not can_save_self:
-                death_info = f"今晚 {display_name(wolf_target_id, session)} 被狼人击杀（你不能自救）。"
+                death_info = f"今晚 {player_label(wolf_target_id, session)} 被狼人击杀（你不能自救）。"
             else:
-                death_info = f"今晚 {display_name(wolf_target_id, session)} 被狼人击杀。"
+                death_info = f"今晚 {player_label(wolf_target_id, session)} 被狼人击杀。"
 
         if death_info:
             # Inject death info into the witch's private info for prompt building
-            base_private = format_private_info(info, "witch")
+            base_private = format_private_info(info, "witch", player_label=lambda player_id: player_label(player_id, session))
             augmented_private = base_private + "\n" + death_info if base_private else death_info
         else:
-            augmented_private = format_private_info(info, "witch")
+            augmented_private = format_private_info(info, "witch", player_label=lambda player_id: player_label(player_id, session))
 
         # Build prompt with augmented private info
         agent = session.agents.get(alive_witch.player_id)
@@ -174,6 +193,9 @@ class NightResolver:
             alive_players=session.state.alive_player_ids(),
             game_context=context,
             private_info=augmented_private,
+            board_context=self._board_context(session),
+            player_references=player_references(session),
+            enabled_role_keys={player.role_key for player in session.state.players},
         )
 
         decision = self._get_ai_decision_with_prompt(session, alive_witch.player_id, prompt)
@@ -288,3 +310,22 @@ class NightResolver:
                 non_wolves = [p.player_id for p in state.players if p.alive and p.role_key != "werewolf"]
                 return non_wolves[0] if non_wolves else None
         return target_id
+
+    def _has_alive_role(self, session: GameSession, role_keys: set[str]) -> bool:
+        return any(player.alive and player.role_key in role_keys for player in session.state.players)
+
+    def _board_context(self, session: GameSession) -> str:
+        role_counts: dict[str, int] = {}
+        for player in session.state.players:
+            role_counts[player.role_key] = role_counts.get(player.role_key, 0) + 1
+        role_names = {
+            "werewolf": "狼人",
+            "seer": "预言家",
+            "witch": "女巫",
+            "hunter": "猎人",
+            "villager": "村民",
+            "guard": "守卫",
+            "guardian": "守卫",
+        }
+        roles = "、".join(f"{role_names.get(role_key, role_key)}x{count}" for role_key, count in role_counts.items())
+        return f"板子：{session.state.board_id}；角色构成：{roles}；胜利条件：狼人全部出局或狼人达到人数优势。"

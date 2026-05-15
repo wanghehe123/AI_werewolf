@@ -1,10 +1,11 @@
 import { PhaseSceneRouter } from "./PhaseSceneRouter";
-import type { GameStateDto, SubmitActionInput } from "./types";
+import type { GameStateDto, StreamingSpeechDto, SubmitActionInput } from "./types";
 
 interface GameTableProps {
   game: GameStateDto;
   onSubmitAction: (action: SubmitActionInput) => Promise<void>;
   pending: boolean;
+  streamingSpeeches?: Record<string, StreamingSpeechDto>;
 }
 
 const phaseLabels: Record<GameStateDto["phase"], string> = {
@@ -19,7 +20,9 @@ const phaseLabels: Record<GameStateDto["phase"], string> = {
   game_over: "游戏复盘"
 };
 
-export function GameTable({ game, onSubmitAction, pending }: GameTableProps) {
+export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {} }: GameTableProps) {
+  const streamingSpeechEntries = Object.entries(streamingSpeeches).filter(([, value]) => value.speech.trim().length > 0);
+
   return (
     <main className="game-table">
       <header className="phase-banner">
@@ -66,6 +69,12 @@ export function GameTable({ game, onSubmitAction, pending }: GameTableProps) {
               </p>
             ))
           )}
+          {streamingSpeechEntries.map(([playerId, value]) => (
+            <p className="streaming-event" key={`streaming-${playerId}`}>
+              <span>speech_delta</span>
+              {value.label}：{value.speech}
+            </p>
+          ))}
         </aside>
       </section>
 

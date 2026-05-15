@@ -25,3 +25,12 @@ def test_model_registry_uses_default_provider_when_role_has_no_binding():
     provider = registry.provider_for_role("villager", [])
 
     assert provider.config.provider_id == "default"
+
+
+def test_fake_provider_streams_speech_chunks():
+    provider = FakeModelProvider(LLMProviderConfig(provider_id="fake", provider_type="fake", model_name="fake-default"))
+
+    chunks = list(provider.stream_speech("请发言"))
+
+    assert "".join(chunks) == "我会结合当前信息谨慎判断。"
+    assert len(chunks) > 1

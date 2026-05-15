@@ -11,6 +11,7 @@ import type {
   BoardConfig,
   CreateGameRequest,
   GameStateDto,
+  GameStreamEventDto,
   SubmitActionInput
 } from "./types";
 
@@ -90,6 +91,41 @@ export function submitGameAction(gameId: string, payload: SubmitActionInput, bas
     },
     baseUrl
   );
+}
+
+export function subscribeGameStream(
+  gameId: string,
+  options: {
+    playerId: string;
+    onEvent: (event: GameStreamEventDto) => void;
+    onError?: (event: Event) => void;
+  },
+  baseUrl = apiBaseUrl()
+): EventSource {
+  const params = new URLSearchParams({ player_id: options.playerId });
+  const source = new EventSource(`${baseUrl}/games/${gameId}/stream?${params.toString()}`);
+  const eventTypes = [
+    "state_snapshot",
+    "phase_changed",
+    "night_step_started",
+    "night_step_finished",
+    "speech_delta",
+    "speech_completed",
+    "current_speaker_changed",
+    "ai_thinking",
+    "game_created",
+    "night_result"
+  ];
+
+  for (const eventType of eventTypes) {
+    source.addEventListener(eventType, (message) => {
+      options.onEvent(JSON.parse((message as MessageEvent<string>).data) as GameStreamEventDto);
+    });
+  }
+  if (options.onError) {
+    source.onerror = options.onError;
+  }
+  return source;
 }
 
 export function adminLogin(username: string, password: string, baseUrl?: string): Promise<{ session_id: string }> {

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
 from ai_werewolf.engine.context import build_game_context
-from ai_werewolf.engine.helpers import display_name, event
+from ai_werewolf.engine.helpers import event, player_label
 from ai_werewolf.engine.hunter import HunterResolver
 from ai_werewolf.engine.night import NightResolver
 from ai_werewolf.engine.session import GameSession
@@ -66,11 +66,12 @@ class PhaseOrchestrator:
     def _start_game(self, session: GameSession) -> None:
         session.state.phase = GamePhase.NIGHT
         session.state.day_count = 1
-        session.public_events.append(event("phase_changed", "夜幕降临，所有玩家闭眼。"))
+        session.append_public_event("phase_changed", "夜幕降临，所有玩家闭眼。")
 
     def _resolve_night(self, session: GameSession) -> None:
         events = self.night.resolve(session)
-        session.public_events.extend(events)
+        for public_event in events:
+            self._append_event_dict(session, public_event)
 
         # Check if any dead player is a hunter (can shoot on night kill)
         for player in session.state.players:
@@ -78,7 +79,8 @@ class PhaseOrchestrator:
                 info = session.private_infos.get(player.player_id, PlayerPrivateInfo())
                 if info.hunter_can_shoot:
                     shoot_events = self.hunter.try_shoot(session, player.player_id, death_cause="night_kill")
-                    session.public_events.extend(shoot_events)
+                    for public_event in shoot_events:
+                        self._append_event_dict(session, public_event)
 
         # Check win after night + hunter shoot
         winner = evaluate_winner(session.state, self.role_registry)
@@ -88,25 +90,56 @@ class PhaseOrchestrator:
     def _enter_speech(self, session: GameSession) -> None:
         session.state.phase = GamePhase.DAY_SPEECH
         self._append_ai_speeches(session)
-        session.public_events.append(event("phase_changed", "进入白天发言阶段，现在轮到你发言。"))
+        session.append_public_event("phase_changed", "进入白天发言阶段，现在轮到你发言。")
 
     def _append_ai_speeches(self, session: GameSession) -> None:
         """Generate AI speeches via LLM."""
-        context = build_game_context(session)
         for player in session.state.players:
             if player.is_human or not player.alive:
                 continue
-            speech = self._get_ai_speech(session, player.player_id, context)
-            name = display_name(player.player_id, session)
-            session.public_events.append(event("speech", f"{name}：{speech}", actor_id=player.player_id))
+            context = build_game_context(session)
+            label = player_label(player.player_id, session)
+            session.publish_stream_event(
+                "current_speaker_changed",
+                {"player_id": player.player_id, "label": label},
+                actor_id=player.player_id,
+            )
+            session.publish_stream_event(
+                "ai_thinking",
+                {"message": f"{label} 正在发言。", "player_id": player.player_id, "label": label},
+                actor_id=player.player_id,
+            )
+            chunks: list[str] = []
+            for chunk in self._stream_ai_speech(session, player.player_id, context):
+                chunks.append(chunk)
+                session.publish_stream_event(
+                    "speech_delta",
+                    {
+                        "player_id": player.player_id,
+                        "label": label,
+                        "delta": chunk,
+                        "speech": "".join(chunks),
+                    },
+                    actor_id=player.player_id,
+                )
+            speech = "".join(chunks).strip() or "我先听听大家的意见，再做判断。"
+            message = f"{label}：{speech}"
+            session.public_events.append(event("speech", message, actor_id=player.player_id))
+            session.publish_stream_event(
+                "speech_completed",
+                {"message": message, "player_id": player.player_id, "label": label, "speech": speech},
+                actor_id=player.player_id,
+            )
 
     def _enter_vote(self, session: GameSession, action: dict) -> None:
         """Record human speech, switch to EXILE_VOTE (no AI vote yet)."""
-        session.public_events.append(
-            event("speech", f"你：{action.get('content') or '我先过。'}", actor_id=action["actor_player_id"])
+        session.append_public_event(
+            "speech",
+            f"{player_label(action['actor_player_id'], session)}：{action.get('content') or '我先过。'}",
+            actor_id=action["actor_player_id"],
         )
         session.state.phase = GamePhase.EXILE_VOTE
-        session.public_events.append(event("phase_changed", "发言结束，进入放逐投票。"))
+        session.append_public_event("phase_changed", "发言结束，进入放逐投票。")
 
     def _resolve_vote(self, session: GameSession, action: dict) -> None:
         """Human votes first, then AI votes, then resolve exile."""
@@ -121,26 +154,23 @@ class PhaseOrchestrator:
             exiled_player = session.state.player_by_id(exiled_id)
             if not exiled_player.is_human:
                 last_words = self._get_ai_last_words(session, exiled_id)
-                session.public_events.append(
-                    event("last_words", f"{display_name(exiled_id, session)}：{last_words}", actor_id=exiled_id)
-                )
+                session.append_public_event("last_words", f"{player_label(exiled_id, session)}：{last_words}", actor_id=exiled_id)
 
-            session.public_events.append(
-                event("last_words", f"{display_name(exiled_id, session)} 留下遗言，白天即将结束。", actor_id=exiled_id)
-            )
+            session.append_public_event("last_words", f"{player_label(exiled_id, session)} 留下遗言，白天即将结束。", actor_id=exiled_id)
 
             # Check hunter shoot for exiled hunter
             if exiled_player.role_key == "hunter":
                 info = session.private_infos.get(exiled_id, PlayerPrivateInfo())
                 if info.hunter_can_shoot:
                     shoot_events = self.hunter.try_shoot(session, exiled_id, death_cause="exile")
-                    session.public_events.extend(shoot_events)
+                    for public_event in shoot_events:
+                        self._append_event_dict(session, public_event)
         else:
             self._check_win_or_next_night(session)
 
     def _finish_last_words(self, session: GameSession) -> None:
         session.pending_last_words_player_id = None
-        session.public_events.append(event("phase_changed", "遗言结束，进入下一阶段。"))
+        session.append_public_event("phase_changed", "遗言结束，进入下一阶段。")
         self._check_win_or_next_night(session)
 
     # ---- Win check helpers ----
@@ -154,19 +184,19 @@ class PhaseOrchestrator:
         session.state.day_count += 1
         session.state.phase = GamePhase.NIGHT
         session.voted_player_ids.clear()
-        session.public_events.append(event("phase_changed", f"第 {session.state.day_count} 夜降临。"))
+        session.append_public_event("phase_changed", f"第 {session.state.day_count} 夜降临。")
 
     def _end_game(self, session: GameSession, winner: Winner) -> None:
         session.state.phase = GamePhase.GAME_OVER
         session.state.winner = winner.value
         winner_name = "狼人阵营" if winner == Winner.WOLVES else "好人阵营"
-        session.public_events.append(event("game_end", f"游戏结束，{winner_name}获胜！"))
+        session.append_public_event("game_end", f"游戏结束，{winner_name}获胜！")
         for player in session.state.players:
             role_name = {"werewolf": "狼人", "seer": "预言家", "witch": "女巫",
                          "hunter": "猎人", "villager": "平民"}.get(player.role_key, player.role_key)
-            name = display_name(player.player_id, session)
+            name = player_label(player.player_id, session)
             status = "存活" if player.alive else "出局"
-            session.public_events.append(event("role_reveal", f"{name} 的身份是：{role_name}（{status}）", actor_id=player.player_id))
+            session.append_public_event("role_reveal", f"{name} 的身份是：{role_name}（{status}）", actor_id=player.player_id)
 
     # ---- AI helpers ----
 
@@ -188,6 +218,25 @@ class PhaseOrchestrator:
             logger.exception("AI %s speech failed", player_id)
             return "我先听听大家的意见，再做判断。"
 
+    def _stream_ai_speech(self, session: GameSession, player_id: str, context: str):
+        player = session.state.player_by_id(player_id)
+        agent = session.agents.get(player_id)
+        if agent is None:
+            yield "我暂时没有想说的。"
+            return
+        try:
+            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
+            decider = PlayerDecider(provider)
+            tasks = self.scheduler.schedule(state=session.state, agents=session.agents, private_infos=session.private_infos, game_context=context)
+            task = next((t for t in tasks if t.player_id == player_id), None)
+            if task is None:
+                yield "我暂时没有想说的。"
+                return
+            yield from decider.stream_speech(task.prompt)
+        except Exception:
+            logger.exception("AI %s streaming speech failed", player_id)
+            yield "我先听听大家的意见，再做判断。"
+
     def _get_ai_last_words(self, session: GameSession, player_id: str) -> str:
         player = session.state.player_by_id(player_id)
         agent = session.agents.get(player_id)
@@ -206,3 +255,15 @@ class PhaseOrchestrator:
         except Exception:
             logger.exception("AI %s last words failed", player_id)
             return "没有遗言。"
+
+    def _append_event_dict(self, session: GameSession, public_event: dict) -> None:
+        payload = public_event.get("payload", {})
+        message = payload.get("message", "")
+        extra_payload = {key: value for key, value in payload.items() if key != "message"}
+        session.append_public_event(
+            public_event.get("event_type", ""),
+            message,
+            actor_id=public_event.get("actor_id"),
+            target_id=public_event.get("target_id"),
+            **extra_payload,
+        )

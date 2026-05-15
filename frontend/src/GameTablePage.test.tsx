@@ -25,6 +25,25 @@ describe("GameTable", () => {
 
     expect(screen.getByRole("button", { name: "开始游戏" })).toBeDisabled();
   });
+
+  it("renders streaming speech deltas as a temporary timeline item", () => {
+    render(
+      <GameTable
+        game={mockGame()}
+        onSubmitAction={vi.fn()}
+        pending={false}
+        streamingSpeeches={{
+          agent_xiaoming: {
+            label: "2号 小明",
+            speech: "我正在实时发言"
+          }
+        }}
+      />
+    );
+
+    expect(screen.getByText("speech_delta")).toBeInTheDocument();
+    expect(screen.getByText("2号 小明：我正在实时发言")).toBeInTheDocument();
+  });
 });
 
 function mockGame(): GameStateDto {

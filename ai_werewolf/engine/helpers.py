@@ -27,6 +27,17 @@ def display_name(player_id: str, session: GameSession) -> str:
     return agent.name if agent is not None else player_id
 
 
+def player_label(player_id: str, session: GameSession) -> str:
+    """Return the in-game reference users and AI should see."""
+    player = session.state.player_by_id(player_id)
+    return f"{player.seat}号 {display_name(player_id, session)}"
+
+
+def player_references(session: GameSession) -> dict[str, str]:
+    """Map player IDs to seat/name labels while preserving IDs for target fields."""
+    return {player.player_id: player_label(player.player_id, session) for player in session.state.players}
+
+
 def avatar_url(player_id: str, session: GameSession) -> str | None:
     """Get avatar URL for a player."""
     agent = session.agents.get(player_id)

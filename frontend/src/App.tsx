@@ -28,7 +28,8 @@ import {
   updateAdminPlayer,
   replaceAdminBoardRoles,
   createGame,
-  submitGameAction
+  submitGameAction,
+  subscribeGameStream
 } from "./api";
 import { AdminAgentsPage } from "./admin/AdminAgentsPage";
 import { AdminBoardsPage } from "./admin/AdminBoardsPage";
@@ -41,7 +42,24 @@ import { AdminPlayersPage } from "./admin/AdminPlayersPage";
 import { AdminRolesPage } from "./admin/AdminRolesPage";
 import { GameTable } from "./GameTable";
 import { LobbyPage } from "./LobbyPage";
-import type { AdminAgentDto, AdminBoardDto, AdminGameDto, AdminLlmProviderDto, AdminPlayerDto, AdminRoleModelBindingDto, AdminRoleDto, AgentProfile, BoardConfig, GameStateDto, SubmitActionInput } from "./types";
+import type {
+  AdminAgentDto,
+  AdminBoardDto,
+  AdminGameDto,
+  AdminLlmProviderDto,
+  AdminPlayerDto,
+  AdminRoleModelBindingDto,
+  AdminRoleDto,
+  AgentProfile,
+  BoardConfig,
+  GameEventDto,
+  GameStateDto,
+  GameStreamEventDto,
+  SpeechDeltaPayload,
+  StateSnapshotPayload,
+  StreamingSpeechDto,
+  SubmitActionInput
+} from "./types";
 
 export function App() {
   return (
@@ -90,6 +108,7 @@ function LobbyRoute() {
 function GameRoute() {
   const { gameId } = useParams();
   const [game, setGame] = useState<GameStateDto | null>(null);
+  const [streamingSpeeches, setStreamingSpeeches] = useState<Record<string, StreamingSpeechDto>>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,6 +120,48 @@ function GameRoute() {
       .then(setGame)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "加载游戏失败"));
   }, [gameId]);
+
+  useEffect(() => {
+    if (!gameId || !game?.human_player_id) {
+      return;
+    }
+    const source = subscribeGameStream(gameId, {
+      playerId: game.human_player_id,
+      onEvent: (event) => {
+        if (event.event_type === "state_snapshot") {
+          const payload = event.payload as unknown as StateSnapshotPayload;
+          setGame(payload.game_state);
+          return;
+        }
+        if (event.event_type === "speech_delta") {
+          const payload = event.payload as unknown as SpeechDeltaPayload;
+          setStreamingSpeeches((current) => ({
+            ...current,
+            [payload.player_id]: { label: payload.label, speech: payload.speech }
+          }));
+          return;
+        }
+        if (event.event_type === "speech_completed") {
+          const playerId = event.actor_id;
+          setStreamingSpeeches((current) => {
+            if (!playerId || !(playerId in current)) {
+              return current;
+            }
+            const next = { ...current };
+            delete next[playerId];
+            return next;
+          });
+        }
+        setGame((current) => appendStreamEvent(current, event));
+      },
+      onError: () => {
+        fetchGame(gameId)
+          .then(setGame)
+          .catch(() => undefined);
+      }
+    });
+    return () => source.close();
+  }, [gameId, game?.human_player_id]);
 
   async function handleAction(action: SubmitActionInput) {
     if (!gameId) {
@@ -123,7 +184,26 @@ function GameRoute() {
   if (!game) {
     return <StatusScreen title="正在进入房间" detail="正在恢复当前游戏状态。" />;
   }
-  return <GameTable game={game} onSubmitAction={handleAction} pending={pending} />;
+  return <GameTable game={game} onSubmitAction={handleAction} pending={pending} streamingSpeeches={streamingSpeeches} />;
+}
+
+function appendStreamEvent(game: GameStateDto | null, event: GameStreamEventDto): GameStateDto | null {
+  if (!game || typeof event.payload.message !== "string") {
+    return game;
+  }
+  const publicEvent: GameEventDto = {
+    event_type: event.event_type,
+    actor_id: event.actor_id,
+    target_id: event.target_id,
+    payload: { message: event.payload.message },
+    public: event.visibility === "public"
+  };
+  return {
+    ...game,
+    phase: event.phase,
+    day_count: event.day_count,
+    public_events: [...game.public_events, publicEvent]
+  };
 }
 
 function StatusScreen({ title, detail }: { title: string; detail: string }) {
