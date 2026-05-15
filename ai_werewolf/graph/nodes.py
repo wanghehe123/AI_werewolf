@@ -9,12 +9,14 @@ def initialize_game_node(
     human_player_id: str,
     agents: list[AgentProfile],
     seed: int | None = None,
+    human_role_key: str | None = None,
 ) -> GameState:
     if len(agents) != board.player_count - 1:
         raise ValueError("agent count must fill board seats after human player")
 
     player_ids = [human_player_id] + [agent.agent_id for agent in agents]
-    assigned = assign_roles(board, player_ids, seed=seed)
+    fixed_roles = {human_player_id: human_role_key} if human_role_key else None
+    assigned = assign_roles(board, player_ids, seed=seed, fixed_roles=fixed_roles)
     players = [
         PlayerState(
             player_id=human_player_id,

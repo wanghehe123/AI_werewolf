@@ -39,6 +39,7 @@ class CreateGameRequest(BaseModel):
     board_id: str
     human_player_id: str
     agent_ids: list[str]
+    human_role_key: str | None = None
 
 
 class SubmitActionRequest(BaseModel):
@@ -124,7 +125,17 @@ def create_game(request: CreateGameRequest):
     if len(selected_agents) != board.player_count - 1:
         raise HTTPException(status_code=400, detail="agent count must fill board seats after human player")
 
-    state = initialize_game_node(board, request.human_player_id, selected_agents, seed=None)
+    human_role_key = None if request.human_role_key in {None, "", "random"} else request.human_role_key
+    try:
+        state = initialize_game_node(
+            board,
+            request.human_player_id,
+            selected_agents,
+            seed=None,
+            human_role_key=human_role_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     state.game_id = f"game_{uuid4().hex[:12]}"
 
     session = GameSession(

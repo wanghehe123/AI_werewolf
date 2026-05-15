@@ -14,7 +14,9 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
   const [boardId, setBoardId] = useState(boards[0]?.board_id ?? "");
   const selectedBoard = useMemo(() => boards.find((board) => board.board_id === boardId) ?? boards[0], [boardId, boards]);
   const requiredAgents = Math.max((selectedBoard?.player_count ?? 1) - 1, 0);
+  const roleOptions = selectedBoard?.roles ?? [];
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>(() => agents.slice(0, requiredAgents).map((agent) => agent.agent_id));
+  const [humanRoleKey, setHumanRoleKey] = useState("random");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +44,7 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
       const game = await createGame({
         board_id: selectedBoard.board_id,
         human_player_id: "human",
+        human_role_key: humanRoleKey,
         agent_ids: selectedAgentIds
       });
       navigate(`/games/${game.game_id}`);
@@ -71,6 +74,7 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
                 onClick={() => {
                   setBoardId(board.board_id);
                   setSelectedAgentIds(agents.slice(0, Math.max(board.player_count - 1, 0)).map((agent) => agent.agent_id));
+                  setHumanRoleKey("random");
                 }}
               >
                 <strong>{board.name}</strong>
@@ -78,6 +82,25 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="config-panel">
+          <label className="panel-title" htmlFor="human-role-select">选择你的职业</label>
+          <p className="helper-text">默认随机；选择具体职业可方便测试夜晚技能和发言视角。</p>
+          <select
+            id="human-role-select"
+            className="role-select"
+            aria-label="选择你的职业"
+            value={humanRoleKey}
+            onChange={(event) => setHumanRoleKey(event.target.value)}
+          >
+            <option value="random">随机身份</option>
+            {roleOptions.map((role) => (
+              <option key={role.role_key} value={role.role_key}>
+                {roleLabel(role.role_key)} x{role.count}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="config-panel">
@@ -109,4 +132,17 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
       </section>
     </main>
   );
+}
+
+function roleLabel(roleKey: string): string {
+  const labels: Record<string, string> = {
+    werewolf: "狼人",
+    seer: "预言家",
+    witch: "女巫",
+    hunter: "猎人",
+    villager: "村民",
+    guard: "守卫",
+    guardian: "守卫"
+  };
+  return labels[roleKey] ?? roleKey;
 }

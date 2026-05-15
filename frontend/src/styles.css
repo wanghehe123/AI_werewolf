@@ -141,6 +141,16 @@ button:disabled {
   accent-color: #d7a756;
 }
 
+.role-select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f7efe1;
+}
+
 .agent-card span:last-child {
   display: grid;
   gap: 3px;

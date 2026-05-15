@@ -56,8 +56,26 @@ describe("LobbyPage", () => {
     expect(createGame).toHaveBeenCalledWith({
       board_id: "board_6_beginner",
       human_player_id: "human",
+      human_role_key: "random",
       agent_ids: ["agent_0", "agent_1", "agent_2", "agent_3", "agent_4"]
     });
+  });
+
+  it("lets the player choose a role before creating a game", async () => {
+    const createGame = vi.fn().mockResolvedValue({ game_id: "game_123" });
+
+    render(
+      <MemoryRouter>
+        <LobbyPage boards={boardsWithPlayerCount()} agents={agents} createGame={createGame} />
+      </MemoryRouter>
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText("选择你的职业"), "seer");
+    await userEvent.click(screen.getByRole("button", { name: "开局" }));
+
+    expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+      human_role_key: "seer"
+    }));
   });
 
   it("disables start when selected agents do not fill the board", () => {

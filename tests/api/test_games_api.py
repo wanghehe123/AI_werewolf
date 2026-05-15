@@ -18,6 +18,35 @@ def test_create_game_requires_matching_agent_count():
     assert "agent count" in response.json()["message"]
 
 
+def test_create_game_accepts_human_role_key_for_testing():
+    client = TestClient(create_app())
+
+    response = client.post("/games", json={
+        "board_id": "board_6_beginner",
+        "human_player_id": "human",
+        "human_role_key": "seer",
+        "agent_ids": ["agent_linye", "agent_xiaoman", "agent_qingshan", "agent_akai", "agent_moyu"],
+    })
+
+    assert response.status_code == 200
+    human = next(player for player in response.json()["data"]["players"] if player["is_human"])
+    assert human["role_key"] == "seer"
+
+
+def test_create_game_rejects_unavailable_human_role_key():
+    client = TestClient(create_app())
+
+    response = client.post("/games", json={
+        "board_id": "board_6_beginner",
+        "human_player_id": "human",
+        "human_role_key": "witch",
+        "agent_ids": ["agent_linye", "agent_xiaoman", "agent_qingshan", "agent_akai", "agent_moyu"],
+    })
+
+    assert response.status_code == 400
+    assert "fixed role witch is not available" in response.json()["message"]
+
+
 def test_game_stream_replays_events_after_last_event_id():
     client = TestClient(create_app())
     created = client.post(

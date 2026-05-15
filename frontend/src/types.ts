@@ -133,6 +133,7 @@ export interface CreateGameRequest {
   board_id: string;
   human_player_id: string;
   agent_ids: string[];
+  human_role_key?: string | null;
 }
 
 export interface SubmitActionInput {
