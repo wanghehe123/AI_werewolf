@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AdminAgentsPage } from "./AdminAgentsPage";
@@ -6,6 +7,61 @@ import { AdminBoardsPage } from "./AdminBoardsPage";
 import { AdminLlmPage } from "./AdminLlmPage";
 
 describe("admin pages", () => {
+  it("submits player creation only after required fields are present", async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    render(<AdminPlayersPage players={[]} onRefresh={vi.fn()} onCreate={onCreate} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
+    expect(screen.getByText("请先填写玩家名称")).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText("玩家名称"), "浏览器测试玩家");
+    await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
+
+    expect(onCreate).toHaveBeenCalledWith({ name: "浏览器测试玩家", is_ai: false });
+  });
+
+  it("submits board creation only after required fields are present", async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    render(<AdminBoardsPage boards={[]} onRefresh={vi.fn()} onCreate={onCreate} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "新增板子" }));
+    expect(screen.getByText("请先填写板子名称")).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText("板子名称"), "浏览器测试板子");
+    await userEvent.click(screen.getByRole("button", { name: "新增板子" }));
+
+    expect(onCreate).toHaveBeenCalledWith({
+      name: "浏览器测试板子",
+      description: null,
+      min_players: 6,
+      max_players: 6,
+      sheriff_enabled: false,
+      enabled: true
+    });
+  });
+
+  it("submits agent creation only after all required fields are present", async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    render(<AdminAgentsPage agents={[]} onRefresh={vi.fn()} onCreate={onCreate} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "新增 AI" }));
+    expect(screen.getByText("请填写 AI 名称、人格和发言风格")).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText("AI 名称"), "浏览器测试AI");
+    await userEvent.type(screen.getByLabelText("人格"), "谨慎");
+    await userEvent.type(screen.getByLabelText("发言风格"), "短句");
+    await userEvent.click(screen.getByRole("button", { name: "新增 AI" }));
+
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      name: "浏览器测试AI",
+      persona: "谨慎",
+      speech_style: "短句"
+    }));
+  });
+
   it("renders agent management table", () => {
     render(
       <AdminAgentsPage
