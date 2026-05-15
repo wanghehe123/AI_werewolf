@@ -15,7 +15,7 @@ def test_configured_database_url_uses_jdbc_environment(monkeypatch):
     monkeypatch.setenv("AI_WEREWOLF_JDBC_URL", "jdbc:postgresql://127.0.0.1:5432/ai_werewolf")
     monkeypatch.delenv("AI_WEREWOLF_DATABASE_URL", raising=False)
 
-    assert configured_database_url() == "postgresql+psycopg://127.0.0.1:5432/ai_werewolf"
+    assert configured_database_url() == "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/ai_werewolf"
 
 
 def test_game_repository_persists_game_and_player_roles():

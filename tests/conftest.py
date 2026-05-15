@@ -1,9 +1,6 @@
 import os
 
 import pytest
-from fastapi.testclient import TestClient
-
-from ai_werewolf.main import create_app
 
 
 os.environ.setdefault("AI_WEREWOLF_DATABASE_ENABLED", "false")
@@ -15,10 +12,3 @@ def disable_database_persistence_by_default(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("AI_WEREWOLF_DATABASE_URL", raising=False)
     monkeypatch.delenv("AI_WEREWOLF_JDBC_URL", raising=False)
     monkeypatch.delenv("AI_WEREWOLF_DATABASE_JDBC_URL", raising=False)
-
-
-@pytest.fixture
-def client():
-    """Create a fresh test client."""
-    with TestClient(create_app()) as test_client:
-        yield test_client

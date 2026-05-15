@@ -1,0 +1,11 @@
+# AI 狼人杀应用配置
+# 结构尽量贴近 Spring Boot 的 application.yml：本地默认连接 PostgreSQL。
+app:
+  database:
+    enabled: true
+    username: postgres
+    password: postgres
+    url: jdbc:postgresql://127.0.0.1:5432/
+    database: ai_werewolf
+    schema: public
+    echo: false

@@ -2,7 +2,26 @@
 
 ## PostgreSQL
 
-后端支持通过环境变量启用游戏落库。推荐使用 SQLAlchemy URL：
+后端默认通过 `ai_werewolf/config/application.yaml` 连接本地 PostgreSQL，配置结构接近 Spring Boot：
+
+```yaml
+app:
+  database:
+    enabled: true
+    username: postgres
+    password: postgres
+    url: jdbc:postgresql://127.0.0.1:5432/
+    database: ai_werewolf
+    schema: public
+```
+
+应用会组装为 SQLAlchemy 连接串：
+
+```text
+postgresql+psycopg://postgres:postgres@127.0.0.1:5432/ai_werewolf
+```
+
+也可以通过环境变量覆盖，推荐使用 SQLAlchemy URL：
 
 ```bash
 export AI_WEREWOLF_DATABASE_URL="postgresql+psycopg://postgres:postgres@127.0.0.1:5432/ai_werewolf"

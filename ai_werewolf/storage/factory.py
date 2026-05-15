@@ -1,13 +1,12 @@
-import os
-
 from sqlmodel import Session
 
+from ai_werewolf.config.application import database_persistence_enabled
 from ai_werewolf.storage.database import configured_database_url, create_engine_and_tables
 from ai_werewolf.storage.repositories import GameRepository
 
 
 def persistence_enabled() -> bool:
-    return bool(os.getenv("AI_WEREWOLF_DATABASE_URL") or os.getenv("AI_WEREWOLF_JDBC_URL"))
+    return database_persistence_enabled()
 
 
 def build_game_repository() -> GameRepository:

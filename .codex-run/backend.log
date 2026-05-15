@@ -1,0 +1,9 @@
+2026-05-15 10:41:09,300 [INFO] ai_werewolf.llm.model_registry: 已注册 Provider: deepseek (类型: openai_compatible, 模型: deepseek-v4-flash)
+2026-05-15 10:41:09,300 [INFO] ai_werewolf.llm.model_registry: 已注册 Provider: glm (类型: openai_compatible, 模型: glm-4.7)
+2026-05-15 10:41:09,300 [INFO] ai_werewolf.llm.model_registry: 已注册 Provider: minimax (类型: openai_compatible, 模型: MiniMax-M2.7)
+2026-05-15 10:41:09,300 [INFO] ai_werewolf.llm.model_registry: 已注册 Provider: fake (类型: fake, 模型: fake-default)
+2026-05-15 10:41:09,300 [INFO] ai_werewolf.main: LLM 配置加载成功，已注册 4 个 Provider
+INFO:     Started server process [52949]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
