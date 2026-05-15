@@ -173,3 +173,19 @@ export interface AdminGameDto {
     model_provider_id: string;
   }>;
 }
+
+export interface AdminLlmProviderDto {
+  provider_id: string;
+  provider_type: "fake" | "openai_compatible";
+  model_name: string;
+  base_url?: string | null;
+  api_key_env?: string | null;
+  temperature: number;
+  max_tokens: number;
+  timeout: number;
+}
+
+export interface AdminRoleModelBindingDto {
+  role_key: string;
+  provider_id: string;
+}

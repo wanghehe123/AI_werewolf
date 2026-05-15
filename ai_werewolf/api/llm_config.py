@@ -12,8 +12,10 @@ LLM 配置管理 API
 初始化时从 YAML 配置文件加载默认 Provider 和绑定。
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session
 
+from ai_werewolf.api.admin.dependencies import get_admin_session, require_admin_session
 from ai_werewolf.api.responses import success_response
 from ai_werewolf.api.games import configure_model_registry
 from ai_werewolf.llm.model_config import (
@@ -22,6 +24,8 @@ from ai_werewolf.llm.model_config import (
     load_llm_config_from_yaml,
 )
 from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider
+from ai_werewolf.storage.factory import persistence_enabled
+from ai_werewolf.storage.repositories import LLMConfigRepository
 
 router = APIRouter(prefix="/admin/llm", tags=["admin-llm"])
 
@@ -36,16 +40,31 @@ _bindings: dict[str, RoleModelBinding] = {
 }
 
 
-def _sync_game_registry() -> None:
+def _sync_game_registry(
+    providers: list[LLMProviderConfig] | None = None,
+    bindings: list[RoleModelBinding] | None = None,
+) -> None:
     """将当前配置同步到游戏引擎的模型注册中心"""
     registry = ModelProviderRegistry()
-    for provider in _providers.values():
+    current_providers = providers if providers is not None else list(_providers.values())
+    current_bindings = bindings if bindings is not None else list(_bindings.values())
+    for provider in current_providers:
         registry.register(build_provider(provider))
-    configure_model_registry(registry, list(_bindings.values()))
+    if current_providers:
+        default_provider_id = next(
+            (provider.provider_id for provider in current_providers if provider.provider_id == "fake"),
+            current_providers[0].provider_id,
+        )
+        registry.set_default(default_provider_id)
+    configure_model_registry(registry, current_bindings)
 
 
-@router.post("/providers", status_code=status.HTTP_201_CREATED)
-def create_provider(provider: LLMProviderConfig) -> dict:
+def _sync_game_registry_from_repository(repository: LLMConfigRepository) -> None:
+    _sync_game_registry(repository.list_providers(), repository.list_role_bindings())
+
+
+@router.post("/providers", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_session)])
+def create_provider(provider: LLMProviderConfig, session: Session = Depends(get_admin_session)) -> dict:
     """
     创建新的 LLM Provider
 
@@ -58,24 +77,31 @@ def create_provider(provider: LLMProviderConfig) -> dict:
     Returns:
         创建的 Provider 配置
     """
-    _providers[provider.provider_id] = provider
-    _sync_game_registry()
+    if persistence_enabled():
+        repository = LLMConfigRepository(session)
+        repository.save_provider(provider)
+        _sync_game_registry_from_repository(repository)
+    else:
+        _providers[provider.provider_id] = provider
+        _sync_game_registry()
     return success_response(data=provider)
 
 
-@router.get("/providers")
-def list_providers() -> dict:
+@router.get("/providers", dependencies=[Depends(require_admin_session)])
+def list_providers(session: Session = Depends(get_admin_session)) -> dict:
     """
     列出所有已配置的 LLM Provider
 
     Returns:
         Provider 配置列表
     """
+    if persistence_enabled():
+        return success_response(data=LLMConfigRepository(session).list_providers())
     return success_response(data=list(_providers.values()))
 
 
-@router.post("/role-bindings", status_code=status.HTTP_201_CREATED)
-def create_role_binding(binding: RoleModelBinding) -> dict:
+@router.post("/role-bindings", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_session)])
+def create_role_binding(binding: RoleModelBinding, session: Session = Depends(get_admin_session)) -> dict:
     """
     创建或更新角色-模型绑定
 
@@ -91,19 +117,28 @@ def create_role_binding(binding: RoleModelBinding) -> dict:
     Raises:
         404: 如果指定的 Provider 不存在
     """
-    if binding.provider_id not in _providers:
-        raise HTTPException(status_code=404, detail=f"unknown provider: {binding.provider_id}")
-    _bindings[binding.role_key] = binding
-    _sync_game_registry()
+    if persistence_enabled():
+        repository = LLMConfigRepository(session)
+        if repository.get_provider(binding.provider_id) is None:
+            raise HTTPException(status_code=404, detail=f"unknown provider: {binding.provider_id}")
+        repository.save_role_binding(binding)
+        _sync_game_registry_from_repository(repository)
+    else:
+        if binding.provider_id not in _providers:
+            raise HTTPException(status_code=404, detail=f"unknown provider: {binding.provider_id}")
+        _bindings[binding.role_key] = binding
+        _sync_game_registry()
     return success_response(data=binding)
 
 
-@router.get("/role-bindings")
-def list_role_bindings() -> dict:
+@router.get("/role-bindings", dependencies=[Depends(require_admin_session)])
+def list_role_bindings(session: Session = Depends(get_admin_session)) -> dict:
     """
     列出所有角色-模型绑定
 
     Returns:
         绑定列表
     """
+    if persistence_enabled():
+        return success_response(data=LLMConfigRepository(session).list_role_bindings())
     return success_response(data=list(_bindings.values()))

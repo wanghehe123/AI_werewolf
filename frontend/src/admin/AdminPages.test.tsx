@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AdminAgentsPage } from "./AdminAgentsPage";
 import { AdminBoardsPage } from "./AdminBoardsPage";
+import { AdminLlmPage } from "./AdminLlmPage";
 
 describe("admin pages", () => {
   it("renders agent management table", () => {
@@ -55,5 +56,31 @@ describe("admin pages", () => {
 
     expect(screen.getByText("6人新手局")).toBeInTheDocument();
     expect(screen.getByText("werewolf x2")).toBeInTheDocument();
+  });
+
+  it("renders editable LLM provider and role binding controls", () => {
+    render(
+      <AdminLlmPage
+        providers={[
+          {
+            provider_id: "deepseek",
+            provider_type: "openai_compatible",
+            model_name: "deepseek-chat",
+            base_url: "https://api.deepseek.com/v1",
+            api_key_env: "DEEPSEEK_API_KEY",
+            temperature: 0.8,
+            max_tokens: 1024,
+            timeout: 30
+          }
+        ]}
+        bindings={[{ role_key: "werewolf", provider_id: "deepseek" }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    expect(screen.getAllByText("deepseek").length).toBeGreaterThan(0);
+    expect(screen.getByText("werewolf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新增 Provider" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存绑定" })).toBeInTheDocument();
   });
 });

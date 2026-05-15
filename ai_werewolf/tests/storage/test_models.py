@@ -1,4 +1,15 @@
-from ai_werewolf.storage.models import Player, RoleMetadata, Board, BoardRole
+from ai_werewolf.storage.models import (
+    AgentProfileRecord,
+    Board,
+    BoardRecord,
+    BoardRole,
+    GamePlayerRecord,
+    GameRecord,
+    LLMProviderRecord,
+    Player,
+    RoleMetadata,
+    RoleModelBindingRecord,
+)
 
 def test_player_can_be_created():
     player = Player(name="测试玩家", is_ai=False)
@@ -41,3 +52,16 @@ def test_board_role_uses_board_and_role_as_identity():
 
     assert role.board_id == "board_a"
     assert role.role_key == "werewolf"
+
+
+def test_orm_table_names_match_database_schema_document():
+    assert BoardRecord.__tablename__ == "board_records"
+    assert LLMProviderRecord.__tablename__ == "llm_providers"
+    assert RoleModelBindingRecord.__tablename__ == "role_model_bindings"
+    assert GameRecord.__tablename__ == "games"
+    assert GamePlayerRecord.__tablename__ == "game_players"
+    assert Player.__tablename__ == "players"
+    assert AgentProfileRecord.__tablename__ == "agent_profiles"
+    assert Board.__tablename__ == "boards"
+    assert BoardRole.__tablename__ == "board_roles"
+    assert RoleMetadata.__tablename__ == "role_metadata"

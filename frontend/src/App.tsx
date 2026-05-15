@@ -6,16 +6,27 @@ import {
   adminLogout,
   createAdminAgent,
   createAdminBoard,
+  createAdminLlmProvider,
   createAdminPlayer,
+  createAdminRoleModelBinding,
+  deleteAdminAgent,
+  deleteAdminBoard,
+  deleteAdminPlayer,
   fetchAdminAgents,
   fetchAdminBoards,
   fetchAdminGames,
+  fetchAdminLlmProviders,
   fetchAdminPlayers,
+  fetchAdminRoleModelBindings,
   fetchAdminRoles,
   fetchAgents,
   fetchBoards,
   fetchGame,
   seedAdminRoles,
+  updateAdminAgent,
+  updateAdminBoard,
+  updateAdminPlayer,
+  replaceAdminBoardRoles,
   createGame,
   submitGameAction
 } from "./api";
@@ -30,7 +41,7 @@ import { AdminPlayersPage } from "./admin/AdminPlayersPage";
 import { AdminRolesPage } from "./admin/AdminRolesPage";
 import { GameTable } from "./GameTable";
 import { LobbyPage } from "./LobbyPage";
-import type { AdminAgentDto, AdminBoardDto, AdminGameDto, AdminPlayerDto, AdminRoleDto, AgentProfile, BoardConfig, GameStateDto, SubmitActionInput } from "./types";
+import type { AdminAgentDto, AdminBoardDto, AdminGameDto, AdminLlmProviderDto, AdminPlayerDto, AdminRoleModelBindingDto, AdminRoleDto, AgentProfile, BoardConfig, GameStateDto, SubmitActionInput } from "./types";
 
 export function App() {
   return (
@@ -45,7 +56,7 @@ export function App() {
           <Route path="agents" element={<AdminAgentsRoute />} />
           <Route path="boards" element={<AdminBoardsRoute />} />
           <Route path="roles" element={<AdminRolesRoute />} />
-          <Route path="llm" element={<AdminLlmPage />} />
+          <Route path="llm" element={<AdminLlmRoute />} />
           <Route path="games" element={<AdminGamesRoute />} />
         </Route>
       </Routes>
@@ -174,7 +185,21 @@ function AdminPlayersRoute() {
   if (error) {
     return <AdminStatus title="玩家加载失败" detail={error} />;
   }
-  return <AdminPlayersPage players={items} onRefresh={refresh} onCreate={async (payload) => void (await createAdminPlayer(payload))} />;
+  return (
+    <AdminPlayersPage
+      players={items}
+      onRefresh={refresh}
+      onCreate={async (payload) => void (await createAdminPlayer(payload))}
+      onToggleAi={async (player) => {
+        await updateAdminPlayer(player.player_id, { is_ai: !player.is_ai });
+        await refresh();
+      }}
+      onDelete={async (playerId) => {
+        await deleteAdminPlayer(playerId);
+        await refresh();
+      }}
+    />
+  );
 }
 
 function AdminAgentsRoute() {
@@ -182,7 +207,21 @@ function AdminAgentsRoute() {
   if (error) {
     return <AdminStatus title="AI 加载失败" detail={error} />;
   }
-  return <AdminAgentsPage agents={items} onRefresh={refresh} onCreate={async (payload) => void (await createAdminAgent(payload))} />;
+  return (
+    <AdminAgentsPage
+      agents={items}
+      onRefresh={refresh}
+      onCreate={async (payload) => void (await createAdminAgent(payload))}
+      onToggleEnabled={async (agent) => {
+        await updateAdminAgent(agent.agent_id, { enabled: !agent.enabled });
+        await refresh();
+      }}
+      onDelete={async (agentId) => {
+        await deleteAdminAgent(agentId);
+        await refresh();
+      }}
+    />
+  );
 }
 
 function AdminBoardsRoute() {
@@ -190,7 +229,25 @@ function AdminBoardsRoute() {
   if (error) {
     return <AdminStatus title="板子加载失败" detail={error} />;
   }
-  return <AdminBoardsPage boards={items} onRefresh={refresh} onCreate={async (payload) => void (await createAdminBoard(payload))} />;
+  return (
+    <AdminBoardsPage
+      boards={items}
+      onRefresh={refresh}
+      onCreate={async (payload) => void (await createAdminBoard(payload))}
+      onToggleEnabled={async (board) => {
+        await updateAdminBoard(board.board_id, { enabled: !board.enabled });
+        await refresh();
+      }}
+      onReplaceRoles={async (boardId, roles) => {
+        await replaceAdminBoardRoles(boardId, roles);
+        await refresh();
+      }}
+      onDelete={async (boardId) => {
+        await deleteAdminBoard(boardId);
+        await refresh();
+      }}
+    />
+  );
 }
 
 function AdminRolesRoute() {
@@ -216,6 +273,35 @@ function AdminGamesRoute() {
     return <AdminStatus title="游戏记录加载失败" detail={error} />;
   }
   return <AdminGamesPage games={items} onRefresh={refresh} />;
+}
+
+function AdminLlmRoute() {
+  const providersState = useAdminData<AdminLlmProviderDto>(fetchAdminLlmProviders);
+  const bindingsState = useAdminData<AdminRoleModelBindingDto>(fetchAdminRoleModelBindings);
+  const error = providersState.error ?? bindingsState.error;
+
+  async function refresh() {
+    await Promise.all([providersState.refresh(), bindingsState.refresh()]);
+  }
+
+  if (error) {
+    return <AdminStatus title="模型配置加载失败" detail={error} />;
+  }
+  return (
+    <AdminLlmPage
+      providers={providersState.items}
+      bindings={bindingsState.items}
+      onRefresh={() => void refresh()}
+      onCreateProvider={async (payload) => {
+        await createAdminLlmProvider(payload);
+        await refresh();
+      }}
+      onCreateBinding={async (payload) => {
+        await createAdminRoleModelBinding(payload);
+        await refresh();
+      }}
+    />
+  );
 }
 
 function AdminStatus({ title, detail }: { title: string; detail: string }) {

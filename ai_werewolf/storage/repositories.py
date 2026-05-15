@@ -75,6 +75,23 @@ class LLMConfigRepository:
         self.session.merge(RoleModelBindingRecord(role_key=binding.role_key, provider_id=binding.provider_id))
         self.session.commit()
 
+    def list_providers(self) -> list[LLMProviderConfig]:
+        records = list(self.session.exec(select(LLMProviderRecord)).all())
+        return [LLMProviderConfig.model_validate(record.config_json) for record in records]
+
+    def get_provider(self, provider_id: str) -> LLMProviderConfig | None:
+        record = self.session.get(LLMProviderRecord, provider_id)
+        if record is None:
+            return None
+        return LLMProviderConfig.model_validate(record.config_json)
+
+    def list_role_bindings(self) -> list[RoleModelBinding]:
+        records = list(self.session.exec(select(RoleModelBindingRecord)).all())
+        return [
+            RoleModelBinding(role_key=record.role_key, provider_id=record.provider_id)
+            for record in records
+        ]
+
 
 class PersistedPlayer:
     def __init__(self, record: GamePlayerRecord) -> None:

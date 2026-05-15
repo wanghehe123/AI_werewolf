@@ -6,11 +6,15 @@ interface AdminBoardsPageProps {
   boards: AdminBoardDto[];
   onRefresh: () => void;
   onCreate?: (payload: Omit<AdminBoardDto, "board_id" | "roles" | "created_at">) => Promise<void>;
+  onToggleEnabled?: (board: AdminBoardDto) => Promise<void>;
+  onReplaceRoles?: (boardId: string, roles: Array<{ role_key: string; count: number }>) => Promise<void>;
+  onDelete?: (boardId: string) => Promise<void>;
 }
 
-export function AdminBoardsPage({ boards, onRefresh, onCreate }: AdminBoardsPageProps) {
+export function AdminBoardsPage({ boards, onRefresh, onCreate, onToggleEnabled, onReplaceRoles, onDelete }: AdminBoardsPageProps) {
   const [name, setName] = useState("");
   const [players, setPlayers] = useState(6);
+  const [roleSpecs, setRoleSpecs] = useState<Record<string, string>>({});
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -62,6 +66,8 @@ export function AdminBoardsPage({ boards, onRefresh, onCreate }: AdminBoardsPage
             <th>角色</th>
             <th>警长</th>
             <th>状态</th>
+            <th>角色配置</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -74,6 +80,38 @@ export function AdminBoardsPage({ boards, onRefresh, onCreate }: AdminBoardsPage
               <td>{board.roles.length > 0 ? board.roles.map((role) => `${role.role_key} x${role.count}`).join(" / ") : "未配置"}</td>
               <td>{board.sheriff_enabled ? "开启" : "关闭"}</td>
               <td>{board.enabled ? "启用" : "停用"}</td>
+              <td>
+                <form
+                  className="admin-role-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const roles = parseRoleSpec(roleSpecs[board.board_id] ?? "");
+                    if (roles.length > 0) {
+                      void onReplaceRoles?.(board.board_id, roles);
+                    }
+                  }}
+                >
+                  <input
+                    aria-label={`${board.name} 角色配置`}
+                    placeholder="werewolf:2,seer:1,villager:3"
+                    value={roleSpecs[board.board_id] ?? ""}
+                    onChange={(event) => setRoleSpecs({ ...roleSpecs, [board.board_id]: event.target.value })}
+                  />
+                  <button className="ghost-action compact" type="submit">
+                    保存
+                  </button>
+                </form>
+              </td>
+              <td>
+                <span className="admin-row-actions">
+                  <button className="ghost-action compact" type="button" onClick={() => void onToggleEnabled?.(board)}>
+                    {board.enabled ? "停用" : "启用"}
+                  </button>
+                  <button className="danger-action compact" type="button" onClick={() => void onDelete?.(board.board_id)}>
+                    删除
+                  </button>
+                </span>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -81,4 +119,16 @@ export function AdminBoardsPage({ boards, onRefresh, onCreate }: AdminBoardsPage
       {boards.length === 0 ? <p className="admin-empty">暂无板子</p> : null}
     </section>
   );
+}
+
+function parseRoleSpec(value: string): Array<{ role_key: string; count: number }> {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const [roleKey, count] = part.split(":");
+      return { role_key: roleKey.trim(), count: Number(count) };
+    })
+    .filter((role) => role.role_key && Number.isInteger(role.count) && role.count > 0);
 }

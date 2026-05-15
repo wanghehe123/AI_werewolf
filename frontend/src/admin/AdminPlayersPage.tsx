@@ -6,9 +6,11 @@ interface AdminPlayersPageProps {
   players: AdminPlayerDto[];
   onRefresh: () => void;
   onCreate?: (payload: { name: string; is_ai: boolean }) => Promise<void>;
+  onToggleAi?: (player: AdminPlayerDto) => Promise<void>;
+  onDelete?: (playerId: string) => Promise<void>;
 }
 
-export function AdminPlayersPage({ players, onRefresh, onCreate }: AdminPlayersPageProps) {
+export function AdminPlayersPage({ players, onRefresh, onCreate, onToggleAi, onDelete }: AdminPlayersPageProps) {
   const [name, setName] = useState("");
   const [isAi, setIsAi] = useState(false);
 
@@ -50,6 +52,7 @@ export function AdminPlayersPage({ players, onRefresh, onCreate }: AdminPlayersP
             <th>名称</th>
             <th>类型</th>
             <th>关联 AI</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -58,6 +61,16 @@ export function AdminPlayersPage({ players, onRefresh, onCreate }: AdminPlayersP
               <td>{player.name}</td>
               <td>{player.is_ai ? "AI" : "真人"}</td>
               <td>{player.agent_id ?? "-"}</td>
+              <td>
+                <span className="admin-row-actions">
+                  <button className="ghost-action compact" type="button" onClick={() => void onToggleAi?.(player)}>
+                    {player.is_ai ? "设为真人" : "设为 AI"}
+                  </button>
+                  <button className="danger-action compact" type="button" onClick={() => void onDelete?.(player.player_id)}>
+                    删除
+                  </button>
+                </span>
+              </td>
             </tr>
           ))}
         </tbody>

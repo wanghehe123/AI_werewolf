@@ -7,6 +7,8 @@ from sqlmodel import Field, Relationship, SQLModel
 
 
 class BoardRecord(SQLModel, table=True):
+    __tablename__ = "board_records"
+
     board_id: str = Field(primary_key=True)
     name: str
     config_json: dict[str, Any] = Field(sa_column=Column(JSON))
@@ -14,6 +16,8 @@ class BoardRecord(SQLModel, table=True):
 
 
 class LLMProviderRecord(SQLModel, table=True):
+    __tablename__ = "llm_providers"
+
     provider_id: str = Field(primary_key=True)
     provider_type: str
     model_name: str
@@ -22,11 +26,15 @@ class LLMProviderRecord(SQLModel, table=True):
 
 
 class RoleModelBindingRecord(SQLModel, table=True):
+    __tablename__ = "role_model_bindings"
+
     role_key: str = Field(primary_key=True)
     provider_id: str
 
 
 class GameRecord(SQLModel, table=True):
+    __tablename__ = "games"
+
     game_id: str = Field(primary_key=True)
     board_id: str
     human_player_id: str
@@ -37,6 +45,8 @@ class GameRecord(SQLModel, table=True):
 
 
 class GamePlayerRecord(SQLModel, table=True):
+    __tablename__ = "game_players"
+
     game_id: str = Field(primary_key=True)
     player_id: str = Field(primary_key=True)
     agent_id: str | None = None
@@ -50,6 +60,8 @@ class GamePlayerRecord(SQLModel, table=True):
 
 # 玩家表（支持真人和AI）
 class Player(SQLModel, table=True):
+    __tablename__ = "players"
+
     player_id: str = Field(primary_key=True, default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(index=True, unique=True)
     is_ai: bool = Field(default=False)
@@ -105,6 +117,8 @@ class BoardRole(SQLModel, table=True):
 
 # 角色元数据表（只读配置）
 class RoleMetadata(SQLModel, table=True):
+    __tablename__ = "role_metadata"
+
     role_key: str = Field(primary_key=True)
     name: str
     faction: str  # good/wolf/third

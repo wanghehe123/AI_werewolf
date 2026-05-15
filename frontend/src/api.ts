@@ -2,7 +2,9 @@ import type {
   AdminAgentDto,
   AdminBoardDto,
   AdminGameDto,
+  AdminLlmProviderDto,
   AdminPlayerDto,
+  AdminRoleModelBindingDto,
   AdminRoleDto,
   AdminSessionDto,
   AgentProfile,
@@ -115,6 +117,18 @@ export function createAdminPlayer(payload: { name: string; is_ai: boolean; agent
   );
 }
 
+export function updateAdminPlayer(playerId: string, payload: Partial<AdminPlayerDto>, baseUrl?: string): Promise<AdminPlayerDto> {
+  return requestJson<AdminPlayerDto>(
+    `/admin/players/${playerId}`,
+    adminInit({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
+export function deleteAdminPlayer(playerId: string, baseUrl?: string): Promise<{ deleted: boolean }> {
+  return requestJson<{ deleted: boolean }>(`/admin/players/${playerId}`, adminInit({ method: "DELETE" }), baseUrl);
+}
+
 export function fetchAdminAgents(baseUrl?: string): Promise<AdminAgentDto[]> {
   return requestJson<AdminAgentDto[]>("/admin/agents", adminInit(), baseUrl);
 }
@@ -125,6 +139,18 @@ export function createAdminAgent(payload: Partial<AdminAgentDto> & { name: strin
     adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
     baseUrl
   );
+}
+
+export function updateAdminAgent(agentId: string, payload: Partial<AdminAgentDto>, baseUrl?: string): Promise<AdminAgentDto> {
+  return requestJson<AdminAgentDto>(
+    `/admin/agents/${agentId}`,
+    adminInit({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
+export function deleteAdminAgent(agentId: string, baseUrl?: string): Promise<{ deleted: boolean }> {
+  return requestJson<{ deleted: boolean }>(`/admin/agents/${agentId}`, adminInit({ method: "DELETE" }), baseUrl);
 }
 
 export function fetchAdminBoards(baseUrl?: string): Promise<AdminBoardDto[]> {
@@ -139,12 +165,24 @@ export function createAdminBoard(payload: Omit<AdminBoardDto, "board_id" | "role
   );
 }
 
+export function updateAdminBoard(boardId: string, payload: Partial<AdminBoardDto>, baseUrl?: string): Promise<AdminBoardDto> {
+  return requestJson<AdminBoardDto>(
+    `/admin/boards/${boardId}`,
+    adminInit({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
 export function replaceAdminBoardRoles(boardId: string, roles: Array<{ role_key: string; count: number }>, baseUrl?: string): Promise<AdminBoardDto["roles"]> {
   return requestJson<AdminBoardDto["roles"]>(
     `/admin/boards/${boardId}/roles`,
     adminInit({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roles }) }),
     baseUrl
   );
+}
+
+export function deleteAdminBoard(boardId: string, baseUrl?: string): Promise<{ deleted: boolean }> {
+  return requestJson<{ deleted: boolean }>(`/admin/boards/${boardId}`, adminInit({ method: "DELETE" }), baseUrl);
 }
 
 export function fetchAdminRoles(baseUrl?: string): Promise<AdminRoleDto[]> {
@@ -157,4 +195,28 @@ export function seedAdminRoles(baseUrl?: string): Promise<AdminRoleDto[]> {
 
 export function fetchAdminGames(baseUrl?: string): Promise<AdminGameDto[]> {
   return requestJson<AdminGameDto[]>("/admin/games", adminInit(), baseUrl);
+}
+
+export function fetchAdminLlmProviders(baseUrl?: string): Promise<AdminLlmProviderDto[]> {
+  return requestJson<AdminLlmProviderDto[]>("/admin/llm/providers", adminInit(), baseUrl);
+}
+
+export function createAdminLlmProvider(payload: AdminLlmProviderDto, baseUrl?: string): Promise<AdminLlmProviderDto> {
+  return requestJson<AdminLlmProviderDto>(
+    "/admin/llm/providers",
+    adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
+export function fetchAdminRoleModelBindings(baseUrl?: string): Promise<AdminRoleModelBindingDto[]> {
+  return requestJson<AdminRoleModelBindingDto[]>("/admin/llm/role-bindings", adminInit(), baseUrl);
+}
+
+export function createAdminRoleModelBinding(payload: AdminRoleModelBindingDto, baseUrl?: string): Promise<AdminRoleModelBindingDto> {
+  return requestJson<AdminRoleModelBindingDto>(
+    "/admin/llm/role-bindings",
+    adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
 }

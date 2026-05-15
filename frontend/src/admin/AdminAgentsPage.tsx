@@ -6,9 +6,11 @@ interface AdminAgentsPageProps {
   agents: AdminAgentDto[];
   onRefresh: () => void;
   onCreate?: (payload: Partial<AdminAgentDto> & { name: string; persona: string; speech_style: string }) => Promise<void>;
+  onToggleEnabled?: (agent: AdminAgentDto) => Promise<void>;
+  onDelete?: (agentId: string) => Promise<void>;
 }
 
-export function AdminAgentsPage({ agents, onRefresh, onCreate }: AdminAgentsPageProps) {
+export function AdminAgentsPage({ agents, onRefresh, onCreate, onToggleEnabled, onDelete }: AdminAgentsPageProps) {
   const [name, setName] = useState("");
   const [persona, setPersona] = useState("");
   const [speechStyle, setSpeechStyle] = useState("");
@@ -63,6 +65,7 @@ export function AdminAgentsPage({ agents, onRefresh, onCreate }: AdminAgentsPage
             <th>风格</th>
             <th>模型</th>
             <th>状态</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -73,6 +76,16 @@ export function AdminAgentsPage({ agents, onRefresh, onCreate }: AdminAgentsPage
               <td>{agent.speech_style}</td>
               <td>{agent.default_model_provider_id ?? "-"}</td>
               <td>{agent.enabled ? "启用" : "停用"}</td>
+              <td>
+                <span className="admin-row-actions">
+                  <button className="ghost-action compact" type="button" onClick={() => void onToggleEnabled?.(agent)}>
+                    {agent.enabled ? "停用" : "启用"}
+                  </button>
+                  <button className="danger-action compact" type="button" onClick={() => void onDelete?.(agent.agent_id)}>
+                    删除
+                  </button>
+                </span>
+              </td>
             </tr>
           ))}
         </tbody>

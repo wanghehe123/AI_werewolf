@@ -39,6 +39,7 @@ from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import evaluate_winner
 from ai_werewolf.seeds.agents import default_agents
 from ai_werewolf.seeds.boards import default_boards
+from ai_werewolf.storage.catalog import list_enabled_agent_profiles, list_enabled_board_configs
 
 logger = logging.getLogger(__name__)
 
@@ -727,8 +728,10 @@ def create_game(request: CreateGameRequest):
     Returns:
         初始化后的前端游戏状态
     """
-    boards = {board.board_id: board for board in default_boards()}
-    agents = {agent.agent_id: agent for agent in default_agents()}
+    available_boards = list_enabled_board_configs() or default_boards()
+    available_agents = list_enabled_agent_profiles() or default_agents()
+    boards = {board.board_id: board for board in available_boards}
+    agents = {agent.agent_id: agent for agent in available_agents}
 
     try:
         board = boards[request.board_id]
