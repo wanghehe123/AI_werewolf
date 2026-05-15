@@ -66,6 +66,18 @@ def _chunk_text(text: str, size: int = 6) -> Iterator[str]:
         yield text[index:index + size]
 
 
+def _strip_thinking_blocks(text: str) -> str:
+    """Remove reasoning blocks emitted by some compatible models."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
+def _extract_first_target_id(prompt: str) -> str | None:
+    matches = re.findall(r"([A-Za-z0-9_\-]+)（\d+号[^）]*）", prompt)
+    return next((match for match in matches if match not in {"human", "null"}), None)
+
+
 class FakeModelProvider:
     """
     假模型 Provider（用于测试和开发）
@@ -193,7 +205,8 @@ class OpenAICompatibleProvider:
         """
         # 移除控制字符（除了 \n \r \t），避免 JSON 解析失败
         import unicodedata
-        cleaned = "".join(ch for ch in content if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t")
+        cleaned = _strip_thinking_blocks(content)
+        cleaned = "".join(ch for ch in cleaned if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t")
         cleaned = cleaned.strip()
 
         # 尝试 1: 直接解析整个响应为 JSON
@@ -252,10 +265,54 @@ class OpenAICompatibleProvider:
             content[:200],
         )
         return {
-            "speech": content[:100] if content else "我先保留意见。",
+            "speech": _strip_thinking_blocks(content)[:100] if content else "我先保留意见。",
             "action_type": "speak",
             "target_id": None,
             "public_reason": None,
+            "private_memory_update": None,
+        }
+
+    def _fallback_decision(self, prompt: str, reason: str) -> dict:
+        """Return a varied local decision when the remote model is unavailable."""
+        name_match = re.search(r"玩家名称：([^\n]+)", prompt)
+        player_name = name_match.group(1).strip() if name_match else "我"
+        target_id = _extract_first_target_id(prompt)
+        if "当前阶段：night_action" in prompt:
+            if "你的真实身份：狼人" in prompt:
+                return {
+                    "speech": "我选择今晚收益最高的刀口。",
+                    "action_type": "wolf_kill",
+                    "target_id": target_id,
+                    "public_reason": reason,
+                    "private_memory_update": None,
+                }
+            if "你的真实身份：预言家" in prompt:
+                return {
+                    "speech": "我查验一名发言和身份都需要确认的玩家。",
+                    "action_type": "seer_check",
+                    "target_id": target_id,
+                    "public_reason": reason,
+                    "private_memory_update": None,
+                }
+        if "当前阶段：exile_vote" in prompt:
+            return {
+                "speech": f"{player_name}会按当前发言压力投给最需要解释的位置。",
+                "action_type": "vote",
+                "target_id": target_id,
+                "public_reason": reason,
+                "private_memory_update": None,
+            }
+        role_match = re.search(r"你的真实身份：([^\n]+)", prompt)
+        role_name = role_match.group(1).strip() if role_match else "好人"
+        speech = (
+            f"{player_name}先按{role_name}视角发言：我会重点看发言是否前后一致、投票是否跟逻辑匹配。"
+            "目前先不急着定死身份，但会优先关注回避关键问题的位置。"
+        )
+        return {
+            "speech": speech,
+            "action_type": "speak",
+            "target_id": None,
+            "public_reason": reason,
             "private_memory_update": None,
         }
 
@@ -287,13 +344,7 @@ class OpenAICompatibleProvider:
                 self.config.provider_id,
                 self.config.api_key_env or "(未设置)",
             )
-            return {
-                "speech": "我先观察一下局势。",
-                "action_type": "speak",
-                "target_id": None,
-                "public_reason": "API key not configured",
-                "private_memory_update": None,
-            }
+            return self._fallback_decision(prompt, "API key not configured")
 
         try:
             # 延迟导入，避免在不需要时加载 openai 库
@@ -332,13 +383,7 @@ class OpenAICompatibleProvider:
                 "Provider %s: LLM API 调用失败，使用 fallback 响应",
                 self.config.provider_id,
             )
-            return {
-                "speech": "让我再想想...",
-                "action_type": "speak",
-                "target_id": None,
-                "public_reason": "LLM call failed",
-                "private_memory_update": None,
-            }
+            return self._fallback_decision(prompt, "LLM call failed")
 
     def stream_speech(self, prompt: str) -> Iterator[str]:
         """Stream plain public speech text; fall back to chunked non-stream output."""

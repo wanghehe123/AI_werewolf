@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { GameStateDto, SubmitActionInput } from "./types";
 
@@ -10,8 +10,15 @@ interface PhaseSceneRouterProps {
 
 export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRouterProps) {
   const aliveTargets = useMemo(() => game.players.filter((player) => player.alive && !player.is_human), [game.players]);
+  const primaryAction = game.allowed_actions[0];
+  const nightTargetOptions = useMemo(() => primaryAction?.target_options ?? [], [primaryAction]);
   const [speech, setSpeech] = useState("我先听发言，今天重点看谁的逻辑变化。");
   const [voteTarget, setVoteTarget] = useState(aliveTargets[0]?.player_id ?? "");
+  const [nightTarget, setNightTarget] = useState(nightTargetOptions[0]?.player_id ?? "");
+
+  useEffect(() => {
+    setNightTarget(nightTargetOptions[0]?.player_id ?? "");
+  }, [primaryAction?.action_type, nightTargetOptions]);
 
   if (game.phase === "setup") {
     return (
@@ -27,13 +34,43 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
   }
 
   if (game.phase === "night") {
+    if (primaryAction?.requires_target) {
+      return (
+        <section className="scene-panel night-scene">
+          <p className="scene-kicker">NIGHT</p>
+          <h2>夜晚行动</h2>
+          <div className="target-grid" role="radiogroup" aria-label={primaryAction.label}>
+            {nightTargetOptions.map((target) => (
+              <label key={target.player_id} className="target-option">
+                <input
+                  type="radio"
+                  name="night-target"
+                  value={target.player_id}
+                  checked={nightTarget === target.player_id}
+                  onChange={() => setNightTarget(target.player_id)}
+                />
+                <span>{target.label}</span>
+              </label>
+            ))}
+          </div>
+          <button
+            className="primary-action"
+            disabled={pending || !nightTarget}
+            onClick={() => onSubmitAction({ action_type: primaryAction.action_type, target_player_id: nightTarget })}
+          >
+            {primaryAction.label}
+          </button>
+        </section>
+      );
+    }
+
     return (
       <section className="scene-panel night-scene">
         <p className="scene-kicker">NIGHT</p>
         <h2>夜晚行动</h2>
-        <p>本版 MVP 使用确定性结算。确认后进入天亮公告，后续可替换为真实角色技能面板。</p>
-        <button className="primary-action" disabled={pending} onClick={() => onSubmitAction({ action_type: "skip" })}>
-          确认夜晚行动
+        <p>你当前没有主动夜间技能，确认后等待夜晚结算。</p>
+        <button className="primary-action" disabled={pending} onClick={() => onSubmitAction({ action_type: primaryAction?.action_type ?? "skip" })}>
+          {primaryAction?.label ?? "确认夜晚行动"}
         </button>
       </section>
     );

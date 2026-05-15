@@ -26,7 +26,7 @@ class NightResolver:
         self.role_registry = role_registry
         self.scheduler = AIActionScheduler(role_registry)
 
-    def resolve(self, session: GameSession) -> list[dict[str, Any]]:
+    def resolve(self, session: GameSession, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Collect all night actions via LLM and resolve deaths.
 
         Returns a list of new public events.
@@ -39,28 +39,28 @@ class NightResolver:
         # 1. Wolf kill
         if self._has_alive_role(session, {"werewolf"}):
             events.append(event("night_step_started", "狼人开始行动。", step="werewolf"))
-        wolf_target_id = self._collect_wolf_kill(session, context)
+        wolf_target_id = self._collect_wolf_kill(session, context, human_action)
         if self._has_alive_role(session, {"werewolf"}):
             events.append(event("night_step_finished", "狼人行动完成。", step="werewolf"))
 
         # 2. Seer check
         if self._has_alive_role(session, {"seer"}):
             events.append(event("night_step_started", "预言家开始行动。", step="seer"))
-        self._collect_seer_check(session, context)
+        events.extend(self._collect_seer_check(session, context, human_action))
         if self._has_alive_role(session, {"seer"}):
             events.append(event("night_step_finished", "预言家行动完成。", step="seer"))
 
         # 3. Guard protect
         if self._has_alive_role(session, {"guard", "guardian"}):
             events.append(event("night_step_started", "守卫开始行动。", step="guard"))
-        guard_target_id = self._collect_guard(session, context)
+        guard_target_id = self._collect_guard(session, context, human_action)
         if self._has_alive_role(session, {"guard", "guardian"}):
             events.append(event("night_step_finished", "守卫行动完成。", step="guard"))
 
         # 4. Witch decision (needs to know wolf target)
         if self._has_alive_role(session, {"witch"}):
             events.append(event("night_step_started", "女巫开始行动。", step="witch"))
-        witch_poison_target = self._collect_witch(session, context, wolf_target_id)
+        witch_poison_target = self._collect_witch(session, context, wolf_target_id, human_action)
         if self._has_alive_role(session, {"witch"}):
             events.append(event("night_step_finished", "女巫行动完成。", step="witch"))
 
@@ -78,11 +78,23 @@ class NightResolver:
 
         return events
 
-    def _collect_wolf_kill(self, session: GameSession, context: str) -> str | None:
+    def _collect_wolf_kill(self, session: GameSession, context: str, human_action: dict[str, Any] | None = None) -> str | None:
         """Ask wolf AI to choose a kill target."""
         alive_wolves = [p for p in session.state.players if p.alive and p.role_key == "werewolf"]
         if not alive_wolves:
             return None
+
+        human_target = self._human_night_target(session, human_action, "werewolf", {"wolf_kill"})
+        if human_target:
+            target_id = self._validate_target(human_target, session.state, exclude_wolves=True)
+            if target_id:
+                session.night_actions.append({
+                    "actor_player_id": session.human_player_id,
+                    "action_type": "wolf_kill",
+                    "target_player_id": target_id,
+                    "round": f"night{session.state.day_count}",
+                })
+                return target_id
 
         # Use first AI wolf as representative; skip human wolves
         wolf = next((w for w in alive_wolves if not w.is_human), None)
@@ -101,31 +113,36 @@ class NightResolver:
             return target_id
         return None
 
-    def _collect_seer_check(self, session: GameSession, context: str) -> None:
+    def _collect_seer_check(self, session: GameSession, context: str, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Ask seer AI to choose a check target."""
         alive_seer = next((p for p in session.state.players if p.alive and p.role_key == "seer"), None)
         if alive_seer is None:
-            return
+            return []
+
+        human_target = self._human_night_target(session, human_action, "seer", {"seer_check"})
+        if alive_seer.is_human:
+            target_id = self._validate_target(human_target, session.state, exclude_player_id=alive_seer.player_id)
+            if target_id:
+                self._record_seer_result(session, alive_seer.player_id, target_id)
+                target_player = session.state.player_by_id(target_id)
+                camp = "狼人阵营" if target_player.role_key == "werewolf" else "好人阵营"
+                return [{
+                    "event_type": "private_info",
+                    "actor_id": alive_seer.player_id,
+                    "target_id": target_id,
+                    "payload": {"message": f"你的查验结果：{player_label(target_id, session)} 是{camp}。"},
+                    "public": False,
+                    "visibility": "self",
+                }]
+            return []
 
         decision = self._get_ai_decision(session, alive_seer.player_id, context)
         target_id = self._validate_target(decision.target_id, session.state, exclude_player_id=alive_seer.player_id)
         if target_id:
-            target_player = session.state.player_by_id(target_id)
-            result = "werewolf" if target_player.role_key == "werewolf" else "good"
-            info = session.private_infos.setdefault(alive_seer.player_id, PlayerPrivateInfo())
-            info.seer_results.append({
-                "round": f"night{session.state.day_count}",
-                "target": target_id,
-                "result": result,
-            })
-            session.night_actions.append({
-                "actor_player_id": alive_seer.player_id,
-                "action_type": "check",
-                "target_player_id": target_id,
-                "round": f"night{session.state.day_count}",
-            })
+            self._record_seer_result(session, alive_seer.player_id, target_id)
+        return []
 
-    def _collect_guard(self, session: GameSession, context: str) -> str | None:
+    def _collect_guard(self, session: GameSession, context: str, human_action: dict[str, Any] | None = None) -> str | None:
         """Ask guard AI to choose a protect target."""
         alive_guard = next((p for p in session.state.players if p.alive and p.role_key in {"guard", "guardian"}), None)
         if alive_guard is None:
@@ -134,10 +151,14 @@ class NightResolver:
         info = session.private_infos.setdefault(alive_guard.player_id, PlayerPrivateInfo())
         last_guarded = info.guard_history[-1] if info.guard_history else None
 
-        decision = self._get_ai_decision(session, alive_guard.player_id, context)
+        if alive_guard.is_human:
+            target_id = self._human_night_target(session, human_action, alive_guard.role_key, {"guard"})
+        else:
+            decision = self._get_ai_decision(session, alive_guard.player_id, context)
+            target_id = decision.target_id
 
         # Enforce: cannot guard same person two nights in a row
-        target_id = self._validate_target(decision.target_id, session.state)
+        target_id = self._validate_target(target_id, session.state)
         if target_id and target_id == last_guarded:
             # Fallback: pick a different valid target
             valid_targets = [p.player_id for p in session.state.players if p.alive and p.player_id != last_guarded]
@@ -154,13 +175,24 @@ class NightResolver:
             return target_id
         return None
 
-    def _collect_witch(self, session: GameSession, context: str, wolf_target_id: str | None) -> str | None:
+    def _collect_witch(
+        self,
+        session: GameSession,
+        context: str,
+        wolf_target_id: str | None,
+        human_action: dict[str, Any] | None = None,
+    ) -> str | None:
         """Ask witch AI to decide save/poison. Returns poison target if used."""
         alive_witch = next((p for p in session.state.players if p.alive and p.role_key == "witch"), None)
         if alive_witch is None:
             return None
 
         info = session.private_infos.setdefault(alive_witch.player_id, PlayerPrivateInfo())
+
+        if alive_witch.is_human:
+            action = human_action.get("action_type") if human_action else "no_action"
+            target_id = human_action.get("target_player_id") if human_action else None
+            return self._apply_witch_decision(session, alive_witch.player_id, info, action, target_id)
 
         # Build death info string to pass in private_info
         death_info = ""
@@ -200,21 +232,28 @@ class NightResolver:
 
         decision = self._get_ai_decision_with_prompt(session, alive_witch.player_id, prompt)
 
-        action = decision.action_type
-        target_id = decision.target_id
+        return self._apply_witch_decision(session, alive_witch.player_id, info, str(decision.action_type), decision.target_id)
 
+    def _apply_witch_decision(
+        self,
+        session: GameSession,
+        witch_player_id: str,
+        info: PlayerPrivateInfo,
+        action: str,
+        target_id: str | None,
+    ) -> str | None:
         poison_target: str | None = None
 
         if action == "witch_save" and info.witch_medicine.get("save", False) and target_id:
             # Check self-save rule
             can_save_self = session.state.day_count == 1
-            if target_id == alive_witch.player_id and not can_save_self:
+            if target_id == witch_player_id and not can_save_self:
                 pass  # Cannot save self after first night
             else:
                 info.witch_medicine["save"] = False
                 session.witch_has_save_potion = False
                 session.night_actions.append({
-                    "actor_player_id": alive_witch.player_id,
+                    "actor_player_id": witch_player_id,
                     "action_type": "witch_save",
                     "target_player_id": target_id,
                     "round": f"night{session.state.day_count}",
@@ -227,13 +266,46 @@ class NightResolver:
                 session.witch_has_poison = False
                 poison_target = valid_target
                 session.night_actions.append({
-                    "actor_player_id": alive_witch.player_id,
+                    "actor_player_id": witch_player_id,
                     "action_type": "witch_poison",
                     "target_player_id": valid_target,
                     "round": f"night{session.state.day_count}",
                 })
 
         return poison_target
+
+    def _record_seer_result(self, session: GameSession, seer_id: str, target_id: str) -> None:
+        target_player = session.state.player_by_id(target_id)
+        result = "werewolf" if target_player.role_key == "werewolf" else "good"
+        info = session.private_infos.setdefault(seer_id, PlayerPrivateInfo())
+        info.seer_results.append({
+            "round": f"night{session.state.day_count}",
+            "target": target_id,
+            "result": result,
+        })
+        session.night_actions.append({
+            "actor_player_id": seer_id,
+            "action_type": "check",
+            "target_player_id": target_id,
+            "round": f"night{session.state.day_count}",
+        })
+
+    def _human_night_target(
+        self,
+        session: GameSession,
+        human_action: dict[str, Any] | None,
+        role_key: str,
+        action_types: set[str],
+    ) -> str | None:
+        if not human_action or human_action.get("action_type") not in action_types:
+            return None
+        actor_id = human_action.get("actor_player_id")
+        if actor_id != session.human_player_id:
+            return None
+        human = session.state.player_by_id(session.human_player_id)
+        if not human.alive or human.role_key != role_key:
+            return None
+        return human_action.get("target_player_id")
 
     def _resolve_deaths(
         self,

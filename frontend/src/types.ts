@@ -109,6 +109,11 @@ export interface StreamingSpeechDto {
 export interface PlayerActionOptionDto {
   action_type: string;
   label: string;
+  requires_target?: boolean;
+  target_options?: Array<{
+    player_id: string;
+    label: string;
+  }>;
 }
 
 export interface GameStateDto {

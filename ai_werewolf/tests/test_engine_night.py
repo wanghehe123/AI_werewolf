@@ -84,6 +84,49 @@ def test_seer_check_records_result():
     assert seer_info.seer_results[0]["result"] == "werewolf"
 
 
+def test_human_seer_action_records_private_result():
+    players = [
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="seer", alive=True, is_human=True),
+        PlayerState(player_id="w1", agent_id="w1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="v1", agent_id="v1", seat=3, role_key="villager", alive=True, is_human=False),
+    ]
+    session = _make_session(players, {"w1": _default_agents()["w1"]})
+    resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+
+    with patch.object(resolver, "_get_ai_decision", return_value=_mock_decision(action_type="wolf_kill", target_id="v1")):
+        events = resolver.resolve(session, human_action={
+            "actor_player_id": "human",
+            "action_type": "seer_check",
+            "target_player_id": "w1",
+        })
+
+    assert session.private_infos["human"].seer_results == [
+        {"round": "night1", "target": "w1", "result": "werewolf"}
+    ]
+    private_messages = [event["payload"]["message"] for event in events if event["event_type"] == "private_info"]
+    assert private_messages == ["你的查验结果：2号 狼人1 是狼人阵营。"]
+
+
+def test_human_wolf_action_sets_kill_target():
+    players = [
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="werewolf", alive=True, is_human=True),
+        PlayerState(player_id="w1", agent_id="w1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="v1", agent_id="v1", seat=3, role_key="villager", alive=True, is_human=False),
+    ]
+    session = _make_session(players, {"w1": _default_agents()["w1"]})
+    resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+
+    events = resolver.resolve(session, human_action={
+        "actor_player_id": "human",
+        "action_type": "wolf_kill",
+        "target_player_id": "v1",
+    })
+
+    assert session.state.player_by_id("v1").alive is False
+    assert session.night_actions[0]["actor_player_id"] == "human"
+    assert session.night_actions[0]["target_player_id"] == "v1"
+
+
 def test_witch_save_prevents_death():
     """Witch uses save potion, the killed player survives."""
     players = _default_players()

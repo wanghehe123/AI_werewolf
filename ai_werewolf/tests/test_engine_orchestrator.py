@@ -36,7 +36,7 @@ def _action(action_type, actor="human", target=None, content=None):
 
 @contextmanager
 def _patch_night_kill(orch, target_id):
-    def _mock(session):
+    def _mock(session, **kwargs):
         session.state.player_by_id(target_id).alive = False
         session.state.phase = GamePhase.DAY_ANNOUNCEMENT
         return [{"event_type": "night_result", "actor_id": None, "target_id": None,

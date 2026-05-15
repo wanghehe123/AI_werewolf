@@ -52,6 +52,22 @@ class IllegalActionTypeModel:
         }
 
 
+class ThinkingStreamModel:
+    def decide(self, prompt: str) -> dict:
+        return {
+            "speech": "备用发言",
+            "action_type": "speak",
+            "target_id": None,
+            "public_reason": None,
+            "private_memory_update": None,
+        }
+
+    def stream_speech(self, prompt: str):
+        yield "<think>先分析身份"
+        yield "和票型</think>"
+        yield "我觉得2号的发言值得关注。"
+
+
 def test_decider_returns_valid_player_decision():
     decider = PlayerDecider(FakeModel())
 
@@ -90,3 +106,9 @@ def test_decider_falls_back_for_illegal_action_type():
 
     assert decision.speech == "我先观察一下。"
     assert decision.action_type == PlayerActionType.SPEAK
+
+
+def test_stream_speech_strips_thinking_blocks():
+    chunks = list(PlayerDecider(ThinkingStreamModel()).stream_speech("prompt"))
+
+    assert "".join(chunks) == "我觉得2号的发言值得关注。"

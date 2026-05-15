@@ -48,8 +48,8 @@ class PhaseOrchestrator:
 
         if state.phase == GamePhase.SETUP and action_type == "start_game":
             self._start_game(session)
-        elif state.phase == GamePhase.NIGHT and action_type in {"skip", "wolf_kill", "seer_check"}:
-            self._resolve_night(session)
+        elif state.phase == GamePhase.NIGHT and action_type in {"skip", "wolf_kill", "seer_check", "guard", "witch_save", "witch_poison", "no_action"}:
+            self._resolve_night(session, action)
         elif state.phase == GamePhase.DAY_ANNOUNCEMENT and action_type == "continue":
             self._enter_speech(session)
         elif state.phase == GamePhase.DAY_SPEECH and action_type == "speech":
@@ -68,8 +68,8 @@ class PhaseOrchestrator:
         session.state.day_count = 1
         session.append_public_event("phase_changed", "夜幕降临，所有玩家闭眼。")
 
-    def _resolve_night(self, session: GameSession) -> None:
-        events = self.night.resolve(session)
+    def _resolve_night(self, session: GameSession, action: dict | None = None) -> None:
+        events = self.night.resolve(session, human_action=action)
         for public_event in events:
             self._append_event_dict(session, public_event)
 
@@ -265,5 +265,6 @@ class PhaseOrchestrator:
             message,
             actor_id=public_event.get("actor_id"),
             target_id=public_event.get("target_id"),
+            visibility=public_event.get("visibility", "public" if public_event.get("public", True) else "self"),
             **extra_payload,
         )

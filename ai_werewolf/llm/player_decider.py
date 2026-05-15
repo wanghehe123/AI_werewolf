@@ -11,6 +11,7 @@ AI 玩家决策器
 """
 
 import logging
+import re
 from collections.abc import Iterator
 from typing import Protocol
 
@@ -112,9 +113,10 @@ class PlayerDecider:
 
         chunks: list[str] = []
         try:
-            for chunk in self.model.stream_speech(prompt):
-                chunks.append(chunk)
-                yield chunk
+            for chunk in _without_thinking_blocks(self.model.stream_speech(prompt), chunks):
+                clean_chunk = chunk
+                if clean_chunk:
+                    yield clean_chunk
         except Exception:
             logger.exception("LLM 流式发言失败，回退到普通决策")
             yield self.decide(prompt).speech
@@ -143,3 +145,37 @@ class PlayerDecider:
         if isinstance(speech, str) and speech.strip() and is_safe_speech(speech):
             return speech[:200]  # 限制长度
         return "我先观察一下局势。"
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
+    return text
+
+
+def _without_thinking_blocks(source: Iterator[str], raw_chunks: list[str]) -> Iterator[str]:
+    """Yield stream chunks while dropping split <think>...</think> spans."""
+    in_think = False
+    pending = ""
+    for chunk in source:
+        raw_chunks.append(chunk)
+        pending += chunk
+        while pending:
+            lowered = pending.lower()
+            if in_think:
+                end = lowered.find("</think>")
+                if end == -1:
+                    pending = ""
+                    break
+                pending = pending[end + len("</think>"):]
+                in_think = False
+                continue
+            start = lowered.find("<think>")
+            if start == -1:
+                yield pending
+                pending = ""
+                break
+            if start > 0:
+                yield pending[:start]
+            pending = pending[start + len("<think>"):]
+            in_think = True

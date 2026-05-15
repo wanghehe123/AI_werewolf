@@ -66,6 +66,47 @@ def test_allowed_actions_night():
     assert actions[0]["action_type"] == "skip"
 
 
+def test_allowed_actions_night_seer_has_target_options():
+    from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+    from ai_werewolf.engine.helpers import allowed_actions
+
+    state = GameState(game_id="g", board_id="b", phase=GamePhase.NIGHT, day_count=1, players=[
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="seer", alive=True, is_human=True),
+        PlayerState(player_id="w1", agent_id="w1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="v1", agent_id="v1", seat=3, role_key="villager", alive=True, is_human=False),
+    ])
+
+    actions = allowed_actions(state, human_player_id="human")
+
+    assert actions == [
+        {
+            "action_type": "seer_check",
+            "label": "查验玩家",
+            "requires_target": True,
+            "target_options": [
+                {"player_id": "w1", "label": "2号 w1"},
+                {"player_id": "v1", "label": "3号 v1"},
+            ],
+        }
+    ]
+
+
+def test_allowed_actions_night_werewolf_targets_non_wolves():
+    from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+    from ai_werewolf.engine.helpers import allowed_actions
+
+    state = GameState(game_id="g", board_id="b", phase=GamePhase.NIGHT, day_count=1, players=[
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="werewolf", alive=True, is_human=True),
+        PlayerState(player_id="w1", agent_id="w1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="v1", agent_id="v1", seat=3, role_key="villager", alive=True, is_human=False),
+    ])
+
+    actions = allowed_actions(state, human_player_id="human")
+
+    assert actions[0]["action_type"] == "wolf_kill"
+    assert actions[0]["target_options"] == [{"player_id": "v1", "label": "3号 v1"}]
+
+
 def test_allowed_actions_game_over():
     from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
     from ai_werewolf.engine.helpers import allowed_actions
