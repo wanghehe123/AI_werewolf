@@ -15,23 +15,38 @@ export function AdminBoardsPage({ boards, onRefresh, onCreate, onToggleEnabled, 
   const [name, setName] = useState("");
   const [players, setPlayers] = useState(6);
   const [roleSpecs, setRoleSpecs] = useState<Record<string, string>>({});
+  const [formMessage, setFormMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!onCreate || !name) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormMessage("请先填写板子名称");
       return;
     }
-    await onCreate({
-      name,
-      description: null,
-      min_players: players,
-      max_players: players,
-      sheriff_enabled: false,
-      enabled: true
-    });
-    setName("");
-    setPlayers(6);
-    onRefresh();
+    if (!onCreate) {
+      return;
+    }
+    setSubmitting(true);
+    setFormMessage(null);
+    try {
+      await onCreate({
+        name: trimmedName,
+        description: null,
+        min_players: players,
+        max_players: players,
+        sheriff_enabled: false,
+        enabled: true
+      });
+      setName("");
+      setPlayers(6);
+      onRefresh();
+    } catch (err) {
+      setFormMessage(err instanceof Error ? err.message : "新增板子失败");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -54,9 +69,10 @@ export function AdminBoardsPage({ boards, onRefresh, onCreate, onToggleEnabled, 
           value={players}
           onChange={(event) => setPlayers(Number(event.target.value))}
         />
-        <button className="primary-action" type="submit" disabled={!onCreate}>
-          新增板子
+        <button className="primary-action" type="submit" disabled={!onCreate || submitting}>
+          {submitting ? "保存中..." : "新增板子"}
         </button>
+        {formMessage ? <p className="admin-form-message" role="alert">{formMessage}</p> : null}
       </form>
       <table className="admin-table">
         <thead>

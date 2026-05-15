@@ -5,11 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import { AdminAgentsPage } from "./AdminAgentsPage";
 import { AdminBoardsPage } from "./AdminBoardsPage";
 import { AdminLlmPage } from "./AdminLlmPage";
+import { AdminPlayersPage } from "./AdminPlayersPage";
 
 describe("admin pages", () => {
   it("submits player creation only after required fields are present", async () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
-    render(<AdminPlayersPage players={[]} onRefresh={vi.fn()} onCreate={onCreate} />);
+    const onRefresh = vi.fn();
+    render(<AdminPlayersPage players={[]} onRefresh={onRefresh} onCreate={onCreate} />);
 
     await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
     expect(screen.getByText("请先填写玩家名称")).toBeInTheDocument();
@@ -19,11 +21,25 @@ describe("admin pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
 
     expect(onCreate).toHaveBeenCalledWith({ name: "浏览器测试玩家", is_ai: false });
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows player creation errors without refreshing", async () => {
+    const onCreate = vi.fn().mockRejectedValue(new Error("玩家名称已存在"));
+    const onRefresh = vi.fn();
+    render(<AdminPlayersPage players={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+
+    await userEvent.type(screen.getByLabelText("玩家名称"), "重复玩家");
+    await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
+
+    expect(await screen.findByText("玩家名称已存在")).toBeInTheDocument();
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 
   it("submits board creation only after required fields are present", async () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
-    render(<AdminBoardsPage boards={[]} onRefresh={vi.fn()} onCreate={onCreate} />);
+    const onRefresh = vi.fn();
+    render(<AdminBoardsPage boards={[]} onRefresh={onRefresh} onCreate={onCreate} />);
 
     await userEvent.click(screen.getByRole("button", { name: "新增板子" }));
     expect(screen.getByText("请先填写板子名称")).toBeInTheDocument();
@@ -40,11 +56,25 @@ describe("admin pages", () => {
       sheriff_enabled: false,
       enabled: true
     });
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows board creation errors without refreshing", async () => {
+    const onCreate = vi.fn().mockRejectedValue(new Error("板子名称已存在"));
+    const onRefresh = vi.fn();
+    render(<AdminBoardsPage boards={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+
+    await userEvent.type(screen.getByLabelText("板子名称"), "重复板子");
+    await userEvent.click(screen.getByRole("button", { name: "新增板子" }));
+
+    expect(await screen.findByText("板子名称已存在")).toBeInTheDocument();
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 
   it("submits agent creation only after all required fields are present", async () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
-    render(<AdminAgentsPage agents={[]} onRefresh={vi.fn()} onCreate={onCreate} />);
+    const onRefresh = vi.fn();
+    render(<AdminAgentsPage agents={[]} onRefresh={onRefresh} onCreate={onCreate} />);
 
     await userEvent.click(screen.getByRole("button", { name: "新增 AI" }));
     expect(screen.getByText("请填写 AI 名称、人格和发言风格")).toBeInTheDocument();
@@ -60,6 +90,21 @@ describe("admin pages", () => {
       persona: "谨慎",
       speech_style: "短句"
     }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows agent creation errors without refreshing", async () => {
+    const onCreate = vi.fn().mockRejectedValue(new Error("AI 名称已存在"));
+    const onRefresh = vi.fn();
+    render(<AdminAgentsPage agents={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+
+    await userEvent.type(screen.getByLabelText("AI 名称"), "重复AI");
+    await userEvent.type(screen.getByLabelText("人格"), "谨慎");
+    await userEvent.type(screen.getByLabelText("发言风格"), "短句");
+    await userEvent.click(screen.getByRole("button", { name: "新增 AI" }));
+
+    expect(await screen.findByText("AI 名称已存在")).toBeInTheDocument();
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 
   it("renders agent management table", () => {

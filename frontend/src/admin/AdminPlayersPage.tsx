@@ -13,16 +13,31 @@ interface AdminPlayersPageProps {
 export function AdminPlayersPage({ players, onRefresh, onCreate, onToggleAi, onDelete }: AdminPlayersPageProps) {
   const [name, setName] = useState("");
   const [isAi, setIsAi] = useState(false);
+  const [formMessage, setFormMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!onCreate || !name) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormMessage("请先填写玩家名称");
       return;
     }
-    await onCreate({ name, is_ai: isAi });
-    setName("");
-    setIsAi(false);
-    onRefresh();
+    if (!onCreate) {
+      return;
+    }
+    setSubmitting(true);
+    setFormMessage(null);
+    try {
+      await onCreate({ name: trimmedName, is_ai: isAi });
+      setName("");
+      setIsAi(false);
+      onRefresh();
+    } catch (err) {
+      setFormMessage(err instanceof Error ? err.message : "新增玩家失败");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -42,9 +57,10 @@ export function AdminPlayersPage({ players, onRefresh, onCreate, onToggleAi, onD
           <input type="checkbox" checked={isAi} onChange={(event) => setIsAi(event.target.checked)} />
           AI 玩家
         </label>
-        <button className="primary-action" type="submit" disabled={!onCreate}>
-          新增玩家
+        <button className="primary-action" type="submit" disabled={!onCreate || submitting}>
+          {submitting ? "保存中..." : "新增玩家"}
         </button>
+        {formMessage ? <p className="admin-form-message" role="alert">{formMessage}</p> : null}
       </form>
       <table className="admin-table">
         <thead>
