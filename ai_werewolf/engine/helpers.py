@@ -1,0 +1,90 @@
+# engine/helpers.py
+"""Shared helper functions for event building, display names, and allowed actions."""
+from __future__ import annotations
+
+from typing import Any
+
+from ai_werewolf.domain.game_state import GamePhase, GameState
+from ai_werewolf.engine.session import GameSession
+
+
+def event(event_type: str, message: str, **payload: Any) -> dict[str, Any]:
+    """Build a public event dict."""
+    return {
+        "event_type": event_type,
+        "actor_id": payload.pop("actor_id", None),
+        "target_id": payload.pop("target_id", None),
+        "payload": {"message": message, **payload},
+        "public": True,
+    }
+
+
+def display_name(player_id: str, session: GameSession) -> str:
+    """Get display name for a player. Human player shows as '你'."""
+    if player_id == session.human_player_id:
+        return "你"
+    agent = session.agents.get(player_id)
+    return agent.name if agent is not None else player_id
+
+
+def avatar_url(player_id: str, session: GameSession) -> str | None:
+    """Get avatar URL for a player."""
+    agent = session.agents.get(player_id)
+    return agent.avatar_url if agent is not None else None
+
+
+def allowed_actions(state: GameState) -> list[dict[str, Any]]:
+    """Return available actions for human player based on current phase."""
+    if state.winner is not None or state.phase == GamePhase.GAME_OVER:
+        return []
+    if state.phase == GamePhase.SETUP:
+        return [{"action_type": "start_game", "label": "开始游戏"}]
+    if state.phase == GamePhase.NIGHT:
+        return [{"action_type": "skip", "label": "确认夜晚行动"}]
+    if state.phase == GamePhase.DAY_ANNOUNCEMENT:
+        return [{"action_type": "continue", "label": "进入白天发言"}]
+    if state.phase == GamePhase.DAY_SPEECH:
+        return [{"action_type": "speech", "label": "提交发言"}]
+    if state.phase == GamePhase.EXILE_VOTE:
+        return [{"action_type": "vote", "label": "投票"}, {"action_type": "abstain", "label": "弃票"}]
+    if state.phase == GamePhase.LAST_WORDS:
+        return [{"action_type": "continue", "label": "继续"}]
+    return []
+
+
+def frontend_state(session: GameSession, model_registry: Any, role_model_bindings: list) -> dict[str, Any]:
+    """Build the full game state dict for the frontend."""
+    state = session.state
+    game_over = state.phase == GamePhase.GAME_OVER or state.winner is not None
+
+    def _provider_id(role_key: str) -> str:
+        return model_registry.provider_for_role(role_key, role_model_bindings).config.provider_id
+
+    return {
+        "game_id": state.game_id,
+        "board_id": state.board_id,
+        "phase": state.phase.value,
+        "day_count": state.day_count,
+        "human_player_id": session.human_player_id,
+        "current_turn_player_id": session.human_player_id if allowed_actions(state) else None,
+        "players": [
+            {
+                "player_id": player.player_id,
+                "agent_id": player.agent_id,
+                "seat": player.seat,
+                "role_key": player.role_key if player.is_human or game_over else None,
+                "alive": player.alive,
+                "is_human": player.is_human,
+                "sheriff": player.sheriff,
+                "display_name": display_name(player.player_id, session),
+                "avatar_url": avatar_url(player.player_id, session),
+                "model_provider_id": _provider_id(player.role_key),
+                "speaking": state.phase == GamePhase.DAY_SPEECH and player.is_human,
+                "voted": player.player_id in session.voted_player_ids,
+            }
+            for player in state.players
+        ],
+        "winner": state.winner,
+        "public_events": session.public_events,
+        "allowed_actions": allowed_actions(state),
+    }
