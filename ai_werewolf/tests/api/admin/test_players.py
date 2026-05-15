@@ -1,3 +1,5 @@
+import logging
+
 from fastapi.testclient import TestClient
 
 
@@ -26,3 +28,19 @@ def test_admin_player_crud(client: TestClient):
 
     deleted = client.delete(f"/admin/players/{player['player_id']}", cookies=cookies)
     assert deleted.json()["code"] == 0
+
+
+def test_admin_player_requests_log_database_target(client: TestClient, caplog):
+    cookies = login(client)
+
+    caplog.set_level(logging.INFO, logger="ai_werewolf.api.admin.dependencies")
+    caplog.set_level(logging.INFO, logger="ai_werewolf.storage.admin_repository")
+
+    created = client.post("/admin/players", json={"name": "日志测试玩家", "is_ai": False}, cookies=cookies)
+    listed = client.get("/admin/players", cookies=cookies)
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert "admin database session opened" in caplog.text
+    assert "admin.players.create committed" in caplog.text
+    assert "db=sqlite://" in caplog.text
