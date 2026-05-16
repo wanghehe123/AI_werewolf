@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from fastapi import HTTPException
@@ -85,6 +86,11 @@ class PhaseOrchestrator:
         events = self.night.resolve(session, human_action=action)
         for public_event in events:
             self._append_event_dict(session, public_event)
+            # Brief pause so the SSE stream delivers this event to the
+            # frontend before the next one is published.  This makes
+            # night-step announcements play sequentially as each action
+            # completes rather than all at once when day breaks.
+            time.sleep(0.5)
 
         # Check if any dead player is a hunter (can shoot on night kill)
         for player in session.state.players:
