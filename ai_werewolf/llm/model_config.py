@@ -35,6 +35,9 @@ class LLMProviderConfig(BaseModel):
         base_url:      API 基础地址，如 "https://api.deepseek.com/v1"
         api_key_env:   存放 API Key 的环境变量名，如 "DEEPSEEK_API_KEY"
                        运行时从 os.environ[api_key_env] 读取实际密钥
+                       （如果直接在 YAML 中写了 api_key 则优先使用 api_key）
+        api_key:       直接指定 API Key 值（个人开发使用，优先于 api_key_env）
+                       生产环境建议使用 api_key_env 配合环境变量
         temperature:   生成温度 (0.0-2.0)，越高输出越随机
         max_tokens:    单次回复的最大 token 数
         timeout:       请求超时时间（秒）
@@ -45,6 +48,7 @@ class LLMProviderConfig(BaseModel):
     model_name: str
     base_url: str | None = None
     api_key_env: str | None = None
+    api_key: str | None = None
     temperature: float = 0.8
     max_tokens: int = 1024
     timeout: int = 30
@@ -189,6 +193,7 @@ def load_llm_config_from_yaml(path: str | Path | None = None) -> LLMConfig:
             "model_name": raw_provider.get("model_name", ""),
             "base_url": raw_provider.get("base_url"),
             "api_key_env": raw_provider.get("api_key_env"),
+            "api_key": raw_provider.get("api_key"),
             "temperature": raw_provider.get("temperature", 0.8),
             "max_tokens": raw_provider.get("max_tokens", 1024),
             "timeout": raw_provider.get("timeout", 30),

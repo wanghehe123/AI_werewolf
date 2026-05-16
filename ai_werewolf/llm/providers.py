@@ -135,14 +135,16 @@ class OpenAICompatibleProvider:
 
     def _get_api_key(self) -> str | None:
         """
-        从环境变量读取 API Key
+        读取 API Key，优先级：config.api_key > 环境变量(api_key_env)
 
-        配置中的 api_key_env 指定了存放密钥的环境变量名。
-        例如 api_key_env="DEEPSEEK_API_KEY"，则从 os.environ["DEEPSEEK_API_KEY"] 读取。
+        config.api_key 直接写在 YAML 配置中（个人开发用），
+        api_key_env 则为环境变量名，从 os.environ 读取。
 
         Returns:
-            API Key 字符串，如果环境变量未设置则返回 None
+            API Key 字符串，如果两者均未配置则返回 None
         """
+        if self.config.api_key:
+            return self.config.api_key
         if not self.config.api_key_env:
             return None
         return os.getenv(self.config.api_key_env)
@@ -383,8 +385,9 @@ class OpenAICompatibleProvider:
         # 如果没有 API Key，回退到假模型行为并记录警告
         if not api_key:
             logger.warning(
-                "Provider %s: API Key 未配置（环境变量 %s），使用 fallback 响应。model=%s base_url=%s",
+                "Provider %s: API Key 未配置（YAML api_key=%s，环境变量 %s），使用 fallback 响应。model=%s base_url=%s",
                 self.config.provider_id,
+                "已配置" if self.config.api_key else "未配置",
                 self.config.api_key_env or "(未设置)",
                 self.config.model_name,
                 base_url or "(未设置)",

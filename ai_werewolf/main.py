@@ -26,7 +26,7 @@ from ai_werewolf.api.llm_config import router as llm_config_router
 from ai_werewolf.api.public import router as public_router
 from ai_werewolf.api.responses import error_response, success_response
 from ai_werewolf.config.env import load_local_env
-from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding
+from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding, load_llm_config_from_yaml
 from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider, build_registry_from_yaml
 from ai_werewolf.storage.database import configured_database_url, create_engine_and_tables
 import socketio as socketio_lib
@@ -72,11 +72,43 @@ def _log_missing_llm_keys(providers: list[LLMProviderConfig], role_bindings: lis
         provider = providers_by_id.get(provider_id)
         if provider is None or provider.provider_type != "openai_compatible":
             continue
+        # api_key 直接在 YAML 中配置时不需要环境变量
+        if provider.api_key:
+            continue
         if not provider.api_key_env or not os.getenv(provider.api_key_env):
             logger.warning(
-                "LLM Provider %s 已被角色绑定使用，但环境变量 %s 未配置；调用时会进入 fallback",
+                "LLM Provider %s 已被角色绑定使用，但 api_key 和 环境变量 %s 均未配置；调用时会进入 fallback",
                 provider.provider_id,
                 provider.api_key_env or "(未设置)",
+            )
+
+
+def _overlay_api_keys_from_yaml(providers: list[LLMProviderConfig]) -> None:
+    """从 llm.yaml 覆写 api_key 到内存中的 Provider 配置。
+
+    无论 Provider 从数据库还是 YAML 加载，api_key 永远以 llm.yaml 为准。
+    """
+    try:
+        yaml_config = load_llm_config_from_yaml()
+    except Exception:
+        logger.warning("无法加载 YAML 配置文件用于覆写 api_key，将使用现有配置")
+        return
+
+    yaml_keys: dict[str, str] = {}
+    for yaml_provider in yaml_config.providers:
+        if yaml_provider.api_key:
+            yaml_keys[yaml_provider.provider_id] = yaml_provider.api_key
+
+    if not yaml_keys:
+        return
+
+    for provider in providers:
+        yaml_key = yaml_keys.get(provider.provider_id)
+        if yaml_key and yaml_key != provider.api_key:
+            provider.api_key = yaml_key
+            logger.info(
+                "Provider %s: 已从 llm.yaml 覆写 api_key",
+                provider.provider_id,
             )
 
 
@@ -110,9 +142,13 @@ def create_app() -> FastAPI:
             registry, role_bindings, providers = database_registry
             logger.info("LLM 配置从数据库加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
         else:
+            # 从 YAML 加载配置（api_key 直接从 YAML 中读取，无需环境变量）
             registry, role_bindings = build_registry_from_yaml()
             providers = [registry.get(provider_id).config for provider_id in registry.all_provider_ids() if registry.get(provider_id) is not None]
             logger.info("LLM 配置从 YAML 加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
+
+        # 为 DB 加载的 Provider 从 YAML 文件覆写 api_key（保证 api_key 永远从 YAML 读取）
+        _overlay_api_keys_from_yaml(providers)
         configure_model_registry(registry, role_bindings)
         _log_missing_llm_keys(providers, role_bindings)
     except Exception:

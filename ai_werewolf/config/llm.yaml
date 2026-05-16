@@ -4,9 +4,9 @@
 # 所有 OpenAI 兼容接口（OpenAI、DeepSeek、通义千问、Ollama 等）均可使用。
 #
 # 使用方式：
-#   1. 复制此文件，填写你的 API Key 环境变量名
-#   2. 通过环境变量 LLM_CONFIG_PATH 指定配置文件路径，默认读取本文件
-#   3. 通过环境变量设置对应的 API Key（如 export DEEPSEEK_API_KEY=sk-xxx）
+#   1. 将 API Key 直接写在下方 api_key 字段中（个人开发用，无需环境变量）
+#   2. 也可用 api_key_env 从环境变量读取（生产环境推荐）
+#   3. 优先级：api_key > api_key_env 环境变量
 #
 # Provider 类型说明：
 #   - openai_compatible: OpenAI 兼容接口，支持 OpenAI / DeepSeek / 通义千问 / Ollama 等
@@ -20,37 +20,17 @@ providers:
     type: openai_compatible
     model_name: deepseek-v4-flash       # DeepSeek V3 模型
     base_url: https://api.deepseek.com
-    api_key_env: DEEPSEEK_API_KEY    # 从环境变量 DEEPSEEK_API_KEY 读取密钥
+    api_key: sk-ba862ff615e5480aab116946d0b33db3
     temperature: 0.8                 # 生成温度，越高越随机（0.0-2.0）
     max_tokens: 1024                 # 单次回复最大 token 数
     timeout: 30                      # 请求超时（秒）
-
-  # ---- OpenAI 官方 ----
-  # - id: openai
-  #   type: openai_compatible
-  #   model_name: gpt-4o-mini
-  #   base_url: https://api.openai.com/v1
-  #   api_key_env: OPENAI_API_KEY
-  #   temperature: 0.8
-  #   max_tokens: 1024
-  #   timeout: 30
-
-  # ---- 通义千问 ----
-  # - id: qwen
-  #   type: openai_compatible
-  #   model_name: qwen-plus
-  #   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  #   api_key_env: DASHSCOPE_API_KEY
-  #   temperature: 0.8
-  #   max_tokens: 1024
-  #   timeout: 30
 
   # ---- 智谱 GLM ----
   - id: glm
     type: openai_compatible
     model_name: glm-4.7         # 智谱 GLM-4 模型
     base_url: https://open.bigmodel.cn/api/paas/v4
-    api_key_env: ZHIPU_API_KEY       # 从环境变量 ZHIPU_API_KEY 读取密钥
+    api_key: 83ca0a13383f418baec1c13a1a11b949.1BY4hkXIpDnAm1nD
     temperature: 0.8
     max_tokens: 1024
     timeout: 30
@@ -60,7 +40,7 @@ providers:
     type: openai_compatible
     model_name: MiniMax-M2.7     # MiniMax Text 模型
     base_url: https://api.minimaxi.com/v1
-    api_key_env: MINIMAX_API_KEY      # 从环境变量 MINIMAX_API_KEY 读取密钥
+    api_key: sk-cp-GxDO-5KN1E_TIj6SIsZe5DT07R4V_zpKfI7EVXe8I1eY5y5M4suB8AG4knkzjKaIdP7rh9VJkDJNmhYY7tdEb5e4cuV79w--Kn8fKnix_JgGK1ylwEH-tPs
     temperature: 0.8
     max_tokens: 1024
     timeout: 30
