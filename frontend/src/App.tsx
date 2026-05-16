@@ -55,6 +55,7 @@ import type {
   SubmitActionInput
 } from "./types";
 import { useGameStore } from "./stores/gameStore";
+import { useTtsPlayback } from "./hooks/useTtsPlayback";
 
 export function App() {
   return (
@@ -127,6 +128,9 @@ function GameRoute() {
 
     return () => source.close();
   }, [gameId, store.game?.human_player_id]);
+
+  // TTS audio playback for AI speeches
+  useTtsPlayback(gameId);
 
   // Action handler
   async function handleAction(action: SubmitActionInput) {

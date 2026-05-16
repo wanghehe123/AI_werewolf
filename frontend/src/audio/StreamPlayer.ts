@@ -55,14 +55,7 @@ export class StreamPlayer {
     }
   }
 
-  setVolume(volume: number): void {
-    if (this.audioContext) {
-      const gainNode = (this.audioContext as Record<string, unknown>).__gainNode as GainNode | undefined;
-      if (gainNode) {
-        gainNode.gain.value = Math.max(0, Math.min(1, volume));
-      }
-    }
-  }
+  // Volume control not yet wired; reserved for future use
 
   destroy(): void {
     this.stop();
