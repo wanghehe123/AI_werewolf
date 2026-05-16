@@ -38,6 +38,35 @@ def player_references(session: GameSession) -> dict[str, str]:
     return {player.player_id: player_label(player.player_id, session) for player in session.state.players}
 
 
+def resolve_player_id(target_str: str | None, session: GameSession) -> str | None:
+    """Resolve a target string to a player ID, trying multiple formats.
+
+    Tries (in order):
+    1. Exact match against known player IDs (UUIDs)
+    2. Seat-number pattern (``"2号"`` → player whose seat == 2)
+    3. Full label match (``"2号 小灰"`` → reverse lookup in player_references)
+
+    Returns the matching player ID, or *None* if nothing matches.
+    """
+    if target_str is None:
+        return None
+
+    state = session.state
+
+    # 1. Direct player ID match
+    for player in state.players:
+        if player.player_id == target_str:
+            return target_str
+
+    # 2. Seat number or full label match: "2号" or "2号 小灰"
+    refs = player_references(session)
+    for pid, label in refs.items():
+        if target_str == label or target_str == label.split(" ")[0]:
+            return pid
+
+    return None
+
+
 def avatar_url(player_id: str, session: GameSession) -> str | None:
     """Get avatar URL for a player."""
     agent = session.agents.get(player_id)

@@ -7,7 +7,7 @@ from typing import Any
 from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
 from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
-from ai_werewolf.engine.helpers import display_name, event, player_label, player_references
+from ai_werewolf.engine.helpers import display_name, event, player_label, player_references, resolve_player_id
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
@@ -88,7 +88,7 @@ class NightResolver:
 
         human_target = self._human_night_target(session, human_action, "werewolf", {"wolf_kill"})
         if human_target:
-            target_id = self._validate_target(human_target, session.state, exclude_wolves=True)
+            target_id = self._validate_target(human_target, session, exclude_wolves=True)
             if target_id:
                 session.night_actions.append({
                     "actor_player_id": session.human_player_id,
@@ -112,7 +112,7 @@ class NightResolver:
             return None
         decision = self._get_ai_decision(session, wolf.player_id, context)
 
-        target_id = self._validate_target(decision.target_id, session.state, exclude_wolves=True)
+        target_id = self._validate_target(decision.target_id, session, exclude_wolves=True)
         if target_id:
             session.night_actions.append({
                 "actor_player_id": wolf.player_id,
@@ -139,7 +139,7 @@ class NightResolver:
 
         human_target = self._human_night_target(session, human_action, "seer", {"seer_check"})
         if alive_seer.is_human:
-            target_id = self._validate_target(human_target, session.state, exclude_player_id=alive_seer.player_id)
+            target_id = self._validate_target(human_target, session, exclude_player_id=alive_seer.player_id)
             if target_id:
                 self._record_seer_result(session, alive_seer.player_id, target_id)
                 target_player = session.state.player_by_id(target_id)
@@ -164,7 +164,7 @@ class NightResolver:
             return []
 
         decision = self._get_ai_decision(session, alive_seer.player_id, context)
-        target_id = self._validate_target(decision.target_id, session.state, exclude_player_id=alive_seer.player_id)
+        target_id = self._validate_target(decision.target_id, session, exclude_player_id=alive_seer.player_id)
         if target_id:
             self._record_seer_result(session, alive_seer.player_id, target_id)
             target_player = session.state.player_by_id(target_id)
@@ -196,7 +196,7 @@ class NightResolver:
             target_id = decision.target_id
 
         # Enforce: cannot guard same person two nights in a row
-        target_id = self._validate_target(target_id, session.state)
+        target_id = self._validate_target(target_id, session)
         if target_id and target_id == last_guarded:
             # Fallback: pick a different valid target
             valid_targets = [p.player_id for p in session.state.players if p.alive and p.player_id != last_guarded]
@@ -314,7 +314,7 @@ class NightResolver:
                 )
 
         elif action == "witch_poison" and info.witch_medicine.get("poison", False) and target_id:
-            valid_target = self._validate_target(target_id, session.state)
+            valid_target = self._validate_target(target_id, session)
             if valid_target:
                 info.witch_medicine["poison"] = False
                 session.witch_has_poison = False
@@ -448,22 +448,25 @@ class NightResolver:
             )
             return fallback
 
-    def _validate_target(self, target_id: str | None, state, exclude_wolves: bool = False, exclude_player_id: str | None = None) -> str | None:
+    def _validate_target(self, target_id: str | None, session: GameSession, exclude_wolves: bool = False, exclude_player_id: str | None = None) -> str | None:
         """Validate that a target is an alive player. Returns None if invalid."""
         if target_id is None:
             return None
-        alive_ids = {p.player_id for p in state.players if p.alive}
-        if target_id not in alive_ids:
+        state = session.state
+        resolved = resolve_player_id(target_id, session)
+        if resolved is None:
             return None
-        if target_id == exclude_player_id:
+        alive_ids = {p.player_id for p in state.players if p.alive}
+        if resolved not in alive_ids:
+            return None
+        if resolved == exclude_player_id:
             return None
         if exclude_wolves:
-            target_player = state.player_by_id(target_id)
+            target_player = state.player_by_id(resolved)
             if target_player.role_key == "werewolf":
-                # Pick a non-wolf fallback
                 non_wolves = [p.player_id for p in state.players if p.alive and p.role_key != "werewolf"]
                 return non_wolves[0] if non_wolves else None
-        return target_id
+        return resolved
 
     def _has_alive_role(self, session: GameSession, role_keys: set[str]) -> bool:
         return any(player.alive and player.role_key in role_keys for player in session.state.players)

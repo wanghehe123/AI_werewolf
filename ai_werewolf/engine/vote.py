@@ -8,7 +8,7 @@ from typing import Any
 
 from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
-from ai_werewolf.engine.helpers import display_name, event
+from ai_werewolf.engine.helpers import display_name, event, resolve_player_id
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
@@ -139,10 +139,18 @@ class VoteResolver:
 
             target = decision.target_id
             if target is not None:
-                alive_ids = {p.player_id for p in session.state.players if p.alive}
-                if target not in alive_ids or target == player_id:
-                    logger.warning("AI %s vote target %s invalid, abstain", player_id, target)
+                # Resolve seat-number patterns like "2号" → real player ID
+                resolved = resolve_player_id(target, session)
+                if resolved is None:
+                    logger.warning("AI %s vote target %s unresolvable, abstain", player_id, target)
                     target = None
+                else:
+                    alive_ids = {p.player_id for p in session.state.players if p.alive}
+                    if resolved not in alive_ids or resolved == player_id:
+                        logger.warning("AI %s vote target %s invalid, abstain", player_id, resolved)
+                        target = None
+                    else:
+                        target = resolved
 
             return target, decision.speech
         except Exception:
