@@ -7,9 +7,16 @@ from ai_werewolf.engine.session import GameSession
 
 
 def build_game_context(session: GameSession) -> str:
-    """Build game context string from public events for LLM prompts."""
+    """Build game context string from public events for LLM prompts.
+
+    Only events with ``public == True`` are included; private events (e.g.
+    seer check results intended only for that player) are filtered out so
+    they never leak into other players' prompts.
+    """
     lines = []
     for event in session.public_events:
+        if not event.get("public", True):
+            continue
         etype = event.get("event_type", "")
         payload = event.get("payload", {})
         message = payload.get("message", "")
