@@ -41,29 +41,32 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
   }, [resultKeys.length]);
 
   return (
-    <main className="game-table">
+    <main className="flex flex-col gap-6 max-w-7xl mx-auto px-4 py-6">
       <motion.header
-        className="phase-banner"
+        className="flex justify-between items-center p-6 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]"
         key={`${game.phase}-${game.day_count}`}
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, type: "spring", stiffness: 150 }}
       >
         <div>
-          <p className="scene-kicker">AI WEREWOLF ROOM</p>
-          <h1>{phaseLabels[game.phase]}</h1>
+          <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-1">AI WEREWOLF ROOM</p>
+          <h1 className="text-2xl font-bold">{phaseLabels[game.phase]}</h1>
         </div>
-        <div className="phase-meta">
+        <div className="flex gap-4 text-sm text-[var(--color-text-dim)]">
           <span>第 {game.day_count} 天</span>
           <span>{game.winner ? `胜利：${game.winner}` : "对局进行中"}</span>
         </div>
       </motion.header>
 
-      <section className="table-layout">
-        <div className="seat-ring" aria-label="玩家座位">
+      <section className="grid grid-cols-[1fr_280px] gap-6 max-md:grid-cols-1">
+        <div className="grid grid-cols-3 gap-3" aria-label="玩家座位">
           {game.players.map((player, index) => (
             <motion.article
-              className={`player-seat ${player.alive ? "" : "is-dead"} ${player.speaking ? "is-speaking" : ""}`}
+              className={`flex flex-col items-center gap-2 p-4 rounded-xl border transition-all
+                ${player.alive ? "border-[var(--color-warm-border)] bg-[var(--color-warm-card)]" : "border-[var(--color-warm-border)] bg-[var(--color-warm-card)] opacity-50"}
+                ${player.speaking ? "!border-[var(--color-gold)]" : ""}
+              `}
               key={player.player_id}
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{
@@ -79,20 +82,20 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
                 boxShadow: { duration: 0.4 }
               }}
             >
-              <div className="avatar" aria-hidden="true">
+              <div className="w-12 h-12 rounded-full bg-[var(--color-warm-border)] flex items-center justify-center text-lg font-bold text-[var(--color-text-dim)] overflow-hidden" aria-hidden="true">
                 {player.avatar_url ? <img src={player.avatar_url} alt="" /> : player.display_name.slice(0, 1)}
               </div>
               <div>
                 <strong>{player.display_name}</strong>
                 <p>{player.seat}号位</p>
               </div>
-              <div className="seat-tags">
-                {player.role_key && <span>{roleLabel(player.role_key)}</span>}
-                {player.sheriff && <span>警长</span>}
-                {!player.alive && <span>出局</span>}
-                {player.voted && <span>已投票</span>}
+              <div className="flex flex-wrap gap-1 justify-center">
+                {player.role_key && <span className="text-xs px-2 py-0.5 rounded bg-[var(--color-warm-border)]">{roleLabel(player.role_key)}</span>}
+                {player.sheriff && <span className="text-xs px-2 py-0.5 rounded bg-[var(--color-amber-bg)] text-[var(--color-amber)]">警长</span>}
+                {!player.alive && <span className="text-xs px-2 py-0.5 rounded bg-[var(--color-red-bg)] text-red-400">出局</span>}
+                {player.voted && <span className="text-xs px-2 py-0.5 rounded bg-[var(--color-blue-bg)] text-[var(--color-blue-night)]">已投票</span>}
                 {seerResults[player.player_id] && (
-                  <span className={`seer-badge ${seerResults[player.player_id].camp}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded ${seerResults[player.player_id].camp === "good" ? "bg-[var(--color-green-bg)] text-[var(--color-green-seer)]" : "bg-[var(--color-red-bg)] text-red-400"}`}>
                     {seerResults[player.player_id].camp === "good" ? "好" : "狼"}
                   </span>
                 )}
@@ -101,11 +104,11 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
           ))}
         </div>
 
-        <aside className="event-log" aria-label="事件时间线">
-          <div className="panel-title">事件时间线</div>
+        <aside className="flex flex-col gap-2 p-4 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)] max-h-[calc(100vh-220px)] overflow-y-auto" aria-label="事件时间线">
+          <div className="text-sm font-semibold text-[var(--color-text-dim)] pb-2 border-b border-[var(--color-warm-border)]">事件时间线</div>
           {game.public_events.length === 0 ? (
             <motion.p
-              className="empty-state"
+              className="text-sm text-[var(--color-text-muted)] italic"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
             >
@@ -115,11 +118,12 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
             game.public_events.map((event, index) => (
               <motion.p
                 key={`${event.event_type}-${index}`}
+                className="text-sm"
                 initial={{ opacity: 0, x: -16 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: Math.min(index * 0.03, 0.5), duration: 0.25 }}
               >
-                <span>{event.event_type}</span>
+                <span className="text-xs text-[var(--color-text-muted)] mr-2">{event.event_type}</span>
                 {event.payload.message}
               </motion.p>
             ))
@@ -127,13 +131,13 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
           <AnimatePresence>
             {streamingSpeechEntries.map(([playerId, value]) => (
               <motion.p
-                className="streaming-event"
+                className="text-sm text-[var(--color-gold)]"
                 key={`streaming-${playerId}`}
                 initial={{ opacity: 0, x: -16 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0 }}
               >
-                <span>speech_delta</span>
+                <span className="text-xs text-[var(--color-text-muted)] mr-2">speech_delta</span>
                 {value.label}：{value.speech}
               </motion.p>
             ))}
@@ -146,7 +150,7 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
       <AnimatePresence>
         {overlayResult && (
           <motion.div
-            className="seer-overlay"
+            className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -154,15 +158,19 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
             onClick={() => setOverlayResult(null)}
           >
             <motion.div
-              className={`seer-overlay-card ${overlayResult.camp}`}
+              className={`p-8 rounded-2xl text-center min-w-[280px] backdrop-blur ${
+                overlayResult.camp === "good"
+                  ? "bg-[var(--color-green-bg)]/90 border-2 border-[var(--color-green-seer)]"
+                  : "bg-[var(--color-red-bg)]/90 border-2 border-red-400"
+              }`}
               initial={{ scale: 0.5, opacity: 0, y: 30 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.8, opacity: 0, y: -20 }}
               transition={{ type: "spring", stiffness: 300, damping: 20 }}
             >
-              <p className="seer-overlay-label">查验结果</p>
-              <h2>{overlayResult.targetLabel}</h2>
-              <p className="seer-overlay-camp">
+              <p className="text-sm text-[var(--color-text-dim)] mb-2">查验结果</p>
+              <h2 className="text-2xl font-bold mb-2">{overlayResult.targetLabel}</h2>
+              <p className={`text-lg font-semibold ${overlayResult.camp === "good" ? "text-[var(--color-green-seer)]" : "text-red-400"}`}>
                 {overlayResult.camp === "good" ? "好人阵营" : "狼人阵营"}
               </p>
             </motion.div>
