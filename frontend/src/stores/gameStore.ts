@@ -46,6 +46,11 @@ function initialState() {
   };
 }
 
+// Track signatures of public events already announced via SSE, so that
+// announcementsFromGameDiff (called from state_snapshot handler) only
+// picks up events that have no SSE counterpart (e.g. exile).
+let sseAnnouncedSignatures = new Set<string>();
+
 export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState(),
 
@@ -60,6 +65,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     if (event.event_type === "state_snapshot") {
       const payload = event.payload as unknown as StateSnapshotPayload;
+      const prevGame = currentGame;
+      // Generate announcements from new public_events that were NOT
+      // already announced via individual SSE events.
+      if (prevGame && payload.game_state) {
+        const prevLen = prevGame.public_events.length;
+        const newPublicEvents = payload.game_state.public_events.slice(prevLen);
+        const allNew = announcementsFromGameDiff(prevGame, payload.game_state);
+        const remaining = allNew.filter((_, i) => {
+          const pe = newPublicEvents[i];
+          if (!pe) return false;
+          const sig = `${pe.event_type}::${pe.payload.message?.trim() ?? ""}`;
+          return !sig || !sseAnnouncedSignatures.has(sig);
+        });
+        if (remaining.length > 0) {
+          set((state) => ({
+            game: payload.game_state,
+            audioAnnouncements: remaining.reduce(appendAnnouncement, state.audioAnnouncements)
+          }));
+          return;
+        }
+      }
       set({ game: payload.game_state });
       return;
     }
@@ -117,6 +143,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const announcement = announcementFromSseEvent(event);
 
+    // Record the signature so duplicate public events from state_snapshot
+    // are not re-announced.
+    if (announcement) {
+      const msg = stringPayload(event.payload.message);
+      if (msg) {
+        sseAnnouncedSignatures.add(`${event.event_type}::${msg}`);
+      }
+    }
+
     set({
       game: {
         ...currentGame,
@@ -153,14 +188,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   submitAction: async (gameId, action) => {
     set({ pending: true, error: null });
     try {
-      const previousGame = get().game;
       const game = await submitGameAction(gameId, action);
-      const newAnnouncements = announcementsFromGameDiff(previousGame, game);
-      set((state) => ({
-        game,
-        pending: false,
-        audioAnnouncements: newAnnouncements.reduce(appendAnnouncement, state.audioAnnouncements)
-      }));
+      // Announcements are generated from SSE events, not here.
+      // state_snapshot (always the last SSE event) handles
+      // public_events that lack an SSE counterpart (e.g. exile).
+      set({ game, pending: false });
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "行动失败",
@@ -171,7 +203,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
-  reset: () => set(initialState())
+  reset: () => {
+    sseAnnouncedSignatures = new Set();
+    set(initialState());
+  }
 }));
 
 const NARRATABLE_SYSTEM_EVENTS = new Set([
@@ -182,17 +217,6 @@ const NARRATABLE_SYSTEM_EVENTS = new Set([
   "exile",
   "game_end",
 ]);
-
-function queueAnnouncementFromSseEvent(
-  event: GameStreamEventDto,
-  set: (partial: Partial<GameStore> | ((state: GameStore) => Partial<GameStore>)) => void
-) {
-  const announcement = announcementFromSseEvent(event);
-  if (!announcement) return;
-  set((state) => ({
-    audioAnnouncements: appendAnnouncement(state.audioAnnouncements, announcement)
-  }));
-}
 
 function announcementFromSseEvent(event: GameStreamEventDto): AudioAnnouncement | null {
   if (event.visibility !== "public") return null;
