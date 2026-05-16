@@ -11,6 +11,7 @@ AI 玩家决策器
 """
 
 import logging
+import json
 import re
 from collections.abc import Iterator
 from typing import Protocol
@@ -111,18 +112,17 @@ class PlayerDecider:
             yield self.decide(prompt).speech
             return
 
-        chunks: list[str] = []
+        raw_chunks: list[str] = []
+        visible_chunks: list[str] = []
         try:
-            for chunk in _without_thinking_blocks(self.model.stream_speech(prompt), chunks):
-                clean_chunk = chunk
-                if clean_chunk:
-                    yield clean_chunk
+            source = _without_thinking_blocks(self.model.stream_speech(prompt), raw_chunks)
+            yield from _public_speech_chunks(source, visible_chunks)
         except Exception:
             logger.exception("LLM 流式发言失败，回退到普通决策")
             yield self.decide(prompt).speech
             return
 
-        speech = "".join(chunks)
+        speech = "".join(visible_chunks)
         if speech and not is_safe_speech(speech):
             logger.warning("不安全的流式发言被过滤: %s", speech[:100])
 
@@ -179,3 +179,59 @@ def _without_thinking_blocks(source: Iterator[str], raw_chunks: list[str]) -> It
                 yield pending[:start]
             pending = pending[start + len("<think>"):]
             in_think = True
+
+
+def _public_speech_chunks(source: Iterator[str], visible_chunks: list[str]) -> Iterator[str]:
+    """Yield public speech, buffering JSON-shaped streams until speech is extracted."""
+    buffered: list[str] = []
+    decided_plain_text = False
+    buffering_json = False
+
+    for chunk in source:
+        if decided_plain_text:
+            visible_chunks.append(chunk)
+            yield chunk
+            continue
+
+        buffered.append(chunk)
+        candidate = "".join(buffered)
+        stripped = candidate.lstrip()
+        if not stripped:
+            continue
+
+        if stripped.startswith("{") or stripped.startswith("```"):
+            buffering_json = True
+            continue
+
+        decided_plain_text = True
+        visible_chunks.append(candidate)
+        yield candidate
+
+    if buffering_json:
+        speech = _extract_speech_from_jsonish_stream("".join(buffered))
+        if speech:
+            visible_chunks.append(speech)
+            yield speech
+
+
+def _extract_speech_from_jsonish_stream(text: str) -> str:
+    cleaned = _strip_thinking_blocks(text).strip()
+    block_match = re.search(r"```(?:json)?\s*\n?(.*?)```", cleaned, re.DOTALL)
+    if block_match:
+        cleaned = block_match.group(1).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return cleaned
+        try:
+            parsed = json.loads(cleaned[start:end + 1])
+        except json.JSONDecodeError:
+            return cleaned
+    if isinstance(parsed, dict):
+        speech = parsed.get("speech")
+        if isinstance(speech, str):
+            return speech
+    return cleaned

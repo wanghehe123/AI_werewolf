@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
+from ai_werewolf.engine.action_log import log_game_start_roles, log_player_action
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import event, player_label
 from ai_werewolf.engine.hunter import HunterResolver
@@ -46,6 +47,15 @@ class PhaseOrchestrator:
         state = session.state
         action_type = action["action_type"]
         self._validate_actor_action(session, action)
+        log_player_action(
+            session,
+            actor_id=action.get("actor_player_id"),
+            action_type=action_type,
+            target_id=action.get("target_player_id"),
+            source="human",
+            decision=action,
+            metadata={"client_action_id": action.get("client_action_id")},
+        )
 
         if state.phase == GamePhase.SETUP and action_type == "start_game":
             self._start_game(session)
@@ -67,6 +77,7 @@ class PhaseOrchestrator:
     def _start_game(self, session: GameSession) -> None:
         session.state.phase = GamePhase.NIGHT
         session.state.day_count = 1
+        log_game_start_roles(session)
         session.append_public_event("phase_changed", "夜幕降临，所有玩家闭眼。")
 
     def _resolve_night(self, session: GameSession, action: dict | None = None) -> None:
@@ -138,6 +149,13 @@ class PhaseOrchestrator:
                 )
             speech = "".join(chunks).strip() or "我先听听大家的意见，再做判断。"
             message = f"{label}：{speech}"
+            log_player_action(
+                session,
+                actor_id=player.player_id,
+                action_type="speech",
+                source="ai",
+                decision={"speech": speech, "action_type": "speak", "target_id": None},
+            )
             session.public_events.append(event("speech", message, actor_id=player.player_id))
             session.publish_stream_event(
                 "speech_completed",
@@ -168,6 +186,13 @@ class PhaseOrchestrator:
             exiled_player = session.state.player_by_id(exiled_id)
             if not exiled_player.is_human:
                 last_words = self._get_ai_last_words(session, exiled_id)
+                log_player_action(
+                    session,
+                    actor_id=exiled_id,
+                    action_type="last_words",
+                    source="ai",
+                    decision={"speech": last_words, "action_type": "speak", "target_id": None},
+                )
                 session.append_public_event("last_words", f"{player_label(exiled_id, session)}：{last_words}", actor_id=exiled_id)
 
             session.append_public_event("last_words", f"{player_label(exiled_id, session)} 留下遗言，白天即将结束。", actor_id=exiled_id)

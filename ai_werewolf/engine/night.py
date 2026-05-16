@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
+from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import display_name, event, player_label, player_references
 from ai_werewolf.engine.session import GameSession
@@ -94,6 +95,14 @@ class NightResolver:
                     "target_player_id": target_id,
                     "round": f"night{session.state.day_count}",
                 })
+                log_player_action(
+                    session,
+                    actor_id=session.human_player_id,
+                    action_type="wolf_kill",
+                    target_id=target_id,
+                    source="human",
+                    decision=human_action,
+                )
                 return target_id
 
         # Use first AI wolf as representative; skip human wolves
@@ -110,6 +119,14 @@ class NightResolver:
                 "target_player_id": target_id,
                 "round": f"night{session.state.day_count}",
             })
+            log_player_action(
+                session,
+                actor_id=wolf.player_id,
+                action_type="wolf_kill",
+                target_id=target_id,
+                source="ai",
+                decision=decision,
+            )
             return target_id
         return None
 
@@ -126,6 +143,15 @@ class NightResolver:
                 self._record_seer_result(session, alive_seer.player_id, target_id)
                 target_player = session.state.player_by_id(target_id)
                 camp = "狼人阵营" if target_player.role_key == "werewolf" else "好人阵营"
+                log_player_action(
+                    session,
+                    actor_id=alive_seer.player_id,
+                    action_type="seer_check",
+                    target_id=target_id,
+                    source="human",
+                    decision=human_action,
+                    metadata={"result": camp},
+                )
                 return [{
                     "event_type": "private_info",
                     "actor_id": alive_seer.player_id,
@@ -140,6 +166,17 @@ class NightResolver:
         target_id = self._validate_target(decision.target_id, session.state, exclude_player_id=alive_seer.player_id)
         if target_id:
             self._record_seer_result(session, alive_seer.player_id, target_id)
+            target_player = session.state.player_by_id(target_id)
+            camp = "werewolf" if target_player.role_key == "werewolf" else "good"
+            log_player_action(
+                session,
+                actor_id=alive_seer.player_id,
+                action_type="seer_check",
+                target_id=target_id,
+                source="ai",
+                decision=decision,
+                metadata={"result": camp},
+            )
         return []
 
     def _collect_guard(self, session: GameSession, context: str, human_action: dict[str, Any] | None = None) -> str | None:
@@ -172,6 +209,14 @@ class NightResolver:
                 "target_player_id": target_id,
                 "round": f"night{session.state.day_count}",
             })
+            log_player_action(
+                session,
+                actor_id=alive_guard.player_id,
+                action_type="guard",
+                target_id=target_id,
+                source="human" if alive_guard.is_human else "ai",
+                decision=human_action if alive_guard.is_human else decision,
+            )
             return target_id
         return None
 
@@ -258,6 +303,14 @@ class NightResolver:
                     "target_player_id": target_id,
                     "round": f"night{session.state.day_count}",
                 })
+                log_player_action(
+                    session,
+                    actor_id=witch_player_id,
+                    action_type="witch_save",
+                    target_id=target_id,
+                    source="human" if session.state.player_by_id(witch_player_id).is_human else "ai",
+                    decision={"action_type": action, "target_id": target_id},
+                )
 
         elif action == "witch_poison" and info.witch_medicine.get("poison", False) and target_id:
             valid_target = self._validate_target(target_id, session.state)
@@ -271,6 +324,14 @@ class NightResolver:
                     "target_player_id": valid_target,
                     "round": f"night{session.state.day_count}",
                 })
+                log_player_action(
+                    session,
+                    actor_id=witch_player_id,
+                    action_type="witch_poison",
+                    target_id=valid_target,
+                    source="human" if session.state.player_by_id(witch_player_id).is_human else "ai",
+                    decision={"action_type": action, "target_id": target_id},
+                )
 
         return poison_target
 
@@ -361,10 +422,29 @@ class NightResolver:
         try:
             provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
             decider = PlayerDecider(provider)
-            return decider.decide(prompt)
+            decision = decider.decide(prompt)
+            log_player_action(
+                session,
+                actor_id=player_id,
+                action_type=str(decision.action_type),
+                target_id=decision.target_id,
+                source="ai",
+                decision=decision,
+                metadata={"stage": "night_decision"},
+            )
+            return decision
         except Exception:
             logger.exception("AI %s night decision failed, using fallback", player_id)
-            return PlayerDecision(speech="无行动", action_type="speak", target_id=None, public_reason=None, private_memory_update=None)
+            fallback = PlayerDecision(speech="无行动", action_type="speak", target_id=None, public_reason=None, private_memory_update=None)
+            log_player_action(
+                session,
+                actor_id=player_id,
+                action_type="speak",
+                source="ai",
+                decision=fallback,
+                metadata={"stage": "night_decision_fallback"},
+            )
+            return fallback
 
     def _validate_target(self, target_id: str | None, state, exclude_wolves: bool = False, exclude_player_id: str | None = None) -> str | None:
         """Validate that a target is an alive player. Returns None if invalid."""

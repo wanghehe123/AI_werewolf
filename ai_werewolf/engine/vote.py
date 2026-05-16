@@ -6,6 +6,7 @@ import logging
 from collections import Counter
 from typing import Any
 
+from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import display_name, event
 from ai_werewolf.engine.session import GameSession
@@ -45,9 +46,24 @@ class VoteResolver:
             session.voted_player_ids.add(human_vote["actor_player_id"])
             if human_vote["action_type"] == "vote" and human_vote.get("target_player_id"):
                 all_votes[human_vote["actor_player_id"]] = human_vote["target_player_id"]
+                log_player_action(
+                    session,
+                    actor_id=human_vote["actor_player_id"],
+                    action_type="vote",
+                    target_id=human_vote["target_player_id"],
+                    source="human",
+                    decision=human_vote,
+                )
                 events.append(event("vote", f"你投票给了 {display_name(human_vote['target_player_id'], session)}。",
                                    actor_id=human_vote["actor_player_id"], target_id=human_vote["target_player_id"]))
             else:
+                log_player_action(
+                    session,
+                    actor_id=human_vote["actor_player_id"],
+                    action_type="abstain",
+                    source="human",
+                    decision=human_vote,
+                )
                 events.append(event("vote", "你选择弃票。", actor_id=human_vote["actor_player_id"]))
 
         # 2. AI votes via LLM
@@ -58,9 +74,24 @@ class VoteResolver:
             target_id, speech = self._get_ai_vote(session, player.player_id, context)
             if target_id:
                 all_votes[player.player_id] = target_id
+                log_player_action(
+                    session,
+                    actor_id=player.player_id,
+                    action_type="vote",
+                    target_id=target_id,
+                    source="ai",
+                    decision={"speech": speech, "action_type": "vote", "target_id": target_id},
+                )
                 events.append(event("vote", f"{display_name(player.player_id, session)} 投票给了 {display_name(target_id, session)}。",
                                    actor_id=player.player_id, target_id=target_id))
             else:
+                log_player_action(
+                    session,
+                    actor_id=player.player_id,
+                    action_type="abstain",
+                    source="ai",
+                    decision={"speech": speech, "action_type": "abstain", "target_id": None},
+                )
                 events.append(event("vote", f"{display_name(player.player_id, session)} 选择弃票。", actor_id=player.player_id))
 
         # 3. Tally and resolve

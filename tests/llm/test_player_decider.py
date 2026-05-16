@@ -68,6 +68,22 @@ class ThinkingStreamModel:
         yield "我觉得2号的发言值得关注。"
 
 
+class JsonStreamModel:
+    def decide(self, prompt: str) -> dict:
+        return {
+            "speech": "备用发言",
+            "action_type": "speak",
+            "target_id": None,
+            "public_reason": None,
+            "private_memory_update": None,
+        }
+
+    def stream_speech(self, prompt: str):
+        yield '{ "speech": "大家好，我是6号彭牢y，平民。昨晚4号出局了。", '
+        yield '"action_type": "speak", "target_id": null, '
+        yield '"public_reason": null, "private_memory_update": null }'
+
+
 def test_decider_returns_valid_player_decision():
     decider = PlayerDecider(FakeModel())
 
@@ -112,3 +128,12 @@ def test_stream_speech_strips_thinking_blocks():
     chunks = list(PlayerDecider(ThinkingStreamModel()).stream_speech("prompt"))
 
     assert "".join(chunks) == "我觉得2号的发言值得关注。"
+
+
+def test_stream_speech_extracts_speech_when_model_streams_json_object():
+    chunks = list(PlayerDecider(JsonStreamModel()).stream_speech("prompt"))
+
+    speech = "".join(chunks)
+    assert speech == "大家好，我是6号彭牢y，平民。昨晚4号出局了。"
+    assert "action_type" not in speech
+    assert "{" not in speech

@@ -1,5 +1,7 @@
 # tests/test_engine_vote.py
 """Tests for engine/vote.py - VoteResolver."""
+import json
+import logging
 from unittest.mock import MagicMock, patch
 
 from ai_werewolf.domain.agents import AgentProfile
@@ -77,3 +79,30 @@ def test_tie_no_exile():
 
     # human->ai_1, ai_1->ai_1, ai_2->ai_2, ai_3->ai_3 (ai_1 has 2 votes)
     assert result["exiled_player_id"] == "ai_1"
+
+
+def test_ai_vote_logs_structured_action_payload(caplog):
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    human_vote = {
+        "actor_player_id": "human",
+        "action_type": "abstain",
+        "target_player_id": None,
+        "content": None,
+        "client_action_id": "c1",
+    }
+    caplog.set_level(logging.INFO, logger="ai_werewolf.engine.action_log")
+
+    with patch.object(resolver, "_get_ai_vote", return_value=("human", "我投1号。")):
+        resolver.resolve(session, human_vote)
+
+    action_logs = [record.message for record in caplog.records if record.message.startswith("player_action ")]
+    ai_logs = [
+        json.loads(message.removeprefix("player_action "))
+        for message in action_logs
+        if json.loads(message.removeprefix("player_action "))["actor_id"] == "ai_1"
+    ]
+    assert ai_logs[0]["source"] == "ai"
+    assert ai_logs[0]["action_type"] == "vote"
+    assert ai_logs[0]["target_id"] == "human"
+    assert ai_logs[0]["decision"]["speech"] == "我投1号。"

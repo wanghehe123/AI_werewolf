@@ -1,4 +1,6 @@
 """Tests for engine/orchestrator.py - PhaseOrchestrator full game loop."""
+import json
+import logging
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch as _patch
 
@@ -100,6 +102,26 @@ def test_round_one_flow():
     orch.advance(session, _action("continue"))
     assert session.state.phase == GamePhase.NIGHT
     assert session.state.day_count == 2
+
+
+def test_start_game_logs_all_player_roles(caplog):
+    orch, session = _mock_orchestrator()
+    caplog.set_level(logging.INFO, logger="ai_werewolf.engine.action_log")
+
+    orch.advance(session, _action("start_game"))
+
+    role_logs = [record.message for record in caplog.records if record.message.startswith("game_start_roles ")]
+    assert len(role_logs) == 1
+    payload = json.loads(role_logs[0].removeprefix("game_start_roles "))
+    assert payload["game_id"] == "g"
+    assert [player["role_key"] for player in payload["players"]] == [
+        "villager",
+        "werewolf",
+        "werewolf",
+        "seer",
+        "villager",
+        "villager",
+    ]
 
 
 def test_game_over_wolves_win():
