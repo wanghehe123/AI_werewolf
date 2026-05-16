@@ -1,0 +1,235 @@
+import { describe, expect, it } from "vitest";
+import { useGameStore } from "./gameStore";
+import type { GameStateDto, GameStreamEventDto, StateSnapshotPayload, SpeechDeltaPayload } from "../types";
+
+describe("gameStore", () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  describe("initial state", () => {
+    it("has null game, empty collections, no error", () => {
+      const state = useGameStore.getState();
+      expect(state.game).toBeNull();
+      expect(state.streamingSpeeches).toEqual({});
+      expect(state.seerResults).toEqual({});
+      expect(state.pending).toBe(false);
+      expect(state.error).toBeNull();
+    });
+  });
+
+  describe("setGame", () => {
+    it("replaces game and clears error", () => {
+      useGameStore.getState().setGame(mockGame());
+      const state = useGameStore.getState();
+      expect(state.game?.game_id).toBe("game_test");
+      expect(state.error).toBeNull();
+    });
+
+    it("sets game to null", () => {
+      useGameStore.getState().setGame(mockGame());
+      useGameStore.getState().setGame(null);
+      expect(useGameStore.getState().game).toBeNull();
+    });
+  });
+
+  describe("applySseEvent: state_snapshot", () => {
+    it("replaces entire game state from state_snapshot payload", () => {
+      useGameStore.getState().setGame(mockGame("setup"));
+      const snapshotEvent = mockSseEvent("state_snapshot", {
+        game_state: mockGame("night")
+      } as unknown as Record<string, unknown>);
+
+      useGameStore.getState().applySseEvent(snapshotEvent);
+
+      expect(useGameStore.getState().game?.phase).toBe("night");
+    });
+  });
+
+  describe("applySseEvent: speech_delta", () => {
+    it("appends streaming speech text", () => {
+      useGameStore.getState().setGame(mockGame());
+      const deltaEvent = mockSseEvent("speech_delta", {
+        player_id: "w1",
+        label: "2号 小明",
+        delta: "我",
+        speech: "我觉得"
+      });
+
+      useGameStore.getState().applySseEvent(deltaEvent);
+      expect(useGameStore.getState().streamingSpeeches["w1"]).toEqual({
+        label: "2号 小明",
+        speech: "我觉得"
+      });
+    });
+
+    it("accumulates multiple deltas for the same player (latest wins)", () => {
+      useGameStore.getState().setGame(mockGame());
+      useGameStore.getState().applySseEvent(mockSseEvent("speech_delta", {
+        player_id: "w1", label: "2号", delta: "A", speech: "第一句"
+      }));
+      useGameStore.getState().applySseEvent(mockSseEvent("speech_delta", {
+        player_id: "w1", label: "2号", delta: "B", speech: "第二句"
+      }));
+
+      expect(useGameStore.getState().streamingSpeeches["w1"]?.speech).toBe("第二句");
+    });
+  });
+
+  describe("applySseEvent: speech_completed", () => {
+    it("removes streaming speech entry", () => {
+      useGameStore.getState().setGame(mockGame());
+      useGameStore.setState({
+        streamingSpeeches: { w1: { label: "2号", speech: "发言结束" } }
+      });
+
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("speech_completed"),
+        actor_id: "w1"
+      });
+
+      expect(useGameStore.getState().streamingSpeeches).toEqual({});
+    });
+
+    it("no-ops when player is not in streaming speeches", () => {
+      useGameStore.getState().setGame(mockGame());
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("speech_completed"),
+        actor_id: "unknown"
+      });
+
+      expect(useGameStore.getState().streamingSpeeches).toEqual({});
+    });
+  });
+
+  describe("applySseEvent: private_info (seer check)", () => {
+    it("parses wolf camp result", () => {
+      useGameStore.getState().setGame(mockGame());
+      const seerEvent = mockSseEvent("private_info", { message: "该玩家属于狼人阵营" });
+      seerEvent.target_id = "w1";
+
+      useGameStore.getState().applySseEvent(seerEvent);
+
+      expect(useGameStore.getState().seerResults["w1"]).toEqual({
+        targetPlayerId: "w1",
+        targetLabel: "2号 小明",
+        camp: "wolf"
+      });
+    });
+
+    it("parses good camp result", () => {
+      useGameStore.getState().setGame(mockGame());
+      const seerEvent = mockSseEvent("private_info", { message: "该玩家属于好人阵营" });
+      seerEvent.target_id = "human";
+
+      useGameStore.getState().applySseEvent(seerEvent);
+
+      expect(useGameStore.getState().seerResults["human"]?.camp).toBe("good");
+    });
+  });
+
+  describe("applySseEvent: generic events", () => {
+    it("appends events with string messages to public_events", () => {
+      useGameStore.getState().setGame(mockGame("night"));
+      const phaseEvent = mockSseEvent("phase_changed", { message: "进入白天阶段" });
+      phaseEvent.phase = "day_speech";
+
+      useGameStore.getState().applySseEvent(phaseEvent);
+
+      const game = useGameStore.getState().game!;
+      expect(game.public_events.at(-1)?.payload.message).toBe("进入白天阶段");
+      expect(game.phase).toBe("day_speech");
+    });
+  });
+
+  describe("submitAction", () => {
+    it("sets pending true during submission", () => {
+      expect(useGameStore.getState().pending).toBe(false);
+      useGameStore.setState({ pending: true });
+      expect(useGameStore.getState().pending).toBe(true);
+    });
+  });
+
+  describe("reset", () => {
+    it("returns all state to initial values", () => {
+      useGameStore.getState().setGame(mockGame());
+      useGameStore.setState({
+        streamingSpeeches: { w1: { label: "2号", speech: "test" } },
+        seerResults: { w1: { targetPlayerId: "w1", targetLabel: "2号", camp: "good" } },
+        pending: true,
+        error: "some error"
+      });
+
+      useGameStore.getState().reset();
+
+      const state = useGameStore.getState();
+      expect(state.game).toBeNull();
+      expect(state.streamingSpeeches).toEqual({});
+      expect(state.seerResults).toEqual({});
+      expect(state.pending).toBe(false);
+      expect(state.error).toBeNull();
+    });
+  });
+});
+
+// --- Helpers ---
+
+function mockGame(phase: GameStateDto["phase"] = "setup"): GameStateDto {
+  return {
+    game_id: "game_test",
+    board_id: "board_test",
+    phase,
+    day_count: 0,
+    human_player_id: "human",
+    current_turn_player_id: null,
+    players: [
+      {
+        player_id: "human",
+        agent_id: null,
+        seat: 1,
+        role_key: "seer",
+        alive: true,
+        is_human: true,
+        sheriff: false,
+        display_name: "你",
+        avatar_url: null,
+        speaking: false,
+        voted: false
+      },
+      {
+        player_id: "w1",
+        agent_id: "w1",
+        seat: 2,
+        role_key: null,
+        alive: true,
+        is_human: false,
+        sheriff: false,
+        display_name: "小明",
+        avatar_url: null,
+        speaking: false,
+        voted: false
+      }
+    ],
+    winner: null,
+    public_events: [],
+    allowed_actions: []
+  };
+}
+
+function mockSseEvent(
+  eventType: GameStreamEventDto["event_type"],
+  payload: Record<string, unknown> = {}
+): GameStreamEventDto {
+  return {
+    event_id: `evt_${Math.random().toString(36).slice(2)}`,
+    event_type: eventType,
+    game_id: "game_test",
+    phase: "setup",
+    day_count: 0,
+    visibility: "public",
+    actor_id: null,
+    target_id: null,
+    payload,
+    created_at: null
+  };
+}
