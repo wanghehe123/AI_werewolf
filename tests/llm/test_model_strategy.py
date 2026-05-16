@@ -1,3 +1,6 @@
+import sys
+from types import SimpleNamespace
+
 from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding
 from ai_werewolf.llm.model_registry import ModelProviderRegistry
 from ai_werewolf.llm.providers import FakeModelProvider, OpenAICompatibleProvider
@@ -99,3 +102,94 @@ def test_provider_parse_response_strips_thinking_before_json():
     )
 
     assert decision["speech"] == "我认为2号发言有压力，可以重点听。"
+
+
+class _FakeUsage:
+    def __init__(self, completion_tokens=0, reasoning_tokens=0) -> None:
+        self.completion_tokens = completion_tokens
+        self.reasoning_tokens = reasoning_tokens
+
+    def model_dump(self) -> dict:
+        return {
+            "completion_tokens": self.completion_tokens,
+            "completion_tokens_details": {"reasoning_tokens": self.reasoning_tokens},
+        }
+
+
+class _FakeMessage:
+    def __init__(self, content: str, reasoning_content: str = "") -> None:
+        self.content = content
+        self.reasoning_content = reasoning_content
+
+    def model_dump(self, exclude_none: bool = False) -> dict:
+        data = {"content": self.content, "reasoning_content": self.reasoning_content, "role": "assistant"}
+        if exclude_none:
+            return {key: value for key, value in data.items() if value is not None}
+        return data
+
+
+class _FakeChoice:
+    def __init__(self, content: str, finish_reason: str = "stop", reasoning_content: str = "") -> None:
+        self.finish_reason = finish_reason
+        self.message = _FakeMessage(content, reasoning_content=reasoning_content)
+
+
+class _FakeResponse:
+    def __init__(self, content: str, finish_reason: str = "stop", reasoning_content: str = "", usage: _FakeUsage | None = None) -> None:
+        self.choices = [_FakeChoice(content, finish_reason=finish_reason, reasoning_content=reasoning_content)]
+        self.usage = usage
+
+
+class _RetryingClient:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self.responses = responses
+        self.max_tokens_seen: list[int] = []
+
+    @property
+    def chat(self):
+        return self
+
+    @property
+    def completions(self):
+        return self
+
+    def create(self, **kwargs):
+        self.max_tokens_seen.append(kwargs["max_tokens"])
+        return self.responses.pop(0)
+
+
+def test_openai_provider_retries_empty_length_response_with_more_tokens(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "set-but-not-secret")
+    client = _RetryingClient([
+        _FakeResponse(
+            "",
+            finish_reason="length",
+            reasoning_content="推理内容占满预算",
+            usage=_FakeUsage(completion_tokens=64, reasoning_tokens=64),
+        ),
+        _FakeResponse(
+            '{"speech":"我投4号。","action_type":"vote","target_id":"p4",'
+            '"public_reason":"验狼信息明确","private_memory_update":null}',
+            finish_reason="stop",
+            usage=_FakeUsage(completion_tokens=42, reasoning_tokens=0),
+        ),
+    ])
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kwargs: client))
+    provider = OpenAICompatibleProvider(LLMProviderConfig(
+        provider_id="deepseek",
+        provider_type="openai_compatible",
+        model_name="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        api_key_env="TEST_DEEPSEEK_KEY",
+        max_tokens=64,
+    ))
+
+    decision = provider.decide("当前阶段：exile_vote\n请投票")
+
+    assert decision["speech"] == "我投4号。"
+    assert decision["target_id"] == "p4"
+    assert len(client.max_tokens_seen) == 2
+    assert client.max_tokens_seen[1] > client.max_tokens_seen[0]
+    assert "LLM 返回空 content" in caplog.text
+    assert "finish_reason=length" in caplog.text
+    assert "reasoning_chars=8" in caplog.text

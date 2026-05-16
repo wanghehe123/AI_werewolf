@@ -12,6 +12,7 @@ from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import event, player_label
 from ai_werewolf.engine.hunter import HunterResolver
 from ai_werewolf.engine.night import NightResolver
+from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import VoteResolver
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
@@ -251,6 +252,7 @@ class PhaseOrchestrator:
             task = next((t for t in tasks if t.player_id == player_id), None)
             if task is None:
                 return "我暂时没有想说的。"
+            record_prompt_trace(session, player_id, "day_speech", task.prompt)
             decision = decider.decide(task.prompt)
             return decision.speech
         except Exception:
@@ -271,6 +273,7 @@ class PhaseOrchestrator:
             if task is None:
                 yield "我暂时没有想说的。"
                 return
+            record_prompt_trace(session, player_id, "day_speech_stream", task.prompt)
             yield from decider.stream_speech(task.prompt)
         except Exception:
             logger.exception("AI %s streaming speech failed", player_id)
@@ -289,6 +292,7 @@ class PhaseOrchestrator:
                 return "没有遗言。"
             provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
             decider = PlayerDecider(provider)
+            record_prompt_trace(session, player_id, "last_words", task.prompt)
             decision = decider.decide(task.prompt)
             return decision.speech
         except Exception:

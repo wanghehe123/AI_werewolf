@@ -8,6 +8,7 @@ from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
 from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import display_name, event, player_label, player_references
+from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
 from ai_werewolf.llm.player_decider import PlayerDecider
@@ -422,6 +423,7 @@ class NightResolver:
         try:
             provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
             decider = PlayerDecider(provider)
+            record_prompt_trace(session, player_id, "night_action", prompt)
             decision = decider.decide(prompt)
             log_player_action(
                 session,

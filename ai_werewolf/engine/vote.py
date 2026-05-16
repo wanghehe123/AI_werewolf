@@ -9,6 +9,7 @@ from typing import Any
 from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import display_name, event
+from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
 from ai_werewolf.llm.player_decider import PlayerDecider
@@ -133,6 +134,7 @@ class VoteResolver:
 
             provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
             decider = PlayerDecider(provider)
+            record_prompt_trace(session, player_id, "exile_vote", task.prompt)
             decision = decider.decide(task.prompt)
 
             target = decision.target_id

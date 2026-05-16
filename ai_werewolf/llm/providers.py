@@ -326,6 +326,38 @@ class OpenAICompatibleProvider:
             "private_memory_update": None,
         }
 
+    def _chat_completion(self, client, prompt: str, max_tokens: int):
+        return client.chat.completions.create(
+            model=self.config.model_name,
+            messages=[
+                {"role": "system", "content": self._build_system_prompt()},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=self.config.temperature,
+            max_tokens=max_tokens,
+        )
+
+    def _response_content(self, response) -> str:
+        return response.choices[0].message.content or ""
+
+    def _response_diagnostics(self, response) -> dict:
+        choice = response.choices[0]
+        message = choice.message
+        reasoning_content = getattr(message, "reasoning_content", "") or ""
+        usage = response.usage.model_dump() if getattr(response, "usage", None) else {}
+        return {
+            "finish_reason": getattr(choice, "finish_reason", None),
+            "content_chars": len(getattr(message, "content", "") or ""),
+            "reasoning_chars": len(reasoning_content),
+            "usage": usage,
+        }
+
+    def _empty_content_retry_tokens(self, current_max_tokens: int) -> int | None:
+        retry_max_tokens = min(max(current_max_tokens * 4, 2048), 4096)
+        if retry_max_tokens <= current_max_tokens:
+            return None
+        return retry_max_tokens
+
     def decide(self, prompt: str) -> dict:
         """
         调用 OpenAI 兼容 API 获取模型决策
@@ -371,20 +403,41 @@ class OpenAICompatibleProvider:
                 timeout=self.config.timeout,
             )
 
-            # 发送 Chat Completion 请求
-            # 使用 user 角色传递游戏 prompt，system 角色传递格式指令
-            response = client.chat.completions.create(
-                model=self.config.model_name,
-                messages=[
-                    {"role": "system", "content": self._build_system_prompt()},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-            )
+            response = self._chat_completion(client, prompt, self.config.max_tokens)
 
             # 提取响应文本
-            content = response.choices[0].message.content or ""
+            content = self._response_content(response)
+            if not content.strip():
+                diagnostics = self._response_diagnostics(response)
+                retry_max_tokens = self._empty_content_retry_tokens(self.config.max_tokens)
+                if retry_max_tokens is not None:
+                    logger.warning(
+                        "Provider %s: LLM 返回空 content，准备提高 max_tokens 后重试。model=%s base_url=%s "
+                        "finish_reason=%s content_chars=%s reasoning_chars=%s usage=%s retry_max_tokens=%s",
+                        self.config.provider_id,
+                        self.config.model_name,
+                        base_url or "(未设置)",
+                        diagnostics["finish_reason"],
+                        diagnostics["content_chars"],
+                        diagnostics["reasoning_chars"],
+                        diagnostics["usage"],
+                        retry_max_tokens,
+                    )
+                    response = self._chat_completion(client, prompt, retry_max_tokens)
+                    content = self._response_content(response)
+                if not content.strip():
+                    diagnostics = self._response_diagnostics(response)
+                    logger.warning(
+                        "Provider %s: LLM 重试后仍返回空 content，将使用 fallback。model=%s base_url=%s "
+                        "finish_reason=%s content_chars=%s reasoning_chars=%s usage=%s",
+                        self.config.provider_id,
+                        self.config.model_name,
+                        base_url or "(未设置)",
+                        diagnostics["finish_reason"],
+                        diagnostics["content_chars"],
+                        diagnostics["reasoning_chars"],
+                        diagnostics["usage"],
+                    )
 
             # 解析响应为结构化决策
             return self._parse_response(content)
