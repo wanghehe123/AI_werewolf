@@ -7,12 +7,14 @@ REST API 端点：创建游戏、查询状态、提交行动。
 
 import logging
 import asyncio
+import io
 import json
 from typing import Any
 from uuid import uuid4
 
+import edge_tts
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from ai_werewolf.api.responses import success_response
@@ -166,6 +168,34 @@ def submit_action(game_id: str, action: SubmitActionRequest):
     data = frontend_state(session, _model_registry, _role_model_bindings)
     session.publish_stream_event("state_snapshot", {"game_state": data})
     return success_response(data=data)
+
+
+@router.post("/{game_id}/tts")
+async def tts_speech(game_id: str, request: Request):
+    """
+    Generate TTS audio for a speech segment.
+    Body: { "text": "...", "voice": "zh-CN-XiaoxiaoNeural" }
+    Returns: audio/mpeg binary
+    """
+    body = await request.json()
+    text = body.get("text", "").strip()
+    voice = body.get("voice", "zh-CN-XiaoxiaoNeural")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    communicate = edge_tts.Communicate(text, voice)
+    audio_buffer = io.BytesIO()
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_buffer.write(chunk["data"])
+
+    audio_buffer.seek(0)
+    return Response(
+        content=audio_buffer.getvalue(),
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": "inline"}
+    )
 
 
 @router.get("/{game_id}/stream")
