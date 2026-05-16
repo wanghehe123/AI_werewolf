@@ -1,0 +1,118 @@
+{
+  "version": 2,
+  "nodes": [
+    {
+      "type": "frame",
+      "id": "root",
+      "x": 20, "y": 20,
+      "layout": "dagre",
+      "width": "fit-content",
+      "height": "fit-content",
+      "padding": 60,
+      "fillColor": "#1A1714",
+      "borderColor": "#D7A756",
+      "borderWidth": 1,
+      "borderRadius": 16,
+      "layoutOptions": {
+        "rankdir": "LR",
+        "nodesep": 50,
+        "ranksep": 100,
+        "edges": [
+          ["trigger", "context"],
+          ["context", "prompt"],
+          ["prompt", "llm_call"],
+          ["llm_call", "stream_delta"],
+          ["stream_delta", "parse_json"],
+          ["parse_json", "tts_gen"],
+          ["tts_gen", "audio_stream"],
+          ["stream_delta", "subtitle"],
+          ["audio_stream", "player"],
+          ["subtitle", "player"],
+          ["parse_json", "game_engine"],
+          ["game_engine", "sse_push"],
+          ["sse_push", "frontend_update"]
+        ]
+      },
+      "children": [
+        {
+          "type": "ellipse", "id": "trigger", "text": "Game Phase\nTrigger",
+          "width": 120, "height": 60,
+          "fillColor": "#3A3228", "borderColor": "#D7A756", "borderWidth": 2,
+          "fontSize": 13, "textColor": "#F7EFE1"
+        },
+        {
+          "type": "rect", "id": "context", "text": "Build Context\n(Players + History)",
+          "width": 160, "height": 50,
+          "fillColor": "#3A3228", "borderColor": "#D7A756", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#F7EFE1"
+        },
+        {
+          "type": "rect", "id": "prompt", "text": "Prompt Builder\n(Few-Shot + Role)",
+          "width": 160, "height": 50,
+          "fillColor": "#3A3228", "borderColor": "#D7A756", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#F7EFE1"
+        },
+        {
+          "type": "rect", "id": "llm_call", "text": "LLM API Call\n(DeepSeek / GLM)",
+          "width": 160, "height": 50,
+          "fillColor": "#2A1A38", "borderColor": "#A855F7", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#D8B4FE"
+        },
+        {
+          "type": "rect", "id": "stream_delta", "text": "SSE Stream\n(Delta Chunks)",
+          "width": 160, "height": 50,
+          "fillColor": "#1A2030", "borderColor": "#3B82F6", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#93C5FD"
+        },
+        {
+          "type": "rect", "id": "parse_json", "text": "Parse JSON\n(Action / Speech)",
+          "width": 160, "height": 50,
+          "fillColor": "#3A3228", "borderColor": "#D7A756", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#F7EFE1"
+        },
+        {
+          "type": "rect", "id": "tts_gen", "text": "TTS Generate\n(Edge-TTS / CosyVoice)",
+          "width": 160, "height": 50,
+          "fillColor": "#1A3828", "borderColor": "#22C55E", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#86EFAC"
+        },
+        {
+          "type": "rect", "id": "audio_stream", "text": "Audio Stream\n(Web Audio API)",
+          "width": 160, "height": 50,
+          "fillColor": "#1A3828", "borderColor": "#22C55E", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#86EFAC"
+        },
+        {
+          "type": "rect", "id": "subtitle", "text": "Subtitle Sync\n(Typewriter FX)",
+          "width": 160, "height": 50,
+          "fillColor": "#1A2030", "borderColor": "#3B82F6", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#93C5FD"
+        },
+        {
+          "type": "rect", "id": "player", "text": "Player UI\n(Audio + Text + Avatar)",
+          "width": 160, "height": 50,
+          "fillColor": "#3A2818", "borderColor": "#F59E0B", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#FDE68A"
+        },
+        {
+          "type": "rect", "id": "game_engine", "text": "Game Engine\n(State Update)",
+          "width": 160, "height": 50,
+          "fillColor": "#3A1818", "borderColor": "#EF4444", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#FCA5A5"
+        },
+        {
+          "type": "rect", "id": "sse_push", "text": "SSE Push\n(State Snapshot)",
+          "width": 160, "height": 50,
+          "fillColor": "#1A2030", "borderColor": "#3B82F6", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#93C5FD"
+        },
+        {
+          "type": "rect", "id": "frontend_update", "text": "Frontend Update\n(Zustand Store)",
+          "width": 160, "height": 50,
+          "fillColor": "#3A3228", "borderColor": "#D7A756", "borderWidth": 2,
+          "borderRadius": 8, "fontSize": 13, "textColor": "#F7EFE1"
+        }
+      ]
+    }
+  ]
+}

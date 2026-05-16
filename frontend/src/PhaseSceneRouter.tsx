@@ -31,11 +31,11 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
 
   if (game.phase === "setup") {
     return (
-      <section className="scene-panel">
-        <p className="scene-kicker">SETUP</p>
+      <section className="p-6 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+        <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">SETUP</p>
         <h2>准备开局</h2>
         <p>座位和身份已由后端分配。点击开始后，房间进入第一夜。</p>
-        <button className="primary-action" disabled={pending} onClick={() => onSubmitAction({ action_type: "start_game" })}>
+        <button className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50" disabled={pending} onClick={() => onSubmitAction({ action_type: "start_game" })}>
           开始游戏
         </button>
       </section>
@@ -49,12 +49,12 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
 
     if (primaryAction?.requires_target) {
       return (
-        <section className="scene-panel night-scene">
-          <p className="scene-kicker">NIGHT</p>
+        <section className="p-6 rounded-xl border border-[var(--color-blue-night)] bg-[var(--color-warm-card)]">
+          <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">NIGHT</p>
           <h2>夜晚行动</h2>
-          <div className="target-grid" role="radiogroup" aria-label={primaryAction.label}>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={primaryAction.label}>
             {nightTargetOptions.map((target) => (
-              <label key={target.player_id} className="target-option">
+              <label key={target.player_id} className="flex items-center gap-2 p-3 rounded-lg border border-[var(--color-warm-border)] hover:border-[var(--color-gold)] bg-[var(--color-warm-bg)] cursor-pointer">
                 <input
                   type="radio"
                   name="night-target"
@@ -67,7 +67,7 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
             ))}
           </div>
           <button
-            className="primary-action"
+            className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50"
             disabled={pending || !nightTarget}
             onClick={() => onSubmitAction({ action_type: primaryAction.action_type, target_player_id: nightTarget })}
           >
@@ -78,11 +78,11 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
     }
 
     return (
-      <section className="scene-panel night-scene">
-        <p className="scene-kicker">NIGHT</p>
+      <section className="p-6 rounded-xl border border-[var(--color-blue-night)] bg-[var(--color-warm-card)]">
+        <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">NIGHT</p>
         <h2>夜晚行动</h2>
         <p>你当前没有主动夜间技能，确认后等待夜晚结算。</p>
-        <button className="primary-action" disabled={pending} onClick={() => onSubmitAction({ action_type: primaryAction?.action_type ?? "skip" })}>
+        <button className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50" disabled={pending} onClick={() => onSubmitAction({ action_type: primaryAction?.action_type ?? "skip" })}>
           {primaryAction?.label ?? "确认夜晚行动"}
         </button>
       </section>
@@ -91,11 +91,11 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
 
   if (game.phase === "day_announcement") {
     return (
-      <section className="scene-panel">
-        <p className="scene-kicker">DAWN</p>
+      <section className="p-6 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+        <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">DAWN</p>
         <h2>昨夜信息</h2>
         <p>{lastMessage(game) ?? "天亮了，所有玩家睁眼。"}</p>
-        <button className="primary-action" disabled={pending} onClick={() => onSubmitAction({ action_type: "continue" })}>
+        <button className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50" disabled={pending} onClick={() => onSubmitAction({ action_type: "continue" })}>
           进入白天发言
         </button>
       </section>
@@ -108,17 +108,17 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
     }
 
     return (
-      <section className="scene-panel">
-        <p className="scene-kicker">SPEECH</p>
+      <section className="p-6 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+        <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">SPEECH</p>
         <h2>白天发言</h2>
         <textarea
           aria-label="发言内容"
-          className="speech-input"
+          className="w-full p-3 rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-bg)] text-[var(--color-text)] resize-y min-h-[100px]"
           value={speech}
           onChange={(event) => setSpeech(event.target.value)}
           rows={4}
         />
-        <button className="primary-action" disabled={pending || speech.trim().length === 0} onClick={() => onSubmitAction({ action_type: "speech", content: speech })}>
+        <button className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50" disabled={pending || speech.trim().length === 0} onClick={() => onSubmitAction({ action_type: "speech", content: speech })}>
           提交发言
         </button>
       </section>
@@ -133,12 +133,12 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
     }
 
     return (
-      <section className="scene-panel">
-        <p className="scene-kicker">VOTE</p>
+      <section className="p-6 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+        <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">VOTE</p>
         <h2>放逐投票</h2>
-        <div className="target-grid" role="radiogroup" aria-label="投票目标">
+        <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="投票目标">
           {aliveTargets.map((player) => (
-            <label key={player.player_id} className="target-option">
+            <label key={player.player_id} className="flex items-center gap-2 p-3 rounded-lg border border-[var(--color-warm-border)] hover:border-[var(--color-gold)] bg-[var(--color-warm-bg)] cursor-pointer">
               <input
                 type="radio"
                 name="vote-target"
@@ -150,11 +150,11 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
             </label>
           ))}
         </div>
-        <div className="action-row">
-          <button className="primary-action" disabled={pending || !voteTarget || !canVote} onClick={() => onSubmitAction({ action_type: "vote", target_player_id: voteTarget })}>
+        <div className="flex gap-3">
+          <button className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50" disabled={pending || !voteTarget || !canVote} onClick={() => onSubmitAction({ action_type: "vote", target_player_id: voteTarget })}>
             投票
           </button>
-          <button className="ghost-action" disabled={pending || !canAbstain} onClick={() => onSubmitAction({ action_type: "abstain" })}>
+          <button className="px-6 py-3 rounded-lg border border-[var(--color-warm-border)] bg-transparent text-[var(--color-text)] font-semibold hover:bg-[var(--color-warm-card)] disabled:opacity-50" disabled={pending || !canAbstain} onClick={() => onSubmitAction({ action_type: "abstain" })}>
             弃票
           </button>
         </div>
@@ -164,11 +164,11 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
 
   if (game.phase === "last_words") {
     return (
-      <section className="scene-panel">
-        <p className="scene-kicker">LAST WORDS</p>
+      <section className="p-6 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+        <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">LAST WORDS</p>
         <h2>遗言</h2>
         <p>{lastMessage(game) ?? "出局玩家留下遗言，随后进入下一阶段。"}</p>
-        <button className="primary-action" disabled={pending} onClick={() => onSubmitAction({ action_type: "continue" })}>
+        <button className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50" disabled={pending} onClick={() => onSubmitAction({ action_type: "continue" })}>
           继续
         </button>
       </section>
@@ -176,26 +176,26 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
   }
 
   return (
-    <section className="scene-panel result-scene">
-      <p className="scene-kicker">REPLAY</p>
+    <section className="p-6 rounded-xl border border-[var(--color-gold)] bg-[var(--color-warm-card)]">
+      <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">REPLAY</p>
       <h2>游戏复盘</h2>
       <p>胜利阵营：{game.winner === "wolves" ? "狼人阵营" : "好人阵营"}</p>
-      <div className="role-reveal">
+      <div className="grid grid-cols-2 gap-2 mt-4">
         {game.players.map((player) => (
           <span key={player.player_id}>
             {player.seat}号 {player.display_name}：{player.role_key ?? "未知"}
           </span>
         ))}
       </div>
-      <a className="primary-link" href="/">返回大厅</a>
+      <a className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] no-underline text-center inline-block" href="/">返回大厅</a>
     </section>
   );
 }
 
 function ObserverScene({ kicker, title, message }: { kicker: string; title: string; message: string }) {
   return (
-    <section className="scene-panel">
-      <p className="scene-kicker">{kicker}</p>
+    <section className="p-6 rounded-xl border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+      <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">{kicker}</p>
       <h2>{title}</h2>
       <p>{message}</p>
     </section>

@@ -786,3 +786,40 @@ no_action
 你只能通过狼人杀游戏内允许的方式进行表达和行动。
 
 最终只输出 JSON，不要输出任何 JSON 之外的内容。
+
+发言：
+{
+    "speech": "发言内容或行动描述（中文，如果是发言，必须非空）",
+    "action_type": "speak",
+    "target_id": "null",
+    "public_reason": "null",
+    "private_memory_update": "仅写给自己的记忆更新（中文，可为null）"
+}
+
+投票：
+{
+    "speech": "",
+    "action_type": "vote",
+    "target_id": "1号",
+    "public_reason": "null",
+    "private_memory_update": "投一号的理由..."
+}
+
+其余角色动作action_type
+    role_actions = [
+        ("werewolf", "- wolf_kill: 狼人夜晚击杀"),
+        ("seer", "- seer_check: 预言家查验"),
+        ("witch", "- witch_save: 女巫使用解药"),
+        ("witch", "- witch_poison: 女巫使用毒药"),
+        ("guard", "- guard: 守卫守护"),
+        ("guardian", "- guard: 守卫守护"),
+        ("hunter", "- hunter_shoot: 猎人开枪"),
+    ]
+eg:
+{
+    "speech": "",
+    "action_type": "seer_check",
+    "target_id": "1号",
+    "public_reason": "null",
+    "private_memory_update": "查验一号的理由....."
+}

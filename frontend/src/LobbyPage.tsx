@@ -56,20 +56,20 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
   }
 
   return (
-    <main className="lobby-shell">
-      <section className="lobby-hero">
-        <p className="scene-kicker">AI WEREWOLF</p>
-        <h1>今晚，一个人开一桌狼人杀</h1>
-        <p>选择后台配置好的板子和 AI 玩家，进入第一版 MVP 对局闭环。</p>
+    <main className="flex flex-col items-center gap-8 max-w-[1180px] mx-auto px-4 py-8">
+      <section className="min-h-[28vh] grid content-end text-center py-[38px]">
+        <p className="text-[0.78rem] tracking-[0.12em] uppercase text-[var(--color-gold)] font-extrabold mb-2">AI WEREWOLF</p>
+        <h1 className="text-[clamp(2rem,5vw,4.5rem)] leading-none">今晚，一个人开一桌狼人杀</h1>
+        <p className="max-w-[680px] text-[var(--color-text-dim)] text-[1.05rem]">选择后台配置好的板子和 AI 玩家，进入第一版 MVP 对局闭环。</p>
       </section>
 
-      <section className="lobby-grid">
-        <div className="config-panel">
-          <div className="panel-title">选择板子</div>
-          <div className="board-list">
+      <section className="grid grid-cols-[1fr_1.25fr_0.85fr] gap-[18px] w-full max-md:grid-cols-1">
+        <div className="p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+          <div className="mb-3.5 text-[#f0d9ab] font-extrabold">选择板子</div>
+          <div className="flex flex-col gap-2.5">
             {boards.map((board) => (
               <button
-                className={`board-card ${board.board_id === selectedBoard?.board_id ? "is-selected" : ""}`}
+                className={`grid gap-1.5 p-[15px] rounded-lg border cursor-pointer transition-all w-full text-left border-white/[0.09] bg-white/[0.045] text-[var(--color-text)] ${board.board_id === selectedBoard?.board_id ? "!border-[var(--color-gold)] opacity-80 bg-[rgba(148,44,32,0.24)]" : ""}`}
                 key={board.board_id}
                 onClick={() => {
                   setBoardId(board.board_id);
@@ -78,18 +78,18 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
                 }}
               >
                 <strong>{board.name}</strong>
-                <span>{board.player_count} 人局 · {board.sheriff_enabled ? "有警长" : "无警长"}</span>
+                <span className="text-[#b9aa92]">{board.player_count} 人局 · {board.sheriff_enabled ? "有警长" : "无警长"}</span>
               </button>
             ))}
           </div>
         </div>
 
-        <div className="config-panel">
-          <label className="panel-title" htmlFor="human-role-select">选择你的职业</label>
-          <p className="helper-text">默认随机；选择具体职业可方便测试夜晚技能和发言视角。</p>
+        <div className="p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+          <label className="mb-3.5 text-[#f0d9ab] font-extrabold block" htmlFor="human-role-select">选择你的职业</label>
+          <p className="text-[#b9aa92]">默认随机；选择具体职业可方便测试夜晚技能和发言视角。</p>
           <select
             id="human-role-select"
-            className="role-select"
+            className="w-full min-h-[42px] border border-white/[0.14] rounded-lg px-3 bg-white/[0.06] text-[var(--color-text)]"
             aria-label="选择你的职业"
             value={humanRoleKey}
             onChange={(event) => setHumanRoleKey(event.target.value)}
@@ -103,29 +103,32 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
           </select>
         </div>
 
-        <div className="config-panel">
-          <div className="panel-title">选择 AI 玩家</div>
-          <p className="helper-text">需要选择 {requiredAgents} 位 AI 玩家</p>
-          <div className="agent-list">
+        <div className="p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+          <div className="mb-3.5 text-[#f0d9ab] font-extrabold">选择 AI 玩家</div>
+          <p className="text-[#b9aa92]">需要选择 {requiredAgents} 位 AI 玩家</p>
+          <div className="flex flex-col gap-2.5 max-h-[300px] overflow-y-auto">
             {agents.map((agent) => (
-              <label className={`agent-card ${selectedAgentIds.includes(agent.agent_id) ? "is-selected" : ""}`} key={agent.agent_id}>
-                <input type="checkbox" checked={selectedAgentIds.includes(agent.agent_id)} onChange={() => toggleAgent(agent.agent_id)} />
-                <span className="avatar small">{agent.name.slice(0, 1)}</span>
-                <span>
+              <label
+                className={`grid grid-cols-[auto_42px_1fr] items-center gap-2.5 p-[11px] rounded-lg border cursor-pointer transition-all w-full border-white/[0.09] bg-white/[0.045] text-[var(--color-text)] ${selectedAgentIds.includes(agent.agent_id) ? "!border-[var(--color-gold)] opacity-80 bg-[rgba(148,44,32,0.24)]" : ""}`}
+                key={agent.agent_id}
+              >
+                <input type="checkbox" checked={selectedAgentIds.includes(agent.agent_id)} onChange={() => toggleAgent(agent.agent_id)} className="accent-[var(--color-gold)]" />
+                <span className="grid place-items-center w-[42px] h-[42px] rounded-full bg-linear-to-br from-[#31201a] to-[#a53829] text-[#ffe1a8] font-black">{agent.name.slice(0, 1)}</span>
+                <span className="grid gap-[3px]">
                   <strong>{agent.name}</strong>
-                  <em>{agent.persona}</em>
+                  <em className="text-[#b9aa92] not-italic">{agent.persona}</em>
                 </span>
               </label>
             ))}
           </div>
         </div>
 
-        <aside className="start-panel">
-          <div className="panel-title">开局确认</div>
+        <aside className="grid content-start gap-3.5 p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+          <div className="mb-3.5 text-[#f0d9ab] font-extrabold">开局确认</div>
           <p>{selectedBoard?.name ?? "暂无板子"}</p>
           <strong>{selectedAgentIds.length}/{requiredAgents} AI 已选择</strong>
-          {error && <p className="error-text">{error}</p>}
-          <button className="primary-action" disabled={!canStart} onClick={handleCreateGame}>
+          {error && <p className="text-[#ff9b8e]">{error}</p>}
+          <button className="px-6 py-3 rounded-lg bg-linear-to-br from-[#e0b866] to-[var(--color-red-werewolf)] text-[var(--color-warm-bg)] font-extrabold disabled:opacity-50" disabled={!canStart} onClick={handleCreateGame}>
             开局
           </button>
         </aside>

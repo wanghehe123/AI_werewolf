@@ -149,10 +149,10 @@ function GameRoute() {
 
 function StatusScreen({ title, detail }: { title: string; detail: string }) {
   return (
-    <main className="status-screen">
-      <p className="scene-kicker">AI WEREWOLF</p>
-      <h1>{title}</h1>
-      <p>{detail}</p>
+    <main className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
+      <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)]">AI WEREWOLF</p>
+      <h1 className="text-3xl font-bold">{title}</h1>
+      <p className="text-[var(--color-text-dim)]">{detail}</p>
     </main>
   );
 }
