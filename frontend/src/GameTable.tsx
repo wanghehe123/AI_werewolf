@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { PhaseSceneRouter } from "./PhaseSceneRouter";
 import type { GameStateDto, SeerCheckResult, StreamingSpeechDto, SubmitActionInput } from "./types";
 
@@ -54,8 +55,24 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
 
       <section className="table-layout">
         <div className="seat-ring" aria-label="玩家座位">
-          {game.players.map((player) => (
-            <article className={`player-seat ${player.alive ? "" : "is-dead"} ${player.speaking ? "is-speaking" : ""}`} key={player.player_id}>
+          {game.players.map((player, index) => (
+            <motion.article
+              className={`player-seat ${player.alive ? "" : "is-dead"} ${player.speaking ? "is-speaking" : ""}`}
+              key={player.player_id}
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{
+                opacity: 1,
+                scale: 1,
+                boxShadow: player.speaking
+                  ? "0 0 24px rgba(215, 167, 86, 0.6)"
+                  : "0 0 0px rgba(215, 167, 86, 0)"
+              }}
+              transition={{
+                opacity: { delay: index * 0.08, duration: 0.3 },
+                scale: { delay: index * 0.08, duration: 0.3, type: "spring", stiffness: 200 },
+                boxShadow: { duration: 0.4 }
+              }}
+            >
               <div className="avatar" aria-hidden="true">
                 {player.avatar_url ? <img src={player.avatar_url} alt="" /> : player.display_name.slice(0, 1)}
               </div>
@@ -74,7 +91,7 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
                   </span>
                 )}
               </div>
-            </article>
+            </motion.article>
           ))}
         </div>
 
