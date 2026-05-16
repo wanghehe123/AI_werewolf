@@ -104,21 +104,40 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
         <aside className="event-log" aria-label="事件时间线">
           <div className="panel-title">事件时间线</div>
           {game.public_events.length === 0 ? (
-            <p className="empty-state">等待第一条事件。</p>
+            <motion.p
+              className="empty-state"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              等待第一条事件。
+            </motion.p>
           ) : (
             game.public_events.map((event, index) => (
-              <p key={`${event.event_type}-${index}`}>
+              <motion.p
+                key={`${event.event_type}-${index}`}
+                initial={{ opacity: 0, x: -16 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: Math.min(index * 0.03, 0.5), duration: 0.25 }}
+              >
                 <span>{event.event_type}</span>
                 {event.payload.message}
-              </p>
+              </motion.p>
             ))
           )}
-          {streamingSpeechEntries.map(([playerId, value]) => (
-            <p className="streaming-event" key={`streaming-${playerId}`}>
-              <span>speech_delta</span>
-              {value.label}：{value.speech}
-            </p>
-          ))}
+          <AnimatePresence>
+            {streamingSpeechEntries.map(([playerId, value]) => (
+              <motion.p
+                className="streaming-event"
+                key={`streaming-${playerId}`}
+                initial={{ opacity: 0, x: -16 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0 }}
+              >
+                <span>speech_delta</span>
+                {value.label}：{value.speech}
+              </motion.p>
+            ))}
+          </AnimatePresence>
         </aside>
       </section>
 
