@@ -13,6 +13,7 @@ describe("gameStore", () => {
       expect(state.game).toBeNull();
       expect(state.streamingSpeeches).toEqual({});
       expect(state.seerResults).toEqual({});
+      expect(state.audioAnnouncements).toEqual([]);
       expect(state.pending).toBe(false);
       expect(state.error).toBeNull();
     });
@@ -140,6 +141,55 @@ describe("gameStore", () => {
       expect(game.public_events.at(-1)?.payload.message).toBe("进入白天阶段");
       expect(game.phase).toBe("day_speech");
     });
+
+    it("queues public system events for audio narration", () => {
+      useGameStore.getState().setGame(mockGame("night"));
+
+      useGameStore.getState().applySseEvent(mockSseEvent("night_step_started", {
+        message: "狼人开始行动。"
+      }));
+
+      expect(useGameStore.getState().audioAnnouncements).toEqual([
+        {
+          id: expect.stringContaining("evt_"),
+          kind: "system",
+          text: "狼人开始行动。"
+        }
+      ]);
+    });
+
+    it("queues completed player speeches for audio playback", () => {
+      useGameStore.getState().setGame(mockGame("day_speech"));
+
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("speech_completed", {
+          message: "2号 小明：我觉得今天要听逻辑。",
+          player_id: "w1",
+          label: "2号 小明",
+          speech: "我觉得今天要听逻辑。"
+        }),
+        actor_id: "w1"
+      });
+
+      expect(useGameStore.getState().audioAnnouncements.at(-1)).toEqual({
+        id: expect.any(String),
+        kind: "speech",
+        text: "我觉得今天要听逻辑。",
+        actorId: "w1",
+        label: "2号 小明"
+      });
+    });
+
+    it("does not queue private info for public audio narration", () => {
+      useGameStore.getState().setGame(mockGame("night"));
+      const seerEvent = mockSseEvent("private_info", { message: "你的查验结果：2号 是狼人阵营。" });
+      seerEvent.visibility = "self";
+      seerEvent.target_id = "w1";
+
+      useGameStore.getState().applySseEvent(seerEvent);
+
+      expect(useGameStore.getState().audioAnnouncements).toEqual([]);
+    });
   });
 
   describe("submitAction", () => {
@@ -156,6 +206,7 @@ describe("gameStore", () => {
       useGameStore.setState({
         streamingSpeeches: { w1: { label: "2号", speech: "test" } },
         seerResults: { w1: { targetPlayerId: "w1", targetLabel: "2号", camp: "good" } },
+        audioAnnouncements: [{ id: "evt_1", kind: "system", text: "测试播报" }],
         pending: true,
         error: "some error"
       });
@@ -166,6 +217,7 @@ describe("gameStore", () => {
       expect(state.game).toBeNull();
       expect(state.streamingSpeeches).toEqual({});
       expect(state.seerResults).toEqual({});
+      expect(state.audioAnnouncements).toEqual([]);
       expect(state.pending).toBe(false);
       expect(state.error).toBeNull();
     });

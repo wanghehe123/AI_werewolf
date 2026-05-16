@@ -7,12 +7,10 @@ REST API 端点：创建游戏、查询状态、提交行动。
 
 import logging
 import asyncio
-import io
 import json
 from typing import Any
 from uuid import uuid4
 
-import edge_tts
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -31,6 +29,7 @@ from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.seeds.agents import default_agents
 from ai_werewolf.seeds.boards import default_boards
 from ai_werewolf.storage.catalog import list_enabled_agent_profiles, list_enabled_board_configs
+from ai_werewolf.tts.minimax import DEFAULT_MINIMAX_TTS_VOICE_ID, MiniMaxTtsError, synthesize_with_minimax
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +76,11 @@ except Exception:
     ]
 
 _orchestrator = PhaseOrchestrator(_model_registry, _role_registry, _role_model_bindings)
+
+
+async def synthesize_tts_audio(text: str, voice: str | None = None) -> bytes:
+    """Generate TTS audio through the configured MiniMax backend."""
+    return await synthesize_with_minimax(text, voice_id=voice)
 
 
 # ==================== 配置接口 ====================
@@ -174,25 +178,23 @@ def submit_action(game_id: str, action: SubmitActionRequest):
 async def tts_speech(game_id: str, request: Request):
     """
     Generate TTS audio for a speech segment.
-    Body: { "text": "...", "voice": "zh-CN-XiaoxiaoNeural" }
+    Body: { "text": "...", "voice": "male-qn-qingse" }
     Returns: audio/mpeg binary
     """
     body = await request.json()
     text = body.get("text", "").strip()
-    voice = body.get("voice", "zh-CN-XiaoxiaoNeural")
+    voice = body.get("voice") or DEFAULT_MINIMAX_TTS_VOICE_ID
 
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    communicate = edge_tts.Communicate(text, voice)
-    audio_buffer = io.BytesIO()
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_buffer.write(chunk["data"])
+    try:
+        audio = await synthesize_tts_audio(text, voice)
+    except MiniMaxTtsError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    audio_buffer.seek(0)
     return Response(
-        content=audio_buffer.getvalue(),
+        content=audio,
         media_type="audio/mpeg",
         headers={"Content-Disposition": "inline"}
     )

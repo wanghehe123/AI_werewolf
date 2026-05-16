@@ -68,6 +68,15 @@ export interface GameEventDto {
   public: boolean;
 }
 
+export interface AudioAnnouncement {
+  id: string;
+  kind: "system" | "speech";
+  text: string;
+  actorId?: string;
+  label?: string;
+  voice?: string;
+}
+
 export interface GameStreamEventDto {
   event_id: string;
   event_type:

@@ -4,6 +4,8 @@ export interface QueueItem {
   playerId: string;
   label: string;
   audioData: ArrayBuffer;
+  announcementId?: string;
+  kind?: "system" | "speech";
 }
 
 export class AudioQueue {

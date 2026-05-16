@@ -15,7 +15,7 @@ export async function fetchTtsAudio(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       text: request.text,
-      voice: request.voice ?? "zh-CN-XiaoxiaoNeural"
+      voice: request.voice ?? "male-qn-qingse"
     })
   });
 
@@ -27,11 +27,11 @@ export async function fetchTtsAudio(
 }
 
 export const VOICE_MAP: Record<string, string> = {
-  default: "zh-CN-XiaoxiaoNeural",
-  deep: "zh-CN-YunxiNeural",
-  bright: "zh-CN-XiaoyiNeural",
-  calm: "zh-CN-YunjianNeural",
-  gentle: "zh-CN-XiaochenNeural",
+  default: "male-qn-qingse",
+  deep: "audiobook_male_1",
+  bright: "male-qn-qingse",
+  calm: "male-qn-qingse",
+  gentle: "male-qn-qingse",
 };
 
 export function getVoiceForAgent(voicePreference?: string): string {

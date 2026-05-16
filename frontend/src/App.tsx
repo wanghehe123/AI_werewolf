@@ -56,6 +56,7 @@ import type {
 } from "./types";
 import { useGameStore } from "./stores/gameStore";
 import { useTtsPlayback } from "./hooks/useTtsPlayback";
+import { usePhaseBgm } from "./hooks/usePhaseBgm";
 
 export function App() {
   return (
@@ -131,6 +132,7 @@ function GameRoute() {
 
   // TTS audio playback for AI speeches
   useTtsPlayback(gameId);
+  usePhaseBgm(store.game?.phase);
 
   // Action handler
   async function handleAction(action: SubmitActionInput) {

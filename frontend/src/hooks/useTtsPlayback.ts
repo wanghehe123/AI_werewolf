@@ -7,17 +7,28 @@ import { useGameStore } from "../stores/gameStore";
 export function useTtsPlayback(gameId: string | undefined) {
   const playerRef = useRef<StreamPlayer | null>(null);
   const queueRef = useRef<AudioQueue | null>(null);
+  const requestedAnnouncementIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!gameId) return;
 
     const player = new StreamPlayer();
     const queue = new AudioQueue(player);
+    queue.onItemStart = () => {
+      window.dispatchEvent(new CustomEvent("werewolf-voice-playback", { detail: { playing: true } }));
+    };
+    queue.onItemEnd = (item) => {
+      if (item.announcementId) {
+        useGameStore.getState().removeAudioAnnouncement(item.announcementId);
+      }
+      window.dispatchEvent(new CustomEvent("werewolf-voice-playback", { detail: { playing: false } }));
+    };
     playerRef.current = player;
     queueRef.current = queue;
 
     return () => {
       player.destroy();
+      requestedAnnouncementIdsRef.current.clear();
       playerRef.current = null;
       queueRef.current = null;
     };
@@ -27,33 +38,29 @@ export function useTtsPlayback(gameId: string | undefined) {
     if (!gameId) return;
 
     const unsub = useGameStore.subscribe((state, prev) => {
-      const game = state.game;
-      const prevGame = prev.game;
-      if (!game || !prevGame) return;
+      const newAnnouncements = state.audioAnnouncements.filter(
+        (announcement) =>
+          !prev.audioAnnouncements.some((previous) => previous.id === announcement.id) &&
+          !requestedAnnouncementIdsRef.current.has(announcement.id)
+      );
 
-      const newEvents = game.public_events.slice(prevGame.public_events.length);
-      for (const event of newEvents) {
-        if (event.event_type === "speech_completed" && event.payload.message) {
-          const speechText = event.payload.message;
-          const playerId = event.actor_id;
-          if (!speechText || !playerId) continue;
-
-          const player = game.players.find((p) => p.player_id === playerId);
-          if (!player || player.is_human) continue;
-
-          fetchTtsAudio(gameId, { text: speechText })
-            .then((audioData) => {
-              const item: QueueItem = {
-                playerId,
-                label: `${player.seat}号 ${player.display_name}`,
-                audioData
-              };
-              queueRef.current?.enqueue(item);
-            })
-            .catch((err) => {
-              console.warn("TTS fetch failed, skipping audio:", err);
-            });
-        }
+      for (const announcement of newAnnouncements) {
+        requestedAnnouncementIdsRef.current.add(announcement.id);
+        fetchTtsAudio(gameId, { text: announcement.text, voice: announcement.voice })
+          .then((audioData) => {
+            const item: QueueItem = {
+              playerId: announcement.actorId ?? "system",
+              label: announcement.label ?? (announcement.kind === "system" ? "系统播报" : "玩家发言"),
+              audioData,
+              announcementId: announcement.id,
+              kind: announcement.kind,
+            };
+            queueRef.current?.enqueue(item);
+          })
+          .catch((err) => {
+            useGameStore.getState().removeAudioAnnouncement(announcement.id);
+            console.warn("TTS fetch failed, skipping audio:", err);
+          });
       }
     });
 

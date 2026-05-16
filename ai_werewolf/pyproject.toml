@@ -6,4 +6,5 @@ dependencies = [
     "fastapi>=0.136.1",
     "edge-tts>=6.1",
     "python-socketio[asyncio_client]>=5.0",
+    "websockets>=14.0",
 ]
