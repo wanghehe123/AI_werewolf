@@ -21,6 +21,7 @@ from sqlmodel import Session
 
 from ai_werewolf.api.admin import router as admin_router
 from ai_werewolf.api.games import configure_game_repository, configure_model_registry, router as games_router
+from ai_werewolf.api.socketio_bridge import sio
 from ai_werewolf.api.llm_config import router as llm_config_router
 from ai_werewolf.api.public import router as public_router
 from ai_werewolf.api.responses import error_response, success_response
@@ -28,6 +29,8 @@ from ai_werewolf.config.env import load_local_env
 from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding
 from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider, build_registry_from_yaml
 from ai_werewolf.storage.database import configured_database_url, create_engine_and_tables
+import socketio as socketio_lib
+
 from ai_werewolf.storage.factory import build_game_repository, persistence_enabled
 from ai_werewolf.storage.repositories import LLMConfigRepository
 
@@ -154,5 +157,6 @@ def create_app() -> FastAPI:
     return app
 
 
-# 创建全局应用实例（供 uvicorn 使用）
-app = create_app()
+# 创建全局应用实例（供 uvicorn 使用），通过 Socket.IO ASGI 包装器提供双向实时通道
+_fastapi_app = create_app()
+app = socketio_lib.ASGIApp(sio, other_app=_fastapi_app)
