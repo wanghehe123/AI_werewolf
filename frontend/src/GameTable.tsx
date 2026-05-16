@@ -42,7 +42,13 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
 
   return (
     <main className="game-table">
-      <header className="phase-banner">
+      <motion.header
+        className="phase-banner"
+        key={`${game.phase}-${game.day_count}`}
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, type: "spring", stiffness: 150 }}
+      >
         <div>
           <p className="scene-kicker">AI WEREWOLF ROOM</p>
           <h1>{phaseLabels[game.phase]}</h1>
@@ -51,7 +57,7 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
           <span>第 {game.day_count} 天</span>
           <span>{game.winner ? `胜利：${game.winner}` : "对局进行中"}</span>
         </div>
-      </header>
+      </motion.header>
 
       <section className="table-layout">
         <div className="seat-ring" aria-label="玩家座位">
