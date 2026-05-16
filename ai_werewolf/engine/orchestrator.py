@@ -45,6 +45,7 @@ class PhaseOrchestrator:
         """
         state = session.state
         action_type = action["action_type"]
+        self._validate_actor_action(session, action)
 
         if state.phase == GamePhase.SETUP and action_type == "start_game":
             self._start_game(session)
@@ -90,6 +91,19 @@ class PhaseOrchestrator:
     def _enter_speech(self, session: GameSession) -> None:
         session.state.phase = GamePhase.DAY_SPEECH
         self._append_ai_speeches(session)
+        human = self._human_player(session)
+        if human is None or not human.alive:
+            session.append_public_event("phase_changed", "你已出局，本轮跳过你的发言和投票。")
+            session.state.phase = GamePhase.EXILE_VOTE
+            self._resolve_vote(session, {
+                "actor_player_id": session.human_player_id,
+                "action_type": "abstain",
+                "target_player_id": None,
+                "content": None,
+                "client_action_id": "auto_dead_human_abstain",
+                "skip_human_vote": True,
+            })
+            return
         session.append_public_event("phase_changed", "进入白天发言阶段，现在轮到你发言。")
 
     def _append_ai_speeches(self, session: GameSession) -> None:
@@ -268,3 +282,46 @@ class PhaseOrchestrator:
             visibility=public_event.get("visibility", "public" if public_event.get("public", True) else "self"),
             **extra_payload,
         )
+
+    def _validate_actor_action(self, session: GameSession, action: dict) -> None:
+        actor_id = action.get("actor_player_id")
+        if not actor_id:
+            raise HTTPException(status_code=400, detail="actor_player_id is required")
+        if actor_id != session.human_player_id:
+            raise HTTPException(status_code=400, detail="only the human player can submit actions")
+
+        actor = self._player_by_id_or_400(session, actor_id, "actor")
+
+        action_type = action.get("action_type")
+        participant_actions = {
+            "wolf_kill",
+            "seer_check",
+            "guard",
+            "witch_save",
+            "witch_poison",
+            "no_action",
+            "speech",
+            "vote",
+            "abstain",
+        }
+        if action_type in participant_actions and not actor.alive:
+            raise HTTPException(status_code=400, detail="dead players cannot act")
+
+        target_id = action.get("target_player_id")
+        if action_type == "vote":
+            if not target_id:
+                raise HTTPException(status_code=400, detail="vote requires target_player_id")
+            target = self._player_by_id_or_400(session, target_id, "target")
+            if not target.alive:
+                raise HTTPException(status_code=400, detail="cannot target dead player")
+            if target.player_id == actor.player_id:
+                raise HTTPException(status_code=400, detail="cannot vote yourself")
+
+    def _human_player(self, session: GameSession):
+        return next((player for player in session.state.players if player.player_id == session.human_player_id), None)
+
+    def _player_by_id_or_400(self, session: GameSession, player_id: str, field_name: str):
+        try:
+            return session.state.player_by_id(player_id)
+        except StopIteration as exc:
+            raise HTTPException(status_code=400, detail=f"unknown {field_name}: {player_id}") from exc

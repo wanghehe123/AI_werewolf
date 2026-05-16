@@ -20,6 +20,12 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
     setNightTarget(nightTargetOptions[0]?.player_id ?? "");
   }, [primaryAction?.action_type, nightTargetOptions]);
 
+  useEffect(() => {
+    if (!aliveTargets.some((player) => player.player_id === voteTarget)) {
+      setVoteTarget(aliveTargets[0]?.player_id ?? "");
+    }
+  }, [aliveTargets, voteTarget]);
+
   if (game.phase === "setup") {
     return (
       <section className="scene-panel">
@@ -34,6 +40,10 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
   }
 
   if (game.phase === "night") {
+    if (!primaryAction) {
+      return <ObserverScene kicker="NIGHT" title="夜晚行动" message="你已出局，正在等待夜晚结算。" />;
+    }
+
     if (primaryAction?.requires_target) {
       return (
         <section className="scene-panel night-scene">
@@ -90,6 +100,10 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
   }
 
   if (game.phase === "day_speech") {
+    if (primaryAction?.action_type !== "speech") {
+      return <ObserverScene kicker="SPEECH" title="白天发言" message="你已出局，正在旁听其他玩家发言。" />;
+    }
+
     return (
       <section className="scene-panel">
         <p className="scene-kicker">SPEECH</p>
@@ -109,6 +123,12 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
   }
 
   if (game.phase === "exile_vote") {
+    const canVote = game.allowed_actions.some((action) => action.action_type === "vote");
+    const canAbstain = game.allowed_actions.some((action) => action.action_type === "abstain");
+    if (!canVote && !canAbstain) {
+      return <ObserverScene kicker="VOTE" title="放逐投票" message="你已出局，正在等待其他玩家投票。" />;
+    }
+
     return (
       <section className="scene-panel">
         <p className="scene-kicker">VOTE</p>
@@ -128,10 +148,10 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
           ))}
         </div>
         <div className="action-row">
-          <button className="primary-action" disabled={pending || !voteTarget} onClick={() => onSubmitAction({ action_type: "vote", target_player_id: voteTarget })}>
+          <button className="primary-action" disabled={pending || !voteTarget || !canVote} onClick={() => onSubmitAction({ action_type: "vote", target_player_id: voteTarget })}>
             投票
           </button>
-          <button className="ghost-action" disabled={pending} onClick={() => onSubmitAction({ action_type: "abstain" })}>
+          <button className="ghost-action" disabled={pending || !canAbstain} onClick={() => onSubmitAction({ action_type: "abstain" })}>
             弃票
           </button>
         </div>
@@ -165,6 +185,16 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
         ))}
       </div>
       <a className="primary-link" href="/">返回大厅</a>
+    </section>
+  );
+}
+
+function ObserverScene({ kicker, title, message }: { kicker: string; title: string; message: string }) {
+  return (
+    <section className="scene-panel">
+      <p className="scene-kicker">{kicker}</p>
+      <h2>{title}</h2>
+      <p>{message}</p>
     </section>
   );
 }

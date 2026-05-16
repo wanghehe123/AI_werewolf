@@ -151,3 +151,43 @@ def test_invalid_action_raises():
         assert False, "Should have raised"
     except HTTPException as e:
         assert e.status_code == 400
+
+
+def test_dead_human_speech_and_vote_are_rejected():
+    from fastapi import HTTPException
+
+    orch, session = _mock_orchestrator()
+    session.state.phase = GamePhase.DAY_SPEECH
+    session.state.day_count = 1
+    session.state.player_by_id("human").alive = False
+
+    try:
+        orch.advance(session, _action("speech", content="我虽然死了但还想说话"))
+        assert False, "dead human speech should be rejected"
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "dead players cannot act" in exc.detail
+
+    session.state.phase = GamePhase.EXILE_VOTE
+    try:
+        orch.advance(session, _action("vote", target="w1"))
+        assert False, "dead human vote should be rejected"
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "dead players cannot act" in exc.detail
+
+
+def test_dead_human_daytime_auto_skips_speech_and_vote_after_announcement():
+    agents = {pid: MagicMock(name=f"Agent_{pid}") for pid in ["w1", "w2", "s1", "v1", "v2"]}
+    orch, session = _mock_orchestrator(agents)
+    session.state.phase = GamePhase.DAY_ANNOUNCEMENT
+    session.state.day_count = 1
+    session.state.player_by_id("human").alive = False
+
+    with _patch_ai_speech(orch), _patch.object(orch.vote, "resolve", return_value={"exiled_player_id": None, "events": []}) as vote_resolve:
+        orch.advance(session, _action("continue"))
+
+    vote_resolve.assert_called_once()
+    auto_vote = vote_resolve.call_args.args[1]
+    assert auto_vote["skip_human_vote"] is True
+    assert session.state.phase == GamePhase.NIGHT

@@ -40,14 +40,15 @@ class VoteResolver:
         all_votes: dict[str, str] = {}  # voter_id -> target_id
         state = session.state
 
-        # 1. Record human vote
-        session.voted_player_ids.add(human_vote["actor_player_id"])
-        if human_vote["action_type"] == "vote" and human_vote.get("target_player_id"):
-            all_votes[human_vote["actor_player_id"]] = human_vote["target_player_id"]
-            events.append(event("vote", f"你投票给了 {display_name(human_vote['target_player_id'], session)}。",
-                               actor_id=human_vote["actor_player_id"], target_id=human_vote["target_player_id"]))
-        else:
-            events.append(event("vote", "你选择弃票。", actor_id=human_vote["actor_player_id"]))
+        # 1. Record human vote unless the human is already out and the engine is auto-advancing the table.
+        if not human_vote.get("skip_human_vote"):
+            session.voted_player_ids.add(human_vote["actor_player_id"])
+            if human_vote["action_type"] == "vote" and human_vote.get("target_player_id"):
+                all_votes[human_vote["actor_player_id"]] = human_vote["target_player_id"]
+                events.append(event("vote", f"你投票给了 {display_name(human_vote['target_player_id'], session)}。",
+                                   actor_id=human_vote["actor_player_id"], target_id=human_vote["target_player_id"]))
+            else:
+                events.append(event("vote", "你选择弃票。", actor_id=human_vote["actor_player_id"]))
 
         # 2. AI votes via LLM
         context = build_game_context(session)

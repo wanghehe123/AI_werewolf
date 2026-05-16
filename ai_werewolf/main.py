@@ -11,19 +11,24 @@ AI 狼人杀 FastAPI 应用入口
 """
 
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlmodel import Session
 
 from ai_werewolf.api.admin import router as admin_router
 from ai_werewolf.api.games import configure_game_repository, configure_model_registry, router as games_router
 from ai_werewolf.api.llm_config import router as llm_config_router
 from ai_werewolf.api.public import router as public_router
 from ai_werewolf.api.responses import error_response, success_response
-from ai_werewolf.llm.model_registry import build_registry_from_yaml
+from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding
+from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider, build_registry_from_yaml
+from ai_werewolf.storage.database import configured_database_url, create_engine_and_tables
 from ai_werewolf.storage.factory import build_game_repository, persistence_enabled
+from ai_werewolf.storage.repositories import LLMConfigRepository
 
 # 配置日志
 logging.basicConfig(
@@ -31,6 +36,44 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _registry_from_database() -> tuple[ModelProviderRegistry, list[RoleModelBinding], list[LLMProviderConfig]] | None:
+    engine = create_engine_and_tables(configured_database_url())
+    with Session(engine) as session:
+        repository = LLMConfigRepository(session)
+        providers = repository.list_providers()
+        if not providers:
+            return None
+        role_bindings = repository.list_role_bindings()
+
+    registry = ModelProviderRegistry()
+    for provider in providers:
+        registry.register(build_provider(provider))
+    default_provider_id = next(
+        (provider.provider_id for provider in providers if provider.provider_id == "fake"),
+        providers[0].provider_id,
+    )
+    registry.set_default(default_provider_id)
+    return registry, role_bindings, providers
+
+
+def _log_missing_llm_keys(providers: list[LLMProviderConfig], role_bindings: list[RoleModelBinding]) -> None:
+    active_provider_ids = {binding.provider_id for binding in role_bindings}
+    if not active_provider_ids:
+        active_provider_ids = {providers[0].provider_id} if providers else set()
+
+    providers_by_id = {provider.provider_id: provider for provider in providers}
+    for provider_id in sorted(active_provider_ids):
+        provider = providers_by_id.get(provider_id)
+        if provider is None or provider.provider_type != "openai_compatible":
+            continue
+        if not provider.api_key_env or not os.getenv(provider.api_key_env):
+            logger.warning(
+                "LLM Provider %s 已被角色绑定使用，但环境变量 %s 未配置；调用时会进入 fallback",
+                provider.provider_id,
+                provider.api_key_env or "(未设置)",
+            )
 
 
 def create_app() -> FastAPI:
@@ -52,11 +95,18 @@ def create_app() -> FastAPI:
         configure_game_repository(build_game_repository())
 
     # ---- LLM 模型初始化 ----
-    # 从 YAML 配置文件加载 Provider 和角色绑定
+    # 数据库后台配置优先；没有持久化配置时回退到 YAML。
     try:
-        registry, role_bindings = build_registry_from_yaml()
+        database_registry = _registry_from_database() if persistence_enabled() else None
+        if database_registry is not None:
+            registry, role_bindings, providers = database_registry
+            logger.info("LLM 配置从数据库加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
+        else:
+            registry, role_bindings = build_registry_from_yaml()
+            providers = [registry.get(provider_id).config for provider_id in registry.all_provider_ids() if registry.get(provider_id) is not None]
+            logger.info("LLM 配置从 YAML 加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
         configure_model_registry(registry, role_bindings)
-        logger.info("LLM 配置加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
+        _log_missing_llm_keys(providers, role_bindings)
     except Exception:
         logger.exception("LLM 配置加载失败，将使用默认配置")
 

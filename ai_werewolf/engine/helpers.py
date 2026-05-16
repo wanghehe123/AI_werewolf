@@ -53,7 +53,7 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
     if state.phase == GamePhase.NIGHT:
         human = _human_player(state, human_player_id)
         if human is None or not human.alive:
-            return []
+            return [{"action_type": "skip", "label": "继续观战"}]
         if human.role_key == "werewolf":
             targets = [player for player in state.players if player.alive and player.role_key != "werewolf"]
             return [_target_action("wolf_kill", "击杀玩家", targets, session)]
@@ -74,8 +74,14 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
     if state.phase == GamePhase.DAY_ANNOUNCEMENT:
         return [{"action_type": "continue", "label": "进入白天发言"}]
     if state.phase == GamePhase.DAY_SPEECH:
+        human = _human_player(state, human_player_id)
+        if human is None or not human.alive:
+            return []
         return [{"action_type": "speech", "label": "提交发言"}]
     if state.phase == GamePhase.EXILE_VOTE:
+        human = _human_player(state, human_player_id)
+        if human is None or not human.alive:
+            return []
         return [{"action_type": "vote", "label": "投票"}, {"action_type": "abstain", "label": "弃票"}]
     if state.phase == GamePhase.LAST_WORDS:
         return [{"action_type": "continue", "label": "继续"}]

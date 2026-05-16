@@ -34,6 +34,71 @@ describe("PhaseSceneRouter", () => {
       target_player_id: "w1",
     });
   });
+
+  it("does not render speech or vote controls when the human has no allowed action", () => {
+    const deadSpeechGame = mockGame("day_speech");
+    deadSpeechGame.players[0].alive = false;
+    deadSpeechGame.allowed_actions = [];
+    const { rerender } = render(<PhaseSceneRouter game={deadSpeechGame} onSubmitAction={async () => undefined} pending={false} />);
+
+    expect(screen.queryByLabelText("发言内容")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "提交发言" })).not.toBeInTheDocument();
+
+    const deadVoteGame = mockGame("exile_vote");
+    deadVoteGame.players[0].alive = false;
+    deadVoteGame.allowed_actions = [];
+    rerender(<PhaseSceneRouter game={deadVoteGame} onSubmitAction={async () => undefined} pending={false} />);
+
+    expect(screen.queryByRole("button", { name: "投票" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "弃票" })).not.toBeInTheDocument();
+  });
+
+  it("moves vote selection away from a player who died before voting", async () => {
+    const submitAction = vi.fn().mockResolvedValue(undefined);
+    const speechGame = mockGame("day_speech");
+    speechGame.players.push({
+      player_id: "v1",
+      agent_id: "v1",
+      seat: 3,
+      role_key: null,
+      alive: true,
+      is_human: false,
+      sheriff: false,
+      display_name: "小王",
+      avatar_url: null,
+      speaking: false,
+      voted: false
+    });
+    const { rerender } = render(<PhaseSceneRouter game={speechGame} onSubmitAction={submitAction} pending={false} />);
+
+    const voteGame = mockGame("exile_vote");
+    voteGame.players[1].alive = false;
+    voteGame.players.push({
+      player_id: "v1",
+      agent_id: "v1",
+      seat: 3,
+      role_key: null,
+      alive: true,
+      is_human: false,
+      sheriff: false,
+      display_name: "小王",
+      avatar_url: null,
+      speaking: false,
+      voted: false
+    });
+    voteGame.allowed_actions = [
+      { action_type: "vote", label: "投票" },
+      { action_type: "abstain", label: "弃票" }
+    ];
+    rerender(<PhaseSceneRouter game={voteGame} onSubmitAction={submitAction} pending={false} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "投票" }));
+
+    expect(submitAction).toHaveBeenCalledWith({
+      action_type: "vote",
+      target_player_id: "v1",
+    });
+  });
 });
 
 function mockGame(phase: GameStateDto["phase"], nightActionType?: string): GameStateDto {

@@ -124,3 +124,48 @@ def test_admin_llm_provider_and_role_binding_are_persisted_to_database(monkeypat
     assert provider.model_name == "deepseek-chat"
     assert binding is not None
     assert binding.provider_id == "db_deepseek"
+
+
+def test_game_engine_loads_persisted_llm_config_on_startup(monkeypatch, tmp_path: Path):
+    database_url = f"sqlite:///{tmp_path / 'startup-llm.db'}"
+    monkeypatch.setenv("AI_WEREWOLF_DATABASE_ENABLED", "true")
+    monkeypatch.setenv("AI_WEREWOLF_DATABASE_URL", database_url)
+    admin_dependencies._admin_engine = None
+
+    engine = create_engine_and_tables(database_url)
+    with Session(engine) as session:
+        session.merge(
+            LLMProviderRecord(
+                provider_id="db_deepseek",
+                provider_type="openai_compatible",
+                model_name="deepseek-chat",
+                config_json={
+                    "provider_id": "db_deepseek",
+                    "provider_type": "openai_compatible",
+                    "model_name": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "temperature": 0.8,
+                    "max_tokens": 1024,
+                    "timeout": 30,
+                },
+                enabled=True,
+            )
+        )
+        session.merge(RoleModelBindingRecord(role_key="villager", provider_id="db_deepseek"))
+        session.commit()
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/games",
+        json={
+            "board_id": "board_6_beginner",
+            "human_player_id": "human",
+            "human_role_key": "villager",
+            "agent_ids": ["agent_linye", "agent_xiaoman", "agent_qingshan", "agent_akai", "agent_moyu"],
+        },
+    )
+
+    assert response.status_code == 200
+    human = next(player for player in response.json()["data"]["players"] if player["is_human"])
+    assert human["model_provider_id"] == "db_deepseek"

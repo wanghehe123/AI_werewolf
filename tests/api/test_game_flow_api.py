@@ -9,6 +9,7 @@ def create_beginner_game(client: TestClient) -> dict:
         json={
             "board_id": "board_6_beginner",
             "human_player_id": "human",
+            "human_role_key": "werewolf",
             "agent_ids": ["agent_linye", "agent_xiaoman", "agent_qingshan", "agent_akai", "agent_moyu"],
         },
     )
@@ -28,6 +29,10 @@ def post_action(client: TestClient, game_id: str, action_type: str, **extra) -> 
     )
     assert response.status_code == 200
     return response.json()["data"]
+
+
+def first_alive_ai_player_id(game: dict) -> str:
+    return next(player["player_id"] for player in game["players"] if player["alive"] and not player["is_human"])
 
 
 def test_create_game_returns_persisted_frontend_game_state():
@@ -55,7 +60,7 @@ def test_game_flow_advances_through_mvp_phases():
     announcement = post_action(client, game_id, "skip")
     speech = post_action(client, game_id, "continue")
     vote = post_action(client, game_id, "speech", content="我先听发言，今天重点看投票。")
-    last_words = post_action(client, game_id, "vote", target_player_id="agent_linye")
+    last_words = post_action(client, game_id, "vote", target_player_id=first_alive_ai_player_id(vote))
     next_state = post_action(client, game_id, "continue")
 
     assert night["phase"] == "night"
@@ -75,8 +80,8 @@ def test_vote_exile_goes_to_last_words_before_next_night():
     post_action(client, game_id, "start_game")
     post_action(client, game_id, "skip")
     post_action(client, game_id, "continue")
-    post_action(client, game_id, "speech", content="我认为今天需要明确放逐。")
-    last_words = post_action(client, game_id, "vote", target_player_id="agent_linye")
+    vote = post_action(client, game_id, "speech", content="我认为今天需要明确放逐。")
+    last_words = post_action(client, game_id, "vote", target_player_id=first_alive_ai_player_id(vote))
 
     if last_words["phase"] != "game_over":
         assert last_words["phase"] == "last_words"

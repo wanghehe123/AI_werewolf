@@ -66,6 +66,18 @@ def test_allowed_actions_night():
     assert actions[0]["action_type"] == "skip"
 
 
+def test_allowed_actions_night_dead_human_can_continue_as_observer():
+    from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+    from ai_werewolf.engine.helpers import allowed_actions
+
+    state = GameState(game_id="g", board_id="b", phase=GamePhase.NIGHT, day_count=1, players=[
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="villager", alive=False, is_human=True),
+        PlayerState(player_id="ai_1", agent_id="ai_1", seat=2, role_key="werewolf", alive=True, is_human=False),
+    ])
+
+    assert allowed_actions(state, human_player_id="human") == [{"action_type": "skip", "label": "继续观战"}]
+
+
 def test_allowed_actions_night_seer_has_target_options():
     from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
     from ai_werewolf.engine.helpers import allowed_actions
@@ -115,3 +127,33 @@ def test_allowed_actions_game_over():
         PlayerState(player_id="p", agent_id=None, seat=1, role_key="villager", alive=True, is_human=True),
     ], winner="villagers")
     assert allowed_actions(state) == []
+
+
+def test_dead_human_cannot_speak_or_vote():
+    from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+    from ai_werewolf.engine.helpers import allowed_actions
+
+    players = [
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="villager", alive=False, is_human=True),
+        PlayerState(player_id="ai_1", agent_id="ai_1", seat=2, role_key="werewolf", alive=True, is_human=False),
+    ]
+
+    speech_state = GameState(game_id="g", board_id="b", phase=GamePhase.DAY_SPEECH, day_count=1, players=players)
+    vote_state = speech_state.model_copy(update={"phase": GamePhase.EXILE_VOTE})
+
+    assert allowed_actions(speech_state, human_player_id="human") == []
+    assert allowed_actions(vote_state, human_player_id="human") == []
+
+
+def test_dead_human_can_still_continue_day_announcement_as_observer():
+    from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+    from ai_werewolf.engine.helpers import allowed_actions
+
+    state = GameState(game_id="g", board_id="b", phase=GamePhase.DAY_ANNOUNCEMENT, day_count=1, players=[
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="villager", alive=False, is_human=True),
+        PlayerState(player_id="ai_1", agent_id="ai_1", seat=2, role_key="werewolf", alive=True, is_human=False),
+    ])
+
+    assert allowed_actions(state, human_player_id="human") == [
+        {"action_type": "continue", "label": "进入白天发言"}
+    ]
