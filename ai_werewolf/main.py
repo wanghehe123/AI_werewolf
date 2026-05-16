@@ -159,4 +159,4 @@ def create_app() -> FastAPI:
 
 # 创建全局应用实例（供 uvicorn 使用），通过 Socket.IO ASGI 包装器提供双向实时通道
 _fastapi_app = create_app()
-app = socketio_lib.ASGIApp(sio, other_app=_fastapi_app)
+app = socketio_lib.ASGIApp(sio, other_asgi_app=_fastapi_app)
