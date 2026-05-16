@@ -21,7 +21,6 @@ import {
   fetchAdminRoles,
   fetchAgents,
   fetchBoards,
-  fetchGame,
   seedAdminRoles,
   updateAdminAgent,
   updateAdminBoard,
@@ -52,16 +51,10 @@ import type {
   AdminRoleDto,
   AgentProfile,
   BoardConfig,
-  GameEventDto,
   GameStateDto,
-  GameStreamEventDto,
-  PrivateInfoPayload,
-  SeerCheckResult,
-  SpeechDeltaPayload,
-  StateSnapshotPayload,
-  StreamingSpeechDto,
   SubmitActionInput
 } from "./types";
+import { useGameStore } from "./stores/gameStore";
 
 export function App() {
   return (
@@ -109,118 +102,45 @@ function LobbyRoute() {
 
 function GameRoute() {
   const { gameId } = useParams();
-  const [game, setGame] = useState<GameStateDto | null>(null);
-  const [streamingSpeeches, setStreamingSpeeches] = useState<Record<string, StreamingSpeechDto>>({});
-  const [seerResults, setSeerResults] = useState<Record<string, SeerCheckResult>>({});
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const store = useGameStore();
 
+  // Initial game load
   useEffect(() => {
-    if (!gameId) {
-      return;
-    }
-    fetchGame(gameId)
-      .then(setGame)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "加载游戏失败"));
+    if (!gameId) return;
+    store.reset();
+    store.loadGame(gameId);
   }, [gameId]);
 
+  // SSE subscription
   useEffect(() => {
-    if (!gameId || !game?.human_player_id) {
-      return;
-    }
+    if (!gameId || !store.game?.human_player_id) return;
+
     const source = subscribeGameStream(gameId, {
-      playerId: game.human_player_id,
+      playerId: store.game.human_player_id,
       onEvent: (event) => {
-        if (event.event_type === "state_snapshot") {
-          const payload = event.payload as unknown as StateSnapshotPayload;
-          setGame(payload.game_state);
-          return;
-        }
-        if (event.event_type === "speech_delta") {
-          const payload = event.payload as unknown as SpeechDeltaPayload;
-          setStreamingSpeeches((current) => ({
-            ...current,
-            [payload.player_id]: { label: payload.label, speech: payload.speech }
-          }));
-          return;
-        }
-        if (event.event_type === "speech_completed") {
-          const playerId = event.actor_id;
-          setStreamingSpeeches((current) => {
-            if (!playerId || !(playerId in current)) {
-              return current;
-            }
-            const next = { ...current };
-            delete next[playerId];
-            return next;
-          });
-        }
-        if (event.event_type === "private_info") {
-          const payload = event.payload as unknown as PrivateInfoPayload;
-          const targetId = event.target_id;
-          if (!targetId) return;
-          const msg = payload.message ?? "";
-          const camp: "good" | "wolf" = msg.includes("狼人阵营") ? "wolf" : "good";
-          const targetPlayer = game?.players.find((p) => p.player_id === targetId);
-          const targetLabel = targetPlayer ? `${targetPlayer.seat}号 ${targetPlayer.display_name}` : targetId;
-          setSeerResults((prev) => ({
-            ...prev,
-            [targetId]: { targetPlayerId: targetId, targetLabel, camp }
-          }));
-          return;
-        }
-        setGame((current) => appendStreamEvent(current, event));
+        store.applySseEvent(event);
       },
       onError: () => {
-        fetchGame(gameId)
-          .then(setGame)
-          .catch(() => undefined);
+        store.loadGame(gameId);
       }
     });
+
     return () => source.close();
-  }, [gameId, game?.human_player_id]);
+  }, [gameId, store.game?.human_player_id]);
 
+  // Action handler
   async function handleAction(action: SubmitActionInput) {
-    if (!gameId) {
-      return;
-    }
-    setPending(true);
-    setError(null);
-    try {
-      setGame(await submitGameAction(gameId, action));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "行动失败");
-    } finally {
-      setPending(false);
-    }
+    if (!gameId) return;
+    await store.submitAction(gameId, action);
   }
 
-  if (error) {
-    return <StatusScreen title="游戏暂时卡住了" detail={error} />;
+  if (store.error) {
+    return <StatusScreen title="游戏暂时卡住了" detail={store.error} />;
   }
-  if (!game) {
+  if (!store.game) {
     return <StatusScreen title="正在进入房间" detail="正在恢复当前游戏状态。" />;
   }
-  return <GameTable game={game} onSubmitAction={handleAction} pending={pending} streamingSpeeches={streamingSpeeches} seerResults={seerResults} />;
-}
-
-function appendStreamEvent(game: GameStateDto | null, event: GameStreamEventDto): GameStateDto | null {
-  if (!game || typeof event.payload.message !== "string") {
-    return game;
-  }
-  const publicEvent: GameEventDto = {
-    event_type: event.event_type,
-    actor_id: event.actor_id,
-    target_id: event.target_id,
-    payload: { message: event.payload.message },
-    public: event.visibility === "public"
-  };
-  return {
-    ...game,
-    phase: event.phase,
-    day_count: event.day_count,
-    public_events: [...game.public_events, publicEvent]
-  };
+  return <GameTable game={store.game} onSubmitAction={handleAction} pending={store.pending} streamingSpeeches={store.streamingSpeeches} seerResults={store.seerResults} />;
 }
 
 function StatusScreen({ title, detail }: { title: string; detail: string }) {
