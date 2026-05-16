@@ -85,7 +85,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           return { streamingSpeeches: next };
         });
       }
-      queueAnnouncementFromSseEvent(event, set);
+      get().appendStreamEvent(event);
       return;
     }
 

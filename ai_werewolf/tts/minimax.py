@@ -8,8 +8,13 @@ import ssl
 from collections.abc import Callable
 from typing import Any
 
+import httpx
+
+from ai_werewolf.llm.model_config import load_llm_config_from_yaml
+
 
 DEFAULT_MINIMAX_TTS_ENDPOINT = "wss://api.minimaxi.com/ws/v1/t2a_v2"
+DEFAULT_MINIMAX_TTS_HTTP_ENDPOINT = "https://api.minimaxi.com/v1/t2a_v2"
 DEFAULT_MINIMAX_TTS_MODEL = "speech-2.8-turbo"
 DEFAULT_MINIMAX_TTS_VOICE_ID = "male-qn-qingse"
 
@@ -78,11 +83,14 @@ class MiniMaxTtsClient:
             connector = websockets.connect
 
         ssl_context = ssl.create_default_context()
-        connection = connector(
-            self.endpoint,
-            additional_headers={"Authorization": f"Bearer {self.api_key}"},
-            ssl=ssl_context,
-        )
+        connect_kwargs: dict[str, Any] = {
+            "additional_headers": {"Authorization": f"Bearer {self.api_key}"},
+            "ssl": ssl_context,
+        }
+        connector_signature = inspect.signature(connector)
+        if "proxy" in connector_signature.parameters:
+            connect_kwargs["proxy"] = None
+        connection = connector(self.endpoint, **connect_kwargs)
         if inspect.isawaitable(connection):
             connection = await connection
         return connection
@@ -107,14 +115,103 @@ class MiniMaxTtsClient:
         }
 
 
+class MiniMaxHttpTtsClient:
+    """MiniMax synchronous HTTP TTS client."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str = DEFAULT_MINIMAX_TTS_MODEL,
+        voice_id: str = DEFAULT_MINIMAX_TTS_VOICE_ID,
+        endpoint: str = DEFAULT_MINIMAX_TTS_HTTP_ENDPOINT,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.voice_id = voice_id
+        self.endpoint = endpoint
+        self.transport = transport
+
+    async def synthesize(self, text: str, voice_id: str | None = None) -> bytes:
+        if not text.strip():
+            raise MiniMaxTtsError("text is required")
+
+        payload = {
+            "model": self.model,
+            "text": text,
+            "stream": False,
+            "language_boost": "Chinese",
+            "voice_setting": {
+                "voice_id": voice_id or self.voice_id,
+                "speed": 1,
+                "vol": 1,
+                "pitch": 0,
+            },
+            "audio_setting": {
+                "sample_rate": 32000,
+                "bitrate": 128000,
+                "format": "mp3",
+                "channel": 1,
+            },
+            "subtitle_enable": False,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30, transport=self.transport) as client:
+                response = await client.post(
+                    self.endpoint,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                response.raise_for_status()
+                body = response.json()
+        except Exception as exc:
+            raise MiniMaxTtsError(f"MiniMax HTTP TTS request failed: {exc}") from exc
+
+        base_resp = body.get("base_resp", {})
+        if base_resp.get("status_code", 0) != 0:
+            raise MiniMaxTtsError(base_resp.get("status_msg") or "MiniMax TTS failed")
+
+        audio_hex = body.get("data", {}).get("audio")
+        if not audio_hex:
+            raise MiniMaxTtsError("MiniMax TTS returned empty audio")
+        return bytes.fromhex(audio_hex)
+
+
 async def synthesize_with_minimax(text: str, voice_id: str | None = None) -> bytes:
-    api_key = os.getenv("MINIMAX_API_KEY")
+    api_key = resolve_minimax_api_key()
     if not api_key:
         raise MiniMaxTtsError("MINIMAX_API_KEY is not configured")
 
-    client = MiniMaxTtsClient(
+    client = MiniMaxHttpTtsClient(
         api_key=api_key,
         model=os.getenv("MINIMAX_TTS_MODEL", DEFAULT_MINIMAX_TTS_MODEL),
         voice_id=os.getenv("MINIMAX_TTS_VOICE_ID", DEFAULT_MINIMAX_TTS_VOICE_ID),
+        endpoint=os.getenv("MINIMAX_TTS_HTTP_ENDPOINT", DEFAULT_MINIMAX_TTS_HTTP_ENDPOINT),
     )
     return await client.synthesize(text, voice_id=voice_id)
+
+
+def resolve_minimax_api_key() -> str | None:
+    """Resolve MiniMax API key from env first, then the minimax provider in llm.yaml."""
+    env_key = os.getenv("MINIMAX_API_KEY")
+    if env_key:
+        return env_key
+
+    try:
+        config = load_llm_config_from_yaml()
+    except Exception:
+        return None
+
+    provider = next((item for item in config.providers if item.provider_id == "minimax"), None)
+    if provider is None:
+        return None
+    if provider.api_key:
+        return provider.api_key
+    if provider.api_key_env:
+        return os.getenv(provider.api_key_env)
+    return None

@@ -1,22 +1,27 @@
-import { StreamPlayer } from "./StreamPlayer";
-
 export interface QueueItem {
   playerId: string;
   label: string;
-  audioData: ArrayBuffer;
+  audioData?: ArrayBuffer;
+  fallbackText?: string;
   announcementId?: string;
   kind?: "system" | "speech";
 }
 
+export interface QueuePlayer {
+  isPlaying: boolean;
+  play(item: QueueItem): Promise<void>;
+  stop(): void;
+}
+
 export class AudioQueue {
-  private player: StreamPlayer;
+  private player: QueuePlayer;
   private queue: QueueItem[] = [];
   private currentItem: QueueItem | null = null;
   private enabled = true;
   private _onItemStart: ((item: QueueItem) => void) | null = null;
   private _onItemEnd: ((item: QueueItem) => void) | null = null;
 
-  constructor(player: StreamPlayer) {
+  constructor(player: QueuePlayer) {
     this.player = player;
   }
 
@@ -29,7 +34,7 @@ export class AudioQueue {
   }
 
   get isPlaying(): boolean {
-    return this.player.isPlaying;
+    return this.currentItem !== null || this.player.isPlaying;
   }
 
   get currentPlayerId(): string | null {
@@ -38,7 +43,7 @@ export class AudioQueue {
 
   enqueue(item: QueueItem): void {
     this.queue.push(item);
-    if (this.enabled && this.queue.length === 1 && !this.player.isPlaying) {
+    if (this.enabled && this.queue.length === 1 && !this.currentItem && !this.player.isPlaying) {
       this.playNext();
     }
   }
@@ -51,7 +56,7 @@ export class AudioQueue {
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    if (enabled && this.queue.length > 0 && !this.player.isPlaying) {
+    if (enabled && this.queue.length > 0 && !this.currentItem && !this.player.isPlaying) {
       this.playNext();
     }
   }
@@ -66,7 +71,7 @@ export class AudioQueue {
     this.currentItem = item;
     this._onItemStart?.(item);
 
-    this.player.play(item.audioData).then(() => {
+    this.player.play(item).then(() => {
       this._onItemEnd?.(item!);
       this.currentItem = null;
       if (this.enabled) {

@@ -7,10 +7,12 @@ REST API 端点：创建游戏、查询状态、提交行动。
 
 import logging
 import asyncio
+import io
 import json
 from typing import Any
 from uuid import uuid4
 
+import edge_tts
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -60,6 +62,7 @@ _game_repository: Any | None = None
 
 _model_registry = ModelProviderRegistry()
 _role_model_bindings: list = []
+_tts_generation_lock = asyncio.Lock()
 
 # 从 config/llm.yaml 加载 LLM 配置（优先）；若 YAML 不可用则注册 fake 回退
 try:
@@ -80,7 +83,31 @@ _orchestrator = PhaseOrchestrator(_model_registry, _role_registry, _role_model_b
 
 async def synthesize_tts_audio(text: str, voice: str | None = None) -> bytes:
     """Generate TTS audio through the configured MiniMax backend."""
-    return await synthesize_with_minimax(text, voice_id=voice)
+    async with _tts_generation_lock:
+        try:
+            return await synthesize_with_minimax(text, voice_id=voice)
+        except MiniMaxTtsError:
+            logger.exception("MiniMax TTS failed; falling back to edge-tts")
+            return await synthesize_with_edge_tts(text)
+
+
+async def synthesize_with_edge_tts(text: str, voice: str = "zh-CN-YunxiNeural") -> bytes:
+    last_error: Exception | None = None
+    for fallback_voice in [voice, "zh-CN-XiaoxiaoNeural"]:
+        try:
+            communicate = edge_tts.Communicate(text, fallback_voice)
+            audio_buffer = io.BytesIO()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_buffer.write(chunk["data"])
+            audio = audio_buffer.getvalue()
+            if audio:
+                return audio
+            last_error = MiniMaxTtsError("fallback edge-tts returned empty audio")
+        except Exception as exc:
+            last_error = exc
+            logger.warning("edge-tts fallback failed with voice %s: %s", fallback_voice, exc)
+    raise MiniMaxTtsError(f"edge-tts fallback failed: {last_error}") from last_error
 
 
 # ==================== 配置接口 ====================
@@ -192,6 +219,9 @@ async def tts_speech(game_id: str, request: Request):
         audio = await synthesize_tts_audio(text, voice)
     except MiniMaxTtsError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("TTS generation failed unexpectedly")
+        raise HTTPException(status_code=503, detail="TTS generation failed") from exc
 
     return Response(
         content=audio,

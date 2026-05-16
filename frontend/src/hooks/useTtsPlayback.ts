@@ -14,6 +14,11 @@ export function useTtsPlayback(gameId: string | undefined) {
 
     const player = new StreamPlayer();
     const queue = new AudioQueue(player);
+    const unlockAudio = () => {
+      void player.unlock().catch(() => undefined);
+    };
+    window.addEventListener("pointerdown", unlockAudio, { passive: true });
+    window.addEventListener("keydown", unlockAudio);
     queue.onItemStart = () => {
       window.dispatchEvent(new CustomEvent("werewolf-voice-playback", { detail: { playing: true } }));
     };
@@ -27,6 +32,8 @@ export function useTtsPlayback(gameId: string | undefined) {
     queueRef.current = queue;
 
     return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
       player.destroy();
       requestedAnnouncementIdsRef.current.clear();
       playerRef.current = null;
@@ -52,14 +59,21 @@ export function useTtsPlayback(gameId: string | undefined) {
               playerId: announcement.actorId ?? "system",
               label: announcement.label ?? (announcement.kind === "system" ? "系统播报" : "玩家发言"),
               audioData,
+              fallbackText: announcement.text,
               announcementId: announcement.id,
               kind: announcement.kind,
             };
             queueRef.current?.enqueue(item);
           })
           .catch((err) => {
-            useGameStore.getState().removeAudioAnnouncement(announcement.id);
             console.warn("TTS fetch failed, skipping audio:", err);
+            queueRef.current?.enqueue({
+              playerId: announcement.actorId ?? "system",
+              label: announcement.label ?? (announcement.kind === "system" ? "系统播报" : "玩家发言"),
+              fallbackText: announcement.text,
+              announcementId: announcement.id,
+              kind: announcement.kind,
+            });
           });
       }
     });

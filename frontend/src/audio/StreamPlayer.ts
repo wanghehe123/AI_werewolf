@@ -1,45 +1,68 @@
+import type { QueueItem } from "./AudioQueue";
+
 export class StreamPlayer {
   private audioContext: AudioContext | null = null;
   private sourceNode: AudioBufferSourceNode | null = null;
-  private _onEnded: (() => void) | null = null;
 
   get isPlaying(): boolean {
     return this.sourceNode !== null;
   }
 
-  set onEnded(callback: (() => void) | null) {
-    this._onEnded = callback;
+  async unlock(): Promise<void> {
+    if (typeof AudioContext === "undefined") return;
+    const ctx = await this.ensureContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
   }
 
-  private ensureContext(): AudioContext {
+  private async ensureContext(): Promise<AudioContext> {
     if (!this.audioContext) {
       this.audioContext = new AudioContext();
     }
     if (this.audioContext.state === "suspended") {
-      this.audioContext.resume();
+      await this.audioContext.resume();
     }
     return this.audioContext;
   }
 
-  async play(audioData: ArrayBuffer): Promise<void> {
+  async play(item: QueueItem): Promise<void> {
+    if (!item.audioData || item.audioData.byteLength === 0) {
+      await this.speakText(item.fallbackText ?? item.label);
+      return;
+    }
+
     this.stop();
-    const ctx = this.ensureContext();
 
     try {
-      const audioBuffer = await ctx.decodeAudioData(audioData.slice(0));
+      const ctx = await this.ensureContext();
+      const audioBuffer = await ctx.decodeAudioData(item.audioData.slice(0));
       this.sourceNode = ctx.createBufferSource();
       this.sourceNode.buffer = audioBuffer;
       this.sourceNode.connect(ctx.destination);
 
-      this.sourceNode.onended = () => {
-        this.sourceNode = null;
-        this._onEnded?.();
-      };
-
-      this.sourceNode.start(0);
+      await new Promise<void>((resolve, reject) => {
+        const source = this.sourceNode;
+        if (!source) {
+          reject(new Error("audio source was not created"));
+          return;
+        }
+        source.onended = () => {
+          if (this.sourceNode === source) {
+            this.sourceNode = null;
+          }
+          resolve();
+        };
+        try {
+          source.start(0);
+        } catch (error) {
+          this.sourceNode = null;
+          reject(error);
+        }
+      });
     } catch (error) {
       this.sourceNode = null;
-      throw error;
+      await this.speakText(item.fallbackText ?? item.label);
     }
   }
 
@@ -63,5 +86,31 @@ export class StreamPlayer {
       this.audioContext.close();
       this.audioContext = null;
     }
+  }
+
+  private async speakText(text: string): Promise<void> {
+    if (!text.trim() || typeof window === "undefined" || !window.speechSynthesis) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      let resolved = false;
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        window.clearTimeout(timeoutId);
+        resolve();
+      };
+      const timeoutMs = Math.min(Math.max(text.length * 260, 3000), 30000);
+      const timeoutId = window.setTimeout(finish, timeoutMs);
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "zh-CN";
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    });
   }
 }

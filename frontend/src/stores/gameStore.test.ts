@@ -180,6 +180,31 @@ describe("gameStore", () => {
       });
     });
 
+    it("adds completed player speeches to the public timeline immediately", () => {
+      useGameStore.getState().setGame(mockGame("day_speech"));
+
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("speech_completed", {
+          message: "2号 小明：我觉得今天要听逻辑。",
+          player_id: "w1",
+          label: "2号 小明",
+          speech: "我觉得今天要听逻辑。"
+        }),
+        actor_id: "w1",
+        phase: "day_speech",
+        day_count: 1
+      });
+
+      const event = useGameStore.getState().game?.public_events.at(-1);
+      expect(event).toEqual({
+        event_type: "speech_completed",
+        actor_id: "w1",
+        target_id: null,
+        payload: { message: "2号 小明：我觉得今天要听逻辑。" },
+        public: true
+      });
+    });
+
     it("does not queue private info for public audio narration", () => {
       useGameStore.getState().setGame(mockGame("night"));
       const seerEvent = mockSseEvent("private_info", { message: "你的查验结果：2号 是狼人阵营。" });
