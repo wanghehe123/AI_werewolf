@@ -55,6 +55,36 @@ def test_openai_provider_without_api_key_uses_contextual_fallback(monkeypatch):
     assert decision["action_type"] == "speak"
 
 
+def test_openai_provider_missing_key_log_includes_runtime_diagnostics(monkeypatch, caplog):
+    monkeypatch.delenv("MISSING_TEST_KEY", raising=False)
+    provider = OpenAICompatibleProvider(LLMProviderConfig(
+        provider_id="missing",
+        provider_type="openai_compatible",
+        model_name="demo",
+        base_url="https://api.example.com/chat/completions",
+        api_key_env="MISSING_TEST_KEY",
+    ))
+
+    provider.decide("当前阶段：day_speech\n你的真实身份：平民\n玩家名称：小明")
+
+    assert "Provider missing" in caplog.text
+    assert "model=demo" in caplog.text
+    assert "base_url=https://api.example.com" in caplog.text
+    assert "环境变量 MISSING_TEST_KEY" in caplog.text
+
+
+def test_openai_provider_normalizes_full_chat_completions_base_url():
+    provider = OpenAICompatibleProvider(LLMProviderConfig(
+        provider_id="deepseek",
+        provider_type="openai_compatible",
+        model_name="deepseek-chat",
+        base_url="https://api.deepseek.com/chat/completions",
+        api_key_env="DEEPSEEK_API_KEY",
+    ))
+
+    assert provider._client_base_url() == "https://api.deepseek.com"
+
+
 def test_provider_parse_response_strips_thinking_before_json():
     provider = OpenAICompatibleProvider(LLMProviderConfig(
         provider_id="fake",

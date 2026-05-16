@@ -147,6 +147,16 @@ class OpenAICompatibleProvider:
             return None
         return os.getenv(self.config.api_key_env)
 
+    def _client_base_url(self) -> str | None:
+        """Return the OpenAI SDK base URL, accepting accidental full endpoint URLs."""
+        if not self.config.base_url:
+            return None
+        base_url = self.config.base_url.rstrip("/")
+        suffix = "/chat/completions"
+        if base_url.lower().endswith(suffix):
+            return base_url[: -len(suffix)] or None
+        return base_url
+
     def _build_system_prompt(self) -> str:
         """
         构建 System Prompt，指导 LLM 返回结构化 JSON 决策
@@ -336,13 +346,16 @@ class OpenAICompatibleProvider:
             玩家决策 dict
         """
         api_key = self._get_api_key()
+        base_url = self._client_base_url()
 
         # 如果没有 API Key，回退到假模型行为并记录警告
         if not api_key:
             logger.warning(
-                "Provider %s: API Key 未配置（环境变量 %s），使用 fallback 响应",
+                "Provider %s: API Key 未配置（环境变量 %s），使用 fallback 响应。model=%s base_url=%s",
                 self.config.provider_id,
                 self.config.api_key_env or "(未设置)",
+                self.config.model_name,
+                base_url or "(未设置)",
             )
             return self._fallback_decision(prompt, "API key not configured")
 
@@ -354,7 +367,7 @@ class OpenAICompatibleProvider:
             # base_url 支持自定义端点（DeepSeek、Ollama 等）
             client = OpenAI(
                 api_key=api_key,
-                base_url=self.config.base_url,
+                base_url=base_url,
                 timeout=self.config.timeout,
             )
 
@@ -380,14 +393,17 @@ class OpenAICompatibleProvider:
             # 捕获所有异常（网络错误、API 错误、解析错误等）
             # 记录错误但不中断游戏，返回 fallback 决策
             logger.exception(
-                "Provider %s: LLM API 调用失败，使用 fallback 响应",
+                "Provider %s: LLM API 调用失败，使用 fallback 响应。model=%s base_url=%s",
                 self.config.provider_id,
+                self.config.model_name,
+                base_url or "(未设置)",
             )
             return self._fallback_decision(prompt, "LLM call failed")
 
     def stream_speech(self, prompt: str) -> Iterator[str]:
         """Stream plain public speech text; fall back to chunked non-stream output."""
         api_key = self._get_api_key()
+        base_url = self._client_base_url()
         if not api_key:
             yield from _chunk_text(self.decide(prompt)["speech"])
             return
@@ -397,7 +413,7 @@ class OpenAICompatibleProvider:
 
             client = OpenAI(
                 api_key=api_key,
-                base_url=self.config.base_url,
+                base_url=base_url,
                 timeout=self.config.timeout,
             )
             stream = client.chat.completions.create(
@@ -420,7 +436,9 @@ class OpenAICompatibleProvider:
                 yield from _chunk_text(self.decide(prompt)["speech"])
         except Exception:
             logger.exception(
-                "Provider %s: LLM 流式发言失败，使用 fallback 分片",
+                "Provider %s: LLM 流式发言失败，使用 fallback 分片。model=%s base_url=%s",
                 self.config.provider_id,
+                self.config.model_name,
+                base_url or "(未设置)",
             )
             yield from _chunk_text(self.decide(prompt)["speech"])
