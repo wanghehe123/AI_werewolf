@@ -681,7 +681,6 @@ button:disabled {
   display: grid;
   place-items: center;
   background: rgba(0, 0, 0, 0.7);
-  animation: seer-overlay-in 0.3s ease-out;
   cursor: pointer;
 }
 
@@ -689,7 +688,6 @@ button:disabled {
   text-align: center;
   padding: 48px 64px;
   border-radius: 16px;
-  animation: seer-card-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .seer-overlay-card.good {
@@ -741,14 +739,4 @@ button:disabled {
   border-color: rgba(178, 34, 34, 0.7);
   background: rgba(178, 34, 34, 0.3);
   color: #ff8a80;
-}
-
-@keyframes seer-overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes seer-card-pop {
-  from { opacity: 0; transform: scale(0.7); }
-  to { opacity: 1; transform: scale(1); }
 }

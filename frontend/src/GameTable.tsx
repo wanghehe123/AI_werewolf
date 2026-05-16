@@ -124,17 +124,32 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
 
       <PhaseSceneRouter game={game} onSubmitAction={onSubmitAction} pending={pending} />
 
-      {overlayResult && (
-        <div className="seer-overlay" onClick={() => setOverlayResult(null)}>
-          <div className={`seer-overlay-card ${overlayResult.camp}`}>
-            <p className="seer-overlay-label">查验结果</p>
-            <h2>{overlayResult.targetLabel}</h2>
-            <p className="seer-overlay-camp">
-              {overlayResult.camp === "good" ? "好人阵营" : "狼人阵营"}
-            </p>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {overlayResult && (
+          <motion.div
+            className="seer-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            onClick={() => setOverlayResult(null)}
+          >
+            <motion.div
+              className={`seer-overlay-card ${overlayResult.camp}`}
+              initial={{ scale: 0.5, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0, y: -20 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+            >
+              <p className="seer-overlay-label">查验结果</p>
+              <h2>{overlayResult.targetLabel}</h2>
+              <p className="seer-overlay-camp">
+                {overlayResult.camp === "good" ? "好人阵营" : "狼人阵营"}
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }
