@@ -24,6 +24,7 @@ from ai_werewolf.api.games import configure_game_repository, configure_model_reg
 from ai_werewolf.api.llm_config import router as llm_config_router
 from ai_werewolf.api.public import router as public_router
 from ai_werewolf.api.responses import error_response, success_response
+from ai_werewolf.config.env import load_local_env
 from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding
 from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider, build_registry_from_yaml
 from ai_werewolf.storage.database import configured_database_url, create_engine_and_tables
@@ -88,6 +89,10 @@ def create_app() -> FastAPI:
     5. 注册所有 API 路由
     6. 添加健康检查端点
     """
+    loaded_env_keys = load_local_env()
+    if loaded_env_keys:
+        logger.info("已从本地 env 文件加载环境变量: %s", ", ".join(loaded_env_keys))
+
     app = FastAPI(title="AI Werewolf")
 
     # ---- 数据库持久化 ----

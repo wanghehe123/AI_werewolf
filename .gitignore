@@ -1,5 +1,7 @@
 __pycache__/
 .pytest_cache/
+.env
+.env.local
 *.egg-info/
 node_modules/
 dist/
