@@ -1,11 +1,13 @@
+import { useEffect, useState } from "react";
 import { PhaseSceneRouter } from "./PhaseSceneRouter";
-import type { GameStateDto, StreamingSpeechDto, SubmitActionInput } from "./types";
+import type { GameStateDto, SeerCheckResult, StreamingSpeechDto, SubmitActionInput } from "./types";
 
 interface GameTableProps {
   game: GameStateDto;
   onSubmitAction: (action: SubmitActionInput) => Promise<void>;
   pending: boolean;
   streamingSpeeches?: Record<string, StreamingSpeechDto>;
+  seerResults?: Record<string, SeerCheckResult>;
 }
 
 const phaseLabels: Record<GameStateDto["phase"], string> = {
@@ -20,8 +22,22 @@ const phaseLabels: Record<GameStateDto["phase"], string> = {
   game_over: "游戏复盘"
 };
 
-export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {} }: GameTableProps) {
+export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {}, seerResults = {} }: GameTableProps) {
   const streamingSpeechEntries = Object.entries(streamingSpeeches).filter(([, value]) => value.speech.trim().length > 0);
+
+  const [overlayResult, setOverlayResult] = useState<SeerCheckResult | null>(null);
+  const [prevResultCount, setPrevResultCount] = useState(0);
+  const resultKeys = Object.keys(seerResults);
+
+  useEffect(() => {
+    if (resultKeys.length > prevResultCount) {
+      setPrevResultCount(resultKeys.length);
+      const latestKey = resultKeys[resultKeys.length - 1];
+      setOverlayResult(seerResults[latestKey]);
+      const timer = setTimeout(() => setOverlayResult(null), 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [resultKeys.length]);
 
   return (
     <main className="game-table">
@@ -52,6 +68,11 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
                 {player.sheriff && <span>警长</span>}
                 {!player.alive && <span>出局</span>}
                 {player.voted && <span>已投票</span>}
+                {seerResults[player.player_id] && (
+                  <span className={`seer-badge ${seerResults[player.player_id].camp}`}>
+                    {seerResults[player.player_id].camp === "good" ? "好" : "狼"}
+                  </span>
+                )}
               </div>
             </article>
           ))}
@@ -79,6 +100,18 @@ export function GameTable({ game, onSubmitAction, pending, streamingSpeeches = {
       </section>
 
       <PhaseSceneRouter game={game} onSubmitAction={onSubmitAction} pending={pending} />
+
+      {overlayResult && (
+        <div className="seer-overlay" onClick={() => setOverlayResult(null)}>
+          <div className={`seer-overlay-card ${overlayResult.camp}`}>
+            <p className="seer-overlay-label">查验结果</p>
+            <h2>{overlayResult.targetLabel}</h2>
+            <p className="seer-overlay-camp">
+              {overlayResult.camp === "good" ? "好人阵营" : "狼人阵营"}
+            </p>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

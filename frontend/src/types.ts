@@ -79,6 +79,9 @@ export interface GameStreamEventDto {
     | "speech_completed"
     | "current_speaker_changed"
     | "ai_thinking"
+    | "private_info"
+    | "game_created"
+    | "night_result"
     | string;
   game_id: string;
   phase: GamePhase;
@@ -104,6 +107,16 @@ export interface SpeechDeltaPayload {
 export interface StreamingSpeechDto {
   label: string;
   speech: string;
+}
+
+export interface SeerCheckResult {
+  targetPlayerId: string;
+  targetLabel: string;
+  camp: "good" | "wolf";
+}
+
+export interface PrivateInfoPayload {
+  message: string;
 }
 
 export interface PlayerActionOptionDto {

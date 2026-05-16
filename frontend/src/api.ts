@@ -113,6 +113,7 @@ export function subscribeGameStream(
     "speech_completed",
     "current_speaker_changed",
     "ai_thinking",
+    "private_info",
     "game_created",
     "night_result"
   ];

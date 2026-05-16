@@ -55,6 +55,8 @@ import type {
   GameEventDto,
   GameStateDto,
   GameStreamEventDto,
+  PrivateInfoPayload,
+  SeerCheckResult,
   SpeechDeltaPayload,
   StateSnapshotPayload,
   StreamingSpeechDto,
@@ -109,6 +111,7 @@ function GameRoute() {
   const { gameId } = useParams();
   const [game, setGame] = useState<GameStateDto | null>(null);
   const [streamingSpeeches, setStreamingSpeeches] = useState<Record<string, StreamingSpeechDto>>({});
+  const [seerResults, setSeerResults] = useState<Record<string, SeerCheckResult>>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -152,6 +155,20 @@ function GameRoute() {
             return next;
           });
         }
+        if (event.event_type === "private_info") {
+          const payload = event.payload as unknown as PrivateInfoPayload;
+          const targetId = event.target_id;
+          if (!targetId) return;
+          const msg = payload.message ?? "";
+          const camp: "good" | "wolf" = msg.includes("狼人阵营") ? "wolf" : "good";
+          const targetPlayer = game?.players.find((p) => p.player_id === targetId);
+          const targetLabel = targetPlayer ? `${targetPlayer.seat}号 ${targetPlayer.display_name}` : targetId;
+          setSeerResults((prev) => ({
+            ...prev,
+            [targetId]: { targetPlayerId: targetId, targetLabel, camp }
+          }));
+          return;
+        }
         setGame((current) => appendStreamEvent(current, event));
       },
       onError: () => {
@@ -184,7 +201,7 @@ function GameRoute() {
   if (!game) {
     return <StatusScreen title="正在进入房间" detail="正在恢复当前游戏状态。" />;
   }
-  return <GameTable game={game} onSubmitAction={handleAction} pending={pending} streamingSpeeches={streamingSpeeches} />;
+  return <GameTable game={game} onSubmitAction={handleAction} pending={pending} streamingSpeeches={streamingSpeeches} seerResults={seerResults} />;
 }
 
 function appendStreamEvent(game: GameStateDto | null, event: GameStreamEventDto): GameStateDto | null {

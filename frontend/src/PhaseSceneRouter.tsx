@@ -16,6 +16,9 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
   const [voteTarget, setVoteTarget] = useState(aliveTargets[0]?.player_id ?? "");
   const [nightTarget, setNightTarget] = useState(nightTargetOptions[0]?.player_id ?? "");
 
+  const humanPlayer = game.players.find((p) => p.player_id === game.human_player_id);
+  const isAlive = humanPlayer?.alive ?? true;
+
   useEffect(() => {
     setNightTarget(nightTargetOptions[0]?.player_id ?? "");
   }, [primaryAction?.action_type, nightTargetOptions]);
@@ -41,7 +44,7 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
 
   if (game.phase === "night") {
     if (!primaryAction) {
-      return <ObserverScene kicker="NIGHT" title="夜晚行动" message="你已出局，正在等待夜晚结算。" />;
+      return <ObserverScene kicker="NIGHT" title="夜晚行动" message={isAlive ? "等待其他玩家行动中..." : "你已出局，正在等待夜晚结算。"} />;
     }
 
     if (primaryAction?.requires_target) {
@@ -101,7 +104,7 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
 
   if (game.phase === "day_speech") {
     if (primaryAction?.action_type !== "speech") {
-      return <ObserverScene kicker="SPEECH" title="白天发言" message="你已出局，正在旁听其他玩家发言。" />;
+      return <ObserverScene kicker="SPEECH" title="白天发言" message={isAlive ? "等待其他玩家发言中..." : "你已出局，正在旁听其他玩家发言。"} />;
     }
 
     return (
@@ -126,7 +129,7 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
     const canVote = game.allowed_actions.some((action) => action.action_type === "vote");
     const canAbstain = game.allowed_actions.some((action) => action.action_type === "abstain");
     if (!canVote && !canAbstain) {
-      return <ObserverScene kicker="VOTE" title="放逐投票" message="你已出局，正在等待其他玩家投票。" />;
+      return <ObserverScene kicker="VOTE" title="放逐投票" message={isAlive ? "等待其他玩家投票中..." : "你已出局，正在等待其他玩家投票。"} />;
     }
 
     return (

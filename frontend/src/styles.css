@@ -672,3 +672,83 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* Seer check result overlay */
+.seer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.7);
+  animation: seer-overlay-in 0.3s ease-out;
+  cursor: pointer;
+}
+
+.seer-overlay-card {
+  text-align: center;
+  padding: 48px 64px;
+  border-radius: 16px;
+  animation: seer-card-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.seer-overlay-card.good {
+  background: linear-gradient(135deg, rgba(34, 139, 34, 0.9), rgba(46, 125, 50, 0.85));
+  border: 2px solid rgba(100, 200, 100, 0.5);
+  box-shadow: 0 0 60px rgba(46, 125, 50, 0.4);
+}
+
+.seer-overlay-card.wolf {
+  background: linear-gradient(135deg, rgba(178, 34, 34, 0.9), rgba(142, 36, 26, 0.85));
+  border: 2px solid rgba(255, 100, 80, 0.5);
+  box-shadow: 0 0 60px rgba(178, 34, 34, 0.4);
+}
+
+.seer-overlay-label {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.seer-overlay-card h2 {
+  margin: 0 0 12px;
+  font-size: 2.2rem;
+  color: #fff;
+}
+
+.seer-overlay-camp {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #fff;
+}
+
+.seer-badge {
+  font-weight: 800;
+  font-size: 0.75rem;
+}
+
+.seer-badge.good {
+  border-color: rgba(46, 125, 50, 0.7);
+  background: rgba(46, 125, 50, 0.3);
+  color: #6fcf6f;
+}
+
+.seer-badge.wolf {
+  border-color: rgba(178, 34, 34, 0.7);
+  background: rgba(178, 34, 34, 0.3);
+  color: #ff8a80;
+}
+
+@keyframes seer-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes seer-card-pop {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
