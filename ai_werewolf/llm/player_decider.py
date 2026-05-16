@@ -84,13 +84,7 @@ class PlayerDecider:
         except Exception:
             # 解析失败（字段缺失、类型错误等），回退到安全默认值
             logger.warning("LLM 决策解析失败，使用 fallback: %s", raw_decision)
-            return PlayerDecision(
-                speech=self._safe_fallback_speech(raw_decision),
-                action_type="speak",
-                target_id=None,
-                public_reason=None,
-                private_memory_update=None,
-            )
+            return self._build_fallback(raw_decision)
 
         # 安全校验：检查发言是否包含禁止术语
         if not is_safe_speech(decision.speech):
@@ -125,6 +119,40 @@ class PlayerDecider:
         speech = "".join(visible_chunks)
         if speech and not is_safe_speech(speech):
             logger.warning("不安全的流式发言被过滤: %s", speech[:100])
+
+    def _build_fallback(self, raw: dict) -> PlayerDecision:
+        """Build fallback PlayerDecision, preserving action_type and target_id if possible.
+
+        This is used when PlayerDecision.model_validate() fails (e.g. empty speech
+        for non-speak actions, which is valid per our prompt examples).
+        """
+        if not isinstance(raw, dict):
+            return PlayerDecision(
+                speech="我先观察一下局势。",
+                action_type="speak",
+                target_id=None,
+                public_reason=None,
+                private_memory_update=None,
+            )
+
+        # Try to preserve the LLM's intent for action_type and target_id
+        action_type = raw.get("action_type", "speak")
+        target_id = raw.get("target_id")
+        # Normalize None → None (Pydantic handles None, but the dict may use it)
+        if target_id is not None and not isinstance(target_id, str):
+            target_id = None
+
+        # Also try to preserve public_reason and private_memory_update
+        public_reason = raw.get("public_reason") if isinstance(raw.get("public_reason"), str) else None
+        private_memory_update = raw.get("private_memory_update") if isinstance(raw.get("private_memory_update"), str) else None
+
+        return PlayerDecision(
+            speech=self._safe_fallback_speech(raw),
+            action_type=action_type,
+            target_id=target_id,
+            public_reason=public_reason,
+            private_memory_update=private_memory_update,
+        )
 
     def _safe_fallback_speech(self, raw: dict) -> str:
         """
