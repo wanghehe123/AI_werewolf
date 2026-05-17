@@ -20,6 +20,7 @@ import re
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Protocol
 
+from ai_werewolf.domain.actions import PlayerActionType
 from ai_werewolf.llm.safety import is_safe_speech
 from ai_werewolf.llm.schemas import PlayerDecision
 
@@ -105,6 +106,11 @@ class PlayerDecider:
             # 解析失败（字段缺失、类型错误等），回退到安全默认值
             logger.warning("LLM 决策解析失败，使用 fallback: %s", raw_decision)
             return self._build_fallback(raw_decision)
+
+        # 空发言虽然能通过部分 schema，但对外不可展示，这里统一走 speak 兜底。
+        if not decision.speech.strip():
+            logger.warning("LLM 返回空发言，使用默认 speak fallback: %s", raw_decision)
+            return self._build_default_speak_fallback(raw_decision)
 
         # 安全校验：检查发言是否包含禁止术语
         if not is_safe_speech(decision.speech):
@@ -213,7 +219,7 @@ class PlayerDecider:
             )
 
         # Try to preserve the LLM's intent for action_type and target_id
-        action_type = raw.get("action_type", "speak")
+        action_type = self._coerce_action_type(raw.get("action_type"))
         target_id = raw.get("target_id")
         # Normalize None → None (Pydantic handles None, but the dict may use it)
         if target_id is not None and not isinstance(target_id, str):
@@ -230,6 +236,27 @@ class PlayerDecider:
             public_reason=public_reason,
             private_memory_update=private_memory_update,
         )
+
+    def _build_default_speak_fallback(self, raw: dict) -> PlayerDecision:
+        """统一构造 speak 兜底，避免非法动作继续流入后续链路。"""
+        return PlayerDecision(
+            speech=self._safe_fallback_speech(raw),
+            action_type=PlayerActionType.SPEAK,
+            target_id=None,
+            public_reason=None,
+            private_memory_update=None,
+        )
+
+    def _coerce_action_type(self, raw_action_type: object) -> PlayerActionType:
+        """把模型返回的动作压缩到合法枚举，不合法时回退为 speak。"""
+        if isinstance(raw_action_type, PlayerActionType):
+            return raw_action_type
+        if isinstance(raw_action_type, str):
+            try:
+                return PlayerActionType(raw_action_type)
+            except ValueError:
+                logger.warning("LLM 返回非法 action_type=%s，自动回退为 speak", raw_action_type)
+        return PlayerActionType.SPEAK
 
     def _safe_fallback_speech(self, raw: dict) -> str:
         """

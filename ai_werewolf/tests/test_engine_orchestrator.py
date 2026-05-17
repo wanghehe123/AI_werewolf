@@ -213,3 +213,39 @@ def test_dead_human_daytime_auto_skips_speech_and_vote_after_announcement():
     auto_vote = vote_resolve.call_args.args[1]
     assert auto_vote["skip_human_vote"] is True
     assert session.state.phase == GamePhase.NIGHT
+
+
+def test_get_ai_speech_prefers_player_speech_graph():
+    agents = {"s1": MagicMock(name="Agent_s1")}
+    orch, session = _mock_orchestrator(agents)
+    session.state.phase = GamePhase.DAY_SPEECH
+    session.state.day_count = 1
+    session.agents["s1"] = MagicMock()
+
+    with (
+        _patch(
+            "ai_werewolf.engine.orchestrator.MemoryContextBuilder.build_for_player",
+            return_value=MagicMock(
+                game_id="g",
+                player_id="s1",
+                phase="day_speech",
+                day=1,
+                model_dump=MagicMock(return_value={}),
+            ),
+        ),
+        _patch(
+            "ai_werewolf.engine.orchestrator.run_player_speech_graph",
+            return_value={
+                "decision": MagicMock(speech="图决策发言"),
+                "analysis": {"key_facts": ["5号持续攻击1号"]},
+                "strategy": {"strategy_type": "attack"},
+                "action_draft": {"action_type": "speak"},
+                "speech": "图决策发言",
+                "error": None,
+            },
+        ) as run_graph,
+    ):
+        speech = orch._get_ai_speech(session, "s1", "公开历史")
+
+    assert speech == "图决策发言"
+    run_graph.assert_called_once()

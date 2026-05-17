@@ -24,6 +24,12 @@ def build_game_context(session: GameSession) -> str:
     return "\n".join(lines[-20:])
 
 
+def build_recent_public_events(session: GameSession, limit: int = 8) -> list[dict]:
+    """Return the latest public events as structured dicts for memory context assembly."""
+    public_events = [event for event in session.public_events if event.get("public", True)]
+    return public_events[-limit:]
+
+
 def build_private_infos(players: list[PlayerState]) -> dict[str, PlayerPrivateInfo]:
     """Initialize private info for each player. Wolves learn their teammates."""
     infos = {player.player_id: PlayerPrivateInfo() for player in players}
