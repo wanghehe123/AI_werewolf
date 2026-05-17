@@ -73,7 +73,7 @@ def n2_route_to_proposals(state: CouncilState) -> list[Send]:
 # Keys from CouncilState that we forward into each Send payload.
 _STATE_KEYS = [
     "game_id", "round_id", "participants", "candidates",
-    "game_context", "proposals", "rebuttals", "tally",
+    "game_context", "proposals", "votes", "rebuttals", "tally",
     "decision", "rationale", "rounds_used", "error",
 ]
 
@@ -118,45 +118,53 @@ def _make_wolf_vote_node(decider_factory: Callable[[str], Any]) -> Callable:
     def wolf_vote(state: CouncilState) -> dict:
         wolf_id = state.get("wolf_id", "")
         vote = call_llm_for_vote(wolf_id, state, decider_factory)
-        return {"proposals": [vote]}  # reuse proposals reducer for votes
+        return {"votes": [vote]}
 
     return wolf_vote
 
 
 def n5_resolve(state: CouncilState) -> dict:
-    """Node 5: Resolve -- tally votes/propsals and pick the winner.
+    """Node 5: Resolve -- tally votes and pick the winner.
 
     Strategy:
-    - Count how many wolves proposed/voted for each target.
+    - Count votes cast by each wolf (1 vote per wolf).
     - If there is a majority (>50%), pick that target.
-    - If there is a tie, break by lowest average risk among proposals.
+    - If there is a tie, break by lowest average risk among the *proposals*.
+    - If no votes exist, fall back to counting proposals.
     - If still tied, pick the first candidate alphabetically (deterministic).
     """
     proposals = state.get("proposals", [])
+    votes = state.get("votes", [])
     candidates = state.get("candidates", [])
     participants = state.get("participants", [])
 
-    if not proposals and not candidates:
+    # Use votes as the primary tally; fall back to proposals if no votes exist
+    entries_for_tally = votes if votes else proposals
+
+    if not entries_for_tally and not candidates:
         return {
             "decision": None,
             "rationale": "no proposals or candidates",
             "error": None,
         }
 
-    # Collect all target_ids from proposals and votes (votes are also in proposals)
+    # Count votes (1 per wolf — each wolf casts exactly one vote)
     target_counts: Counter[str] = Counter()
-    target_risks: dict[str, list[int]] = {}
-
-    for p in proposals:
-        tid = p.get("target_id")
+    for entry in entries_for_tally:
+        tid = entry.get("target_id")
         if tid:
             target_counts[tid] += 1
-            risk = p.get("risk")
-            if risk is not None:
-                target_risks.setdefault(tid, []).append(int(risk))
+
+    # Collect risk info from proposals for tiebreaking
+    target_risks: dict[str, list[int]] = {}
+    for p in proposals:
+        tid = p.get("target_id")
+        risk = p.get("risk")
+        if tid and risk is not None:
+            target_risks.setdefault(tid, []).append(int(risk))
 
     if not target_counts:
-        # No valid targets proposed -- fall back to first candidate
+        # No valid targets — fall back to first candidate
         fallback = fallback_target(candidates)
         return {
             "decision": fallback,
@@ -203,14 +211,15 @@ def _avg_risk(risks: list[int]) -> float:
 def build_werewolf_council_graph(
     decider_factory: Callable[[str], Any],
 ) -> StateGraph:
-    """Build and return the werewolf council LangGraph.
+    """
+    构建并返回狼人议事 LangGraph 流程图。
 
-    Args:
-        decider_factory: A callable that accepts a wolf player_id and returns
-            an object with a ``decide(prompt)`` method (e.g. ``PlayerDecider``).
+    参数：
+        decider_factory: 可调用对象，接收一个狼人玩家ID，
+            返回一个包含 decide(prompt) 方法的对象（例如 PlayerDecider）。
 
-    Returns:
-        A compiled LangGraph ready for ``.invoke()``.
+    返回：
+        已编译完成、可直接调用 .invoke() 执行的 LangGraph 实例。
     """
     builder = StateGraph(CouncilState)
 
@@ -245,29 +254,28 @@ def run_werewolf_council(
     decider_factory: Callable[[str], Any],
     game_context: str = "",
     human_proposal: dict | None = None,
-    timeout_s: float = 8.0,
+    timeout_s: float = 45.0,
 ) -> CouncilState:
-    """Run the council graph synchronously and return the final state.
+    """
+    同步执行议事流程逻辑图，并返回最终状态。
 
-    If a ``human_proposal`` is supplied (e.g. from a human wolf player), it
-    is injected into the state *before* the graph runs so that AI wolves can
-    take it into account during voting.
+    如果提供了 human_proposal（例如来自人类狼人玩家的提议），
+    该提议将在逻辑图运行**之前**注入到游戏状态中，以便 AI 狼人在投票时将其纳入考量。
 
-    On timeout or error the function falls back to the first candidate.
+    若发生超时或错误，该函数将回退选择第一个候选目标。
 
-    Args:
-        game_id: Unique game identifier.
-        round_id: Round identifier, e.g. ``"night_2"``.
-        participants: List of wolf player_ids (AI wolves).
-        candidates: List of valid kill targets (non-wolf alive players).
-        decider_factory: Callable creating a decider for a given wolf_id.
-        game_context: Compressed game context string for prompts.
-        human_proposal: Optional dict ``{"wolf_id": ..., "target_id": ...,
-            "reason": ..., "risk": ...}`` from a human wolf.
-        timeout_s: Max seconds before falling back.
+    参数：
+        game_id: 游戏唯一标识
+        round_id: 回合标识，例如 "night_2"（第二晚）
+        participants: 狼人玩家ID列表（AI狼人）
+        candidates: 有效击杀目标列表（存活的非狼人玩家）
+        decider_factory: 可调用对象，用于为指定狼人ID创建决策器
+        game_context: 用于提示词的压缩版游戏上下文字符串
+        human_proposal: 可选字典，格式为 {"wolf_id": ..., "target_id": ..., "reason": ..., "risk": ...}，来自人类狼人玩家
+        timeout_s: 触发回退逻辑的最大超时秒数
 
-    Returns:
-        Final ``CouncilState`` with ``decision`` populated.
+    返回：
+        已填充决策结果的最终 CouncilState（议事状态对象）
     """
     import concurrent.futures
 

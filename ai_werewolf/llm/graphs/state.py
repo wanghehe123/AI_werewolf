@@ -40,6 +40,7 @@ class CouncilState(TypedDict, total=False):
     candidates: list[str]  # valid kill targets (non-wolves, alive)
     game_context: str  # compressed game context for prompts
     proposals: Annotated[list[dict], operator.add]  # each wolf's Proposal as dict
+    votes: Annotated[list[dict], operator.add]  # each wolf's vote (target_id only)
     rebuttals: Annotated[list[dict], operator.add]  # Rebuttal dicts
     tally: dict[str, int]  # target_id -> vote count
     decision: str | None  # final target_id chosen
@@ -68,6 +69,7 @@ def empty_council_state(
         candidates=candidates,
         game_context=game_context,
         proposals=[],
+        votes=[],
         rebuttals=[],
         tally={},
         decision=None,
