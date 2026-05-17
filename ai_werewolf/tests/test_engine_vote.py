@@ -106,3 +106,47 @@ def test_ai_vote_logs_structured_action_payload(caplog):
     assert ai_logs[0]["action_type"] == "vote"
     assert ai_logs[0]["target_id"] == "human"
     assert ai_logs[0]["decision"]["speech"] == "我投1号。"
+
+
+def test_get_ai_vote_uses_unified_decision_graph():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    resolver.memory_context_builder = MagicMock()
+    resolver.memory_context_builder.build_for_player.return_value = MagicMock(
+        game_id="g",
+        player_id="ai_2",
+        phase="exile_vote",
+        day=1,
+        model_dump=MagicMock(return_value={}),
+    )
+    resolver.memory_store = MagicMock()
+
+    provider = MagicMock()
+    provider.config.provider_id = "mock"
+    resolver.model_registry.provider_for_role.return_value = provider
+
+    with patch(
+        "ai_werewolf.engine.vote.run_player_decision_graph",
+        return_value={
+            "decision": PlayerDecision(
+                speech="我这一票给1号。",
+                action_type="vote",
+                target_id="human",
+                public_reason="怀疑最高",
+                private_memory_update="继续压人",
+            ),
+            "analysis": {"key_facts": ["1号站边摇摆"]},
+            "suspicion_update": {"records": [{"target_player_id": "human", "suspicion_score": 80}]},
+            "strategy": {"strategy_type": "vote_push"},
+            "action_draft": {"action_type": "vote", "target_id": "human"},
+            "error": None,
+        },
+    ) as run_graph:
+        target_id, speech = resolver._get_ai_vote(session, "ai_2", "公开历史")
+
+    assert target_id == "human"
+    assert speech == "我这一票给1号。"
+    run_graph.assert_called_once()
+    saved = resolver.memory_store.save_player_suspicion.call_args.args[0]
+    assert saved.player_id == "ai_2"
+    assert saved.records[0]["target_player_id"] == "human"

@@ -17,6 +17,14 @@ from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import VoteResolver
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
+from ai_werewolf.llm.graphs.player_decision_graph import run_player_speech_graph
+from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
+from ai_werewolf.llm.memory.summary_builder import (
+    build_day_summary,
+    build_player_suspicion_memory,
+    build_private_role_memory,
+)
+from ai_werewolf.llm.memory.store import RedisMemoryStore
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import Winner, evaluate_winner
@@ -35,6 +43,8 @@ class PhaseOrchestrator:
         self.vote = VoteResolver(model_registry, role_model_bindings, role_registry)
         self.hunter = HunterResolver(model_registry, role_model_bindings)
         self.scheduler = AIActionScheduler(role_registry)
+        self.memory_store = RedisMemoryStore()
+        self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
 
     def advance(self, session: GameSession, action: dict) -> None:
         """Advance game state based on current phase and player action.
@@ -227,6 +237,7 @@ class PhaseOrchestrator:
             self._end_game(session, winner)
             return
 
+        self._persist_day_memory(session)
         session.state.day_count += 1
         session.state.phase = GamePhase.NIGHT
         session.voted_player_ids.clear()
@@ -252,35 +263,16 @@ class PhaseOrchestrator:
         if agent is None:
             return "我暂时没有想说的。"
         try:
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            decider = PlayerDecider(provider)
-            tasks = self.scheduler.schedule(state=session.state, agents=session.agents, private_infos=session.private_infos, game_context=context)
-            task = next((t for t in tasks if t.player_id == player_id), None)
-            if task is None:
-                return "我暂时没有想说的。"
-            record_prompt_trace(session, player_id, "day_speech", task.prompt)
-            decision = decider.decide(task.prompt)
-            return decision.speech
+            result = self._run_ai_speech_graph(session, player_id, context)
+            return result["decision"].speech
         except Exception:
             logger.exception("AI %s speech failed", player_id)
             return "我先听听大家的意见，再做判断。"
 
     def _stream_ai_speech(self, session: GameSession, player_id: str, context: str):
-        player = session.state.player_by_id(player_id)
-        agent = session.agents.get(player_id)
-        if agent is None:
-            yield "我暂时没有想说的。"
-            return
         try:
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            decider = PlayerDecider(provider)
-            tasks = self.scheduler.schedule(state=session.state, agents=session.agents, private_infos=session.private_infos, game_context=context)
-            task = next((t for t in tasks if t.player_id == player_id), None)
-            if task is None:
-                yield "我暂时没有想说的。"
-                return
-            record_prompt_trace(session, player_id, "day_speech_stream", task.prompt)
-            yield from decider.stream_speech(task.prompt)
+            result = self._run_ai_speech_graph(session, player_id, context)
+            yield result["decision"].speech
         except Exception:
             logger.exception("AI %s streaming speech failed", player_id)
             yield "我先听听大家的意见，再做判断。"
@@ -317,6 +309,97 @@ class PhaseOrchestrator:
             visibility=public_event.get("visibility", "public" if public_event.get("public", True) else "self"),
             **extra_payload,
         )
+
+    def _run_ai_speech_graph(self, session: GameSession, player_id: str, context: str) -> dict:
+        """运行白天发言决策图，并在失败时回退到旧的 prompt 决策链。"""
+        player = session.state.player_by_id(player_id)
+        agent = session.agents.get(player_id)
+        if agent is None:
+            return {
+                "decision": type("FallbackDecision", (), {"speech": "我暂时没有想说的。"})(),
+                "error": "missing_agent",
+            }
+
+        memory_context = self.memory_context_builder.build_for_player(session, player_id)
+
+        def speech_generator(_state: dict) -> str:
+            task = self._find_day_speech_task(session, player_id, context)
+            if task is None:
+                return "我暂时没有想说的。"
+            record_prompt_trace(session, player_id, "day_speech", task.prompt)
+            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
+            decider = PlayerDecider(provider)
+            decision = decider.decide(task.prompt)
+            return decision.speech
+
+        result = run_player_speech_graph(
+            agent=agent,
+            player=player,
+            memory_context=memory_context,
+            speech_generator=speech_generator,
+        )
+        self._persist_player_memories(session, player_id, result)
+        self.memory_store.append_decision_trace(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            phase="day_speech",
+            seq=len(session.public_events) + 1,
+            payload={
+                "analysis": result.get("analysis"),
+                "strategy": result.get("strategy"),
+                "action_draft": result.get("action_draft"),
+                "speech": result.get("speech"),
+                "error": result.get("error"),
+            },
+        )
+        return result
+
+    def _persist_day_memory(self, session: GameSession) -> None:
+        """每天结束时将公开摘要压缩进 Redis，避免后续 prompt 无限膨胀。"""
+        summary = build_day_summary(session)
+        logger.info(
+            "写回 DaySummary 到 Redis game_id=%s day=%s items=%d",
+            summary.game_id,
+            summary.day,
+            len(summary.summary_items),
+        )
+        self.memory_store.save_day_summary(summary)
+
+    def _persist_player_memories(self, session: GameSession, player_id: str, result: dict[str, Any]) -> None:
+        previous = self.memory_store.get_player_suspicion(session.state.game_id, player_id)
+        suspicion_memory = build_player_suspicion_memory(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            day=session.state.day_count,
+            suspicion_update=result.get("suspicion_update"),
+            previous=previous,
+        )
+        if suspicion_memory is not None:
+            logger.info(
+                "写回玩家怀疑链到 Redis game_id=%s player_id=%s records=%d",
+                session.state.game_id,
+                player_id,
+                len(suspicion_memory.records),
+            )
+            self.memory_store.save_player_suspicion(suspicion_memory)
+
+        private_role_memory = build_private_role_memory(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            private_info=session.private_infos.get(player_id),
+        )
+        if private_role_memory is not None:
+            self.memory_store.save_private_role_memory(private_role_memory)
+
+    def _find_day_speech_task(self, session: GameSession, player_id: str, context: str):
+        """定位白天发言任务，复用现有 scheduler 的 prompt 组装逻辑。"""
+        tasks = self.scheduler.schedule(
+            state=session.state,
+            agents=session.agents,
+            private_infos=session.private_infos,
+            game_context=context,
+        )
+        return next((task for task in tasks if task.player_id == player_id), None)
 
     def _validate_actor_action(self, session: GameSession, action: dict) -> None:
         actor_id = action.get("actor_player_id")
