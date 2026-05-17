@@ -272,6 +272,7 @@ class NightResolver:
             game_context=context,
             private_info=augmented_private,
             board_context=self._board_context(session),
+            board_roles=self._board_roles(session),
             player_references=player_references(session),
             enabled_role_keys={player.role_key for player in session.state.players},
         )
@@ -486,3 +487,16 @@ class NightResolver:
         }
         roles = "、".join(f"{role_names.get(role_key, role_key)}x{count}" for role_key, count in role_counts.items())
         return f"板子：{session.state.board_id}；角色构成：{roles}；胜利条件：狼人全部出局或狼人达到人数优势。"
+
+    def _board_roles(self, session: GameSession) -> dict[str, int]:
+        """Extract {role_key: count} from the board config for prompt constraints."""
+        from ai_werewolf.seeds.boards import default_boards
+
+        board = next((b for b in default_boards() if b.board_id == session.state.board_id), None)
+        if board is not None:
+            return board.roles_count_dict()
+        # Fallback: derive from current player list
+        role_counts: dict[str, int] = {}
+        for player in session.state.players:
+            role_counts[player.role_key] = role_counts.get(player.role_key, 0) + 1
+        return role_counts

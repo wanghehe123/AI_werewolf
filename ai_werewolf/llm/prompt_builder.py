@@ -25,7 +25,7 @@ LLM Prompt 构建器
 from collections.abc import Callable
 
 from ai_werewolf.domain.agents import AgentProfile
-from ai_werewolf.domain.game_state import PlayerPrivateInfo
+from ai_werewolf.domain.game_state import PlayerPrivateInfo, PlayerState
 
 
 def build_player_prompt(
@@ -42,6 +42,7 @@ def build_player_prompt(
     board_context: str = "",
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
 ) -> str:
     """
     构建 AI 玩家的完整 Prompt（基于通用提示词规范）
@@ -140,6 +141,22 @@ def build_player_prompt(
             board_context,
             "",
         ])
+
+    # ---- 本局板子角色清单（M2-T9）----
+    if board_roles:
+        parts.extend(_build_board_role_constraints(board_roles))
+
+    # ---- 角色人格守则（M2-T11）----
+    parts.extend([
+        "=" * 40,
+        "【你必须严格遵守的人格守则】",
+        "=" * 40,
+        "1. 不允许声称自己是\"你不是的角色\"，除非你是狼人且明确要悍跳。",
+        "2. 一旦你在某轮发言中起跳 X（如\"我是预言家\"），后续所有轮次必须维持此身份，不得改口。",
+        "3. 你不能引用未发生的事件（如\"昨晚守卫保了我\"，但板子无守卫则严禁）。",
+        "4. 你不得使用未在本局产生的事实（如\"昨天3号说他是预言家\"，但 3号根本没起跳过）。",
+        "",
+    ])
 
     # ---- 游戏状态 ----
     parts.extend([
@@ -353,6 +370,8 @@ def build_speech_prompt(
     board_context: str = "",
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
+    speech_progress: str = "",
 ) -> str:
     """
     构建白天发言阶段的 Prompt
@@ -371,6 +390,8 @@ def build_speech_prompt(
         game_context:   发言历史和投票记录
         alive_players:  存活玩家列表
         private_info:   私有信息（查验结果、狼队友等）
+        board_roles:    本局板子角色清单 {role_key: count}
+        speech_progress: 发言进度文本（M2-T10）
 
     Returns:
         白天发言的 Prompt 字符串
@@ -385,19 +406,25 @@ def build_speech_prompt(
         "5. 必要时说明自己是否要跳身份\n"
         "发言要：有明确立场、有逻辑依据、有身份视角、不贴脸、不场外。"
     )
+    # Inject speech progress into game_context if provided
+    effective_context = game_context
+    if speech_progress:
+        effective_context = game_context + "\n" + speech_progress if game_context else speech_progress
+
     return build_player_prompt(
         agent=agent,
         role_key=role_key,
         phase="day_speech",
         game_id=game_id,
         round_info=round_info,
-        game_context=game_context,
+        game_context=effective_context,
         alive_players=alive_players,
         action_hint=action_hint,
         private_info=private_info,
         board_context=board_context,
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
+        board_roles=board_roles,
     )
 
 
@@ -413,6 +440,7 @@ def build_vote_prompt(
     board_context: str = "",
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
 ) -> str:
     """
     构建投票阶段的 Prompt
@@ -457,6 +485,7 @@ def build_vote_prompt(
         board_context=board_context,
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
+        board_roles=board_roles,
     )
 
 
@@ -471,6 +500,7 @@ def build_last_words_prompt(
     board_context: str = "",
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
 ) -> str:
     """
     构建遗言阶段的 Prompt。
@@ -498,6 +528,7 @@ def build_last_words_prompt(
         board_context=board_context,
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
+        board_roles=board_roles,
     )
 
 
@@ -513,6 +544,7 @@ def build_night_action_prompt(
     board_context: str = "",
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
 ) -> str:
     """
     构建夜晚行动阶段的 Prompt
@@ -561,6 +593,7 @@ def build_night_action_prompt(
         board_context=board_context,
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
+        board_roles=board_roles,
     )
 
 
@@ -568,20 +601,62 @@ def format_private_info(
     private_info: PlayerPrivateInfo,
     role_key: str,
     player_label: Callable[[str], str] | None = None,
+    players: list[PlayerState] | None = None,
 ) -> str:
-    """把结构化私有信息转换为仅当前角色可见的 Prompt 文本。"""
+    """把结构化私有信息转换为仅当前角色可见的 Prompt 文本。
+
+    When *players* is provided, the output is enriched with structured details
+    such as alive/dead wolf teammate status and unchecked player lists.
+    """
     lines: list[str] = []
     label = player_label or (lambda player_id: player_id)
 
     if role_key in {"werewolf", "wolf_king", "wolf_beauty"} and private_info.wolf_teammates:
-        lines.append(f"狼队友：{', '.join(label(player_id) for player_id in private_info.wolf_teammates)}")
+        if players is not None:
+            # Structured wolf teammate output
+            lines.append("【你的狼队友】")
+            player_map = {p.player_id: p for p in players}
+            alive_teammates: list[str] = []
+            for mate_id in private_info.wolf_teammates:
+                mate = player_map.get(mate_id)
+                if mate:
+                    mate_label = label(mate_id)
+                    if mate.alive:
+                        alive_teammates.append(f"{mate.seat}号")
+                    lines.append(f"- {mate_label}（{'存活' if mate.alive else '已出局'}）")
+            alive_summary = "、".join(alive_teammates) if alive_teammates else "无"
+            dead_labels = []
+            for mate_id in private_info.wolf_teammates:
+                mate = player_map.get(mate_id)
+                if mate and not mate.alive:
+                    dead_labels.append(f"{mate.seat}号")
+            dead_note = f"（{'、'.join(dead_labels)}已出局）" if dead_labels else ""
+            lines.append(f"- 当前存活狼队友：{alive_summary}{dead_note}")
+        else:
+            lines.append(f"狼队友：{', '.join(label(player_id) for player_id in private_info.wolf_teammates)}")
 
     if role_key == "seer" and private_info.seer_results:
-        lines.append("查验结果：")
-        for result in private_info.seer_results:
-            camp = "狼人阵营" if result.get("result") == "werewolf" else "好人阵营"
-            target = result.get("target")
-            lines.append(f"- {result.get('round')} 查验 {label(target) if target else target}：{camp}")
+        if players is not None:
+            # Structured seer results
+            lines.append("【你的预言家查验记录】")
+            checked_ids: set[str] = set()
+            for result in private_info.seer_results:
+                camp = "狼人" if result.get("result") == "werewolf" else "好人"
+                target = result.get("target")
+                round_label = result.get("round", "未知")
+                if target:
+                    checked_ids.add(target)
+                lines.append(f"- 第 {round_label} 晚：你查验 {label(target) if target else target}，结果为【{camp}】")
+            # Compute unchecked players
+            unchecked = [p for p in players if p.player_id not in checked_ids and p.alive]
+            unchecked_str = "、".join(f"{p.seat}号" for p in sorted(unchecked, key=lambda p: p.seat)) if unchecked else "无"
+            lines.append(f"- 未查验：{unchecked_str}")
+        else:
+            lines.append("查验结果：")
+            for result in private_info.seer_results:
+                camp = "狼人阵营" if result.get("result") == "werewolf" else "好人阵营"
+                target = result.get("target")
+                lines.append(f"- {result.get('round')} 查验 {label(target) if target else target}：{camp}")
 
     if role_key == "witch" and private_info.witch_medicine:
         save = "可用" if private_info.witch_medicine.get("save", False) else "已使用"
@@ -602,6 +677,67 @@ def format_private_info(
         lines.append(f"警徽流向：{private_info.sheriff_target}")
 
     return "\n".join(lines)
+
+
+# All known role keys used across all board configurations.
+_ALL_KNOWN_ROLE_KEYS: dict[str, str] = {
+    "werewolf": "狼人",
+    "seer": "预言家",
+    "witch": "女巫",
+    "hunter": "猎人",
+    "guard": "守卫",
+    "guardian": "守卫",
+    "villager": "平民",
+    "idiot": "白痴",
+    "grave_keeper": "守墓人",
+}
+
+
+def _build_board_role_constraints(board_roles: dict[str, int]) -> list[str]:
+    """Generate the board role list and hard constraint section (M2-T9)."""
+    # Present roles
+    present_lines = []
+    for role_key, count in board_roles.items():
+        role_name = _ALL_KNOWN_ROLE_KEYS.get(role_key, role_key)
+        present_lines.append(f"- {role_name}：{count}")
+
+    # Unconfigured roles: all known roles minus those in the board
+    configured_keys = set(board_roles.keys())
+    # Collect display names of configured roles (for deduplication)
+    configured_display_names = {
+        _ALL_KNOWN_ROLE_KEYS.get(k, k) for k in configured_keys
+    }
+    unconfigured = []
+    seen_unconfigured_names: set[str] = set()
+    for role_key, role_name in _ALL_KNOWN_ROLE_KEYS.items():
+        if role_key in configured_keys:
+            continue
+        # Skip if display name is already covered by a configured role (e.g. guard/guardian both = 守卫)
+        if role_name in configured_display_names:
+            continue
+        # Skip duplicate display names among unconfigured roles
+        if role_name in seen_unconfigured_names:
+            continue
+        seen_unconfigured_names.add(role_name)
+        unconfigured.append((role_key, role_name))
+
+    unconfigured_str = "、".join(name for _, name in unconfigured) if unconfigured else "无"
+
+    lines = [
+        "=" * 40,
+        "【本局板子可用身份】",
+        "=" * 40,
+        *present_lines,
+        f"- （未配置：{unconfigured_str}）",
+        "",
+        "【硬约束】",
+        "- 你只能起跳\"板子里存在\"的身份。",
+        "- 你不得在发言中暗示\"对方是 X\"，其中 X 是板子未配置的角色。",
+        "- 当板子无女巫时，禁止讨论\"女巫救/毒\"。",
+        "- 当板子无守卫时，禁止讨论\"守卫保人\"。",
+        "",
+    ]
+    return lines
 
 
 def _build_wolf_action_hint(

@@ -45,3 +45,7 @@ class BoardConfig(BaseModel):
     @property
     def player_count(self) -> int:
         return sum(role.count for role in self.roles)
+
+    def roles_count_dict(self) -> dict[str, int]:
+        """Return {role_key: count} mapping for this board."""
+        return {r.role_key: r.count for r in self.roles}

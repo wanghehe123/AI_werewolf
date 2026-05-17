@@ -100,6 +100,7 @@ class AIActionScheduler:
         round_info = self._round_info(state)
         alive_players = state.alive_player_ids()
         board_context = self._board_context(state)
+        board_roles = self._board_roles(state)
         enabled_role_keys = {state_player.role_key for state_player in state.players}
 
         if prompt_kind == "night_action":
@@ -115,6 +116,7 @@ class AIActionScheduler:
                 board_context=board_context,
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
+                board_roles=board_roles,
             )
         elif prompt_kind == "day_speech":
             prompt = build_speech_prompt(
@@ -128,6 +130,7 @@ class AIActionScheduler:
                 board_context=board_context,
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
+                board_roles=board_roles,
             )
         elif prompt_kind == "exile_vote":
             prompt = build_vote_prompt(
@@ -142,6 +145,7 @@ class AIActionScheduler:
                 board_context=board_context,
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
+                board_roles=board_roles,
             )
         else:
             prompt = build_last_words_prompt(
@@ -155,6 +159,7 @@ class AIActionScheduler:
                 board_context=board_context,
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
+                board_roles=board_roles,
             )
 
         return AIActionRequest(
@@ -215,3 +220,14 @@ class AIActionScheduler:
                 role_name = role_key
             roles.append(f"{role_name}x{count}")
         return f"板子：{board_name}；角色构成：{'、'.join(roles)}；胜利条件：狼人全部出局或狼人达到人数优势。"
+
+    def _board_roles(self, state: GameState) -> dict[str, int]:
+        """Extract {role_key: count} from the board config for prompt constraints."""
+        board = next((b for b in default_boards() if b.board_id == state.board_id), None)
+        if board is not None:
+            return board.roles_count_dict()
+        # Fallback: derive from current player list
+        role_counts: dict[str, int] = {}
+        for player in state.players:
+            role_counts[player.role_key] = role_counts.get(player.role_key, 0) + 1
+        return role_counts
