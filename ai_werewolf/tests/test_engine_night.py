@@ -44,8 +44,20 @@ def _mock_decision(speech="test", action_type="wolf_kill", target_id="human"):
 
 
 def test_wolf_kills_target():
-    """Wolf LLM decides a kill target, night_actions records it."""
-    session = _make_session(_default_players(), _default_agents())
+    """Wolf LLM decides a kill target, night_actions records it.
+
+    Uses a single wolf so the council path is not triggered and
+    _get_ai_decision (which is mocked) is exercised directly.
+    """
+    players = [
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="villager", alive=True, is_human=True),
+        PlayerState(player_id="w1", agent_id="w1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="seer1", agent_id="seer1", seat=3, role_key="seer", alive=True, is_human=False),
+        PlayerState(player_id="witch1", agent_id="witch1", seat=4, role_key="witch", alive=True, is_human=False),
+    ]
+    all_agents = _default_agents()
+    agents = {k: v for k, v in all_agents.items() if k in {"w1", "seer1", "witch1"}}
+    session = _make_session(players, agents)
     resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
 
     with patch.object(resolver, "_get_ai_decision", return_value=_mock_decision(target_id="human")):

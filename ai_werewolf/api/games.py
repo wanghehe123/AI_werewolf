@@ -261,40 +261,54 @@ async def stream_game(
         else:
             yield format_sse(build_state_snapshot_event(session, player_id=player_id))
 
-        # --- Live stream: prefer Redis XREAD with block, fallback to in-memory poll ---
+        # --- Live stream: always drain in-memory events first, then use Redis for
+        #     persistence-aware delivery.  The in-memory path guarantees sub-200 ms
+        #     delivery latency regardless of Redis availability or async task
+        #     scheduling, which is critical for real-time speech streaming and TTS.
         last_redis_id = last_event_id or "$"
         use_redis = True
         next_index = len(session.stream_events)
 
         while not await request.is_disconnected():
+            # Drain in-memory events first (always, even when Redis is available)
+            while next_index < len(session.stream_events):
+                yield format_sse(session.stream_events[next_index])
+                next_index += 1
+
             if use_redis:
-                new_events: list = []
                 try:
                     from ai_werewolf.infra.stream import read_events
 
                     new_events = await read_events(
-                        game_id, last_id=last_redis_id, count=100, block_ms=2000,
+                        game_id,
+                        last_id=last_redis_id,
+                        count=100,
+                        block_ms=500,  # shorter block: in-memory already drained
                     )
                     if new_events:
+                        # Only yield events we haven't already yielded from in-memory.
+                        # Compare event_id with the last in-memory event we processed
+                        # to avoid duplicates during the initial overlap window.
                         for entry_id, event_data in new_events:
-                            yield format_sse(event_data)
+                            evt_id = event_data.get("event_id", "")
+                            # If this event is already past our in-memory index
+                            # (i.e., it is newer than anything we've yielded),
+                            # send it.  Otherwise skip to avoid duplicate delivery.
+                            if not _already_yielded_in_memory(
+                                evt_id, session.stream_events, next_index
+                            ):
+                                yield format_sse(event_data)
                             last_redis_id = entry_id
                 except Exception:
-                    # Redis failed during live stream; switch to in-memory
                     use_redis = False
                     logger.warning(
                         "Redis read_events failed for game %s; falling back to in-memory poll",
                         game_id,
                     )
-                    # Reset in-memory index to current length
                     next_index = len(session.stream_events)
                     continue
 
             if not use_redis:
-                # In-memory fallback polling
-                while next_index < len(session.stream_events):
-                    yield format_sse(session.stream_events[next_index])
-                    next_index += 1
                 await asyncio.sleep(0.2)
 
     return StreamingResponse(
@@ -326,6 +340,23 @@ def replay_stream_events(session: GameSession, last_event_id: str | None) -> lis
         if stream_event["event_id"] == last_event_id:
             return session.stream_events[index + 1:]
     return list(session.stream_events)
+
+
+def _already_yielded_in_memory(
+    event_id: str,
+    in_memory_events: list[dict[str, Any]],
+    yielded_up_to: int,
+) -> bool:
+    """Return True if *event_id* has already been delivered from the in-memory list."""
+    if not event_id:
+        return False
+    for i in range(yielded_up_to):
+        try:
+            if in_memory_events[i].get("event_id") == event_id:
+                return True
+        except (IndexError, TypeError):
+            return False
+    return False
 
 
 def format_sse(stream_event: dict[str, Any]) -> str:

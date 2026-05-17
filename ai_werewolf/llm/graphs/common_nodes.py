@@ -75,14 +75,13 @@ def make_isolated_prompt(
 def fallback_target(candidates: list[str]) -> str | None:
     """Pick a target using a simple rule when the LLM fails.
 
-    Priority:
-    1. First candidate in the list (deterministic for tests)
-    2. Random pick if list is non-empty
-    3. None if no candidates
+    Returns a randomly chosen candidate to avoid systematic bias toward
+    any specific player (e.g. the human player who is always seat 1).
+    Returns None if no candidates.
     """
     if not candidates:
         return None
-    return candidates[0]
+    return random.choice(candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -188,8 +187,8 @@ def call_llm_for_vote(
         target_id = _extract_target_id(raw, proposed_targets)
         return {"wolf_id": wolf_id, "target_id": target_id}
     except Exception:
-        logger.warning("LLM vote failed for wolf %s, using first proposal", wolf_id, exc_info=True)
-        return {"wolf_id": wolf_id, "target_id": proposed_targets[0]}
+        logger.warning("LLM vote failed for wolf %s, using random proposal", wolf_id, exc_info=True)
+        return {"wolf_id": wolf_id, "target_id": random.choice(proposed_targets)}
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +208,9 @@ def _extract_target_id(raw: Any, valid_ids: list[str]) -> str | None:
         tid = raw.get("target_id") or raw.get("target")
         if tid in valid_set:
             return tid
-    # Fallback to first valid id
-    return valid_ids[0] if valid_ids else None
+    # Fallback to a random valid id to avoid systematic bias toward the
+    # first player in the list (typically the human at seat 1).
+    return random.choice(valid_ids) if valid_ids else None
 
 
 def _extract_reason(raw: Any) -> str:

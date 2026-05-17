@@ -22,7 +22,7 @@ providers:
     base_url: https://api.siliconflow.cn/v1/chat/completions
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8                 # 生成温度，越高越随机（0.0-2.0）
-    max_tokens: 1024                 # 单次回复最大 token 数
+    max_tokens: 4096                 # 单次回复最大 token 数（reasoning 模型需要更大预算）
     timeout: 30                      # 请求超时（秒）
 
   - id: sf-glm
@@ -51,7 +51,15 @@ providers:
     temperature: 0.8
     max_tokens: 1024
     timeout: 30
-
+  # ---- MiniMax TTS（语音合成）----
+  - id: minimax-speak
+    type: openai_compatible
+    model_name: speech-2.8-hd
+    base_url: https://api.minimaxi.com/v1/t2a_v2
+    api_key: sk-cp-GxDO-5KN1E_TIj6SIsZe5DT07R4V_zpKfI7EVXe8I1eY5y5M4suB8AG4knkzjKaIdP7rh9VJkDJNmhYY7tdEb5e4cuV79w--Kn8fKnix_JgGK1ylwEH-tPs
+    temperature: 0.8
+    max_tokens: 1024
+    timeout: 30
   # ---- 假模型（测试用，不调用真实 API）----
   - id: fake
     type: fake

@@ -121,8 +121,13 @@ class PhaseOrchestrator:
         self._append_ai_speeches(session)
         human = self._human_player(session)
         if human is None or not human.alive:
+            # Broadcast speeches via SSE before advancing to vote so that
+            # the dead human player can follow along in real-time.  A brief
+            # pause gives the SSE generator a chance to drain in-memory events.
             session.append_public_event("phase_changed", "你已出局，本轮跳过你的发言和投票。")
             session.state.phase = GamePhase.EXILE_VOTE
+            # Allow SSE clients a moment to receive the interim events
+            time.sleep(0.3)
             self._resolve_vote(session, {
                 "actor_player_id": session.human_player_id,
                 "action_type": "abstain",

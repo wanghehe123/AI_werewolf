@@ -10,6 +10,7 @@ Tests cover:
 """
 from __future__ import annotations
 
+import random
 import time
 from unittest.mock import MagicMock, patch
 
@@ -166,8 +167,12 @@ class TestCouncilState:
 class TestCommonNodes:
     """Tests for prompt building, LLM invocation helpers, and fallback."""
 
-    def test_fallback_target_returns_first(self):
-        assert fallback_target(["v1", "v2", "v3"]) == "v1"
+    def test_fallback_target_returns_valid_candidate(self):
+        # fallback_target now picks randomly to avoid systematic bias toward
+        # the first player (human).  Seeding ensures deterministic test output.
+        random.seed(42)
+        result = fallback_target(["v1", "v2", "v3"])
+        assert result in ["v1", "v2", "v3"]
 
     def test_fallback_target_empty(self):
         assert fallback_target([]) is None
@@ -400,7 +405,8 @@ class TestN5Resolve:
             error=None,
         )
         result = n5_resolve(state)
-        assert result["decision"] == "v1"  # fallback to first candidate
+        # fallback now picks randomly to avoid bias toward player 1
+        assert result["decision"] in ["v1", "v2"]
         assert "fallback" in result["rationale"]
 
     def test_no_proposals_no_candidates(self):
@@ -505,7 +511,7 @@ class TestFullGraph:
         assert result["decision"] == "v2"
 
     def test_three_wolves_majority(self):
-        """3 wolves: 2 vote v1, 1 votes v2 -> v1 wins."""
+        """3 wolves: 2 vote v1, 1 votes v2 -> v1 wins (majority, not fallback)."""
         def factory(wolf_id):
             decider = MagicMock()
             if wolf_id == "w3":
@@ -525,7 +531,7 @@ class TestFullGraph:
             candidates=["v1", "v2"],
             decider_factory=factory,
         )
-        assert result["decision"] == "v1"
+        assert result["decision"] == "v1"  # majority: 2 v1 > 1 v2
 
     def test_llm_failure_fallback_in_proposal(self):
         """When LLM fails for all wolves, fallback targets are used."""
@@ -541,8 +547,8 @@ class TestFullGraph:
             candidates=["v1", "v2"],
             decider_factory=failing_factory,
         )
-        # Fallback is the first candidate
-        assert result["decision"] == "v1"
+        # Fallback now picks randomly; result should be a valid candidate
+        assert result["decision"] in ["v1", "v2"]
 
     def test_human_proposal_injected(self):
         """Human wolf's choice is injected as a proposal."""
@@ -584,7 +590,7 @@ class TestTimeoutFallback:
     """Tests for timeout and error handling in run_werewolf_council."""
 
     def test_timeout_returns_fallback(self):
-        """When the graph takes too long, fallback to first candidate."""
+        """When the graph takes too long, fallback to a random candidate."""
         def slow_factory(wolf_id):
             decider = MagicMock()
 
@@ -603,11 +609,11 @@ class TestTimeoutFallback:
             decider_factory=slow_factory,
             timeout_s=0.5,  # very short timeout
         )
-        assert result["decision"] == "v1"  # fallback
+        assert result["decision"] in ["v1", "v2"]  # fallback now random
         assert result["error"] == "timeout"
 
     def test_graph_error_returns_fallback(self):
-        """When the graph itself raises, fallback to first candidate."""
+        """When the graph itself raises, fallback to a random candidate."""
 
         def factory(wolf_id):
             return _mock_decider("v1")
@@ -623,7 +629,7 @@ class TestTimeoutFallback:
                 candidates=["v1", "v2"],
                 decider_factory=factory,
             )
-        assert result["decision"] == "v1"
+        assert result["decision"] in ["v1", "v2"]  # fallback now random
         assert result["error"] == "exception"
 
 

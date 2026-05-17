@@ -15,19 +15,21 @@ python -m uvicorn ai_werewolf.main:app --reload --port 8000
 ```bash
 cd frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev
 ```
 
 浏览器打开：
 
 ```text
-http://127.0.0.1:5173
+http://localhost:5173
 ```
 
-如需切换后端地址，设置：
+> **注意：** 请使用 `http://localhost:5173` 访问前端。API 请求指向 `http://localhost:8000`，与前端页面同站（均为 `localhost`），Cookie 可正常发送，无需跨站登录问题。
+
+如需指向不同后端地址：
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev -- --host 127.0.0.1 --port 5173
+VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev
 ```
 
 ## 验证命令

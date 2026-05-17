@@ -183,35 +183,25 @@ class MiniMaxHttpTtsClient:
 
 
 async def synthesize_with_minimax(text: str, voice_id: str | None = None) -> bytes:
-    api_key = resolve_minimax_api_key()
-    if not api_key:
+    provider = resolve_minimax_api_key()
+    if not provider:
         raise MiniMaxTtsError("MINIMAX_API_KEY is not configured")
 
     client = MiniMaxHttpTtsClient(
-        api_key=api_key,
-        model=os.getenv("MINIMAX_TTS_MODEL", DEFAULT_MINIMAX_TTS_MODEL),
+        api_key=provider.api_key,
+        model=os.getenv("MINIMAX_TTS_MODEL", provider.model_name or DEFAULT_MINIMAX_TTS_MODEL),
         voice_id=os.getenv("MINIMAX_TTS_VOICE_ID", DEFAULT_MINIMAX_TTS_VOICE_ID),
-        endpoint=os.getenv("MINIMAX_TTS_HTTP_ENDPOINT", DEFAULT_MINIMAX_TTS_HTTP_ENDPOINT),
+        endpoint=os.getenv("MINIMAX_TTS_HTTP_ENDPOINT", provider.base_url or DEFAULT_MINIMAX_TTS_HTTP_ENDPOINT),
     )
     return await client.synthesize(text, voice_id=voice_id)
 
 
-def resolve_minimax_api_key() -> str | None:
+def resolve_minimax_api_key() -> object | None:
     """Resolve MiniMax API key from env first, then the minimax provider in llm.yaml."""
-    env_key = os.getenv("MINIMAX_API_KEY")
-    if env_key:
-        return env_key
-
     try:
         config = load_llm_config_from_yaml()
     except Exception:
         return None
 
-    provider = next((item for item in config.providers if item.provider_id == "minimax"), None)
-    if provider is None:
-        return None
-    if provider.api_key:
-        return provider.api_key
-    if provider.api_key_env:
-        return os.getenv(provider.api_key_env)
-    return None
+    provider = next((item for item in config.providers if item.provider_id == "minimax-speak"), None)
+    return provider

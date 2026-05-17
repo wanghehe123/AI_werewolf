@@ -15,7 +15,7 @@ import type {
   SubmitActionInput
 } from "./types";
 
-const defaultBaseUrl = "http://127.0.0.1:8000";
+const defaultBaseUrl = "http://localhost:8000";
 
 export class ApiError extends Error {
   constructor(

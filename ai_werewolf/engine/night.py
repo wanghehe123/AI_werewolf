@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from typing import Any
 
 from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
@@ -671,7 +672,7 @@ class NightResolver:
             target_player = state.player_by_id(resolved)
             if target_player.role_key == "werewolf":
                 non_wolves = [p.player_id for p in state.players if p.alive and p.role_key != "werewolf"]
-                return non_wolves[0] if non_wolves else None
+                return random.choice(non_wolves) if non_wolves else None
         return resolved
 
     def _has_alive_role(self, session: GameSession, role_keys: set[str]) -> bool:

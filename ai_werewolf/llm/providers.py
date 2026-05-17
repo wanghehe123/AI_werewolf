@@ -354,8 +354,18 @@ class OpenAICompatibleProvider:
             "usage": usage,
         }
 
-    def _empty_content_retry_tokens(self, current_max_tokens: int) -> int | None:
-        retry_max_tokens = min(max(current_max_tokens * 4, 2048), 4096)
+    def _empty_content_retry_tokens(self, current_max_tokens: int, diagnostics: dict | None = None) -> int | None:
+        # Detect reasoning model exhaustion: finish_reason=length + reasoning used all tokens
+        if diagnostics and diagnostics.get("finish_reason") == "length":
+            usage = diagnostics.get("usage", {})
+            details = usage.get("completion_tokens_details") or {}
+            reasoning_tokens = details.get("reasoning_tokens") or 0
+            if reasoning_tokens > 0 and diagnostics.get("content_chars", 1) == 0:
+                # Reasoning model exhausted budget on thinking — need much more headroom
+                retry = max(current_max_tokens * 4, 8192)
+                return retry if retry > current_max_tokens else None
+
+        retry_max_tokens = min(max(current_max_tokens * 4, 2048), 8192)
         if retry_max_tokens <= current_max_tokens:
             return None
         return retry_max_tokens
@@ -412,7 +422,7 @@ class OpenAICompatibleProvider:
             content = self._response_content(response)
             if not content.strip():
                 diagnostics = self._response_diagnostics(response)
-                retry_max_tokens = self._empty_content_retry_tokens(self.config.max_tokens)
+                retry_max_tokens = self._empty_content_retry_tokens(self.config.max_tokens, diagnostics)
                 if retry_max_tokens is not None:
                     logger.warning(
                         "Provider %s: LLM 返回空 content，准备提高 max_tokens 后重试。model=%s base_url=%s "
