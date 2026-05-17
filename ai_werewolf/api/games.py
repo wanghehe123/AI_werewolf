@@ -240,18 +240,62 @@ async def stream_game(
     session = _get_session(game_id)
 
     async def event_generator():
+        # --- Initial replay ---
         if last_event_id:
-            for stream_event in replay_stream_events(session, last_event_id):
-                yield format_sse(stream_event)
+            # Try Redis Stream replay first
+            try:
+                from ai_werewolf.infra.stream import replay_events
+
+                redis_events = await replay_events(game_id, after_id=last_event_id)
+                if redis_events:
+                    for _entry_id, event_data in redis_events:
+                        yield format_sse(event_data)
+                else:
+                    # Redis returned nothing (empty stream); fall back to in-memory
+                    for stream_event in replay_stream_events(session, last_event_id):
+                        yield format_sse(stream_event)
+            except Exception:
+                # Fallback to in-memory replay
+                for stream_event in replay_stream_events(session, last_event_id):
+                    yield format_sse(stream_event)
         else:
             yield format_sse(build_state_snapshot_event(session, player_id=player_id))
 
+        # --- Live stream: prefer Redis XREAD with block, fallback to in-memory poll ---
+        last_redis_id = last_event_id or "$"
+        use_redis = True
         next_index = len(session.stream_events)
+
         while not await request.is_disconnected():
-            while next_index < len(session.stream_events):
-                yield format_sse(session.stream_events[next_index])
-                next_index += 1
-            await asyncio.sleep(0.2)
+            if use_redis:
+                new_events: list = []
+                try:
+                    from ai_werewolf.infra.stream import read_events
+
+                    new_events = await read_events(
+                        game_id, last_id=last_redis_id, count=100, block_ms=2000,
+                    )
+                    if new_events:
+                        for entry_id, event_data in new_events:
+                            yield format_sse(event_data)
+                            last_redis_id = entry_id
+                except Exception:
+                    # Redis failed during live stream; switch to in-memory
+                    use_redis = False
+                    logger.warning(
+                        "Redis read_events failed for game %s; falling back to in-memory poll",
+                        game_id,
+                    )
+                    # Reset in-memory index to current length
+                    next_index = len(session.stream_events)
+                    continue
+
+            if not use_redis:
+                # In-memory fallback polling
+                while next_index < len(session.stream_events):
+                    yield format_sse(session.stream_events[next_index])
+                    next_index += 1
+                await asyncio.sleep(0.2)
 
     return StreamingResponse(
         event_generator(),

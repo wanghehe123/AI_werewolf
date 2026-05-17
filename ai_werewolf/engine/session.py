@@ -49,7 +49,12 @@ class GameSession:
         target_id: str | None = None,
         visibility: str = "public",
     ) -> dict[str, Any]:
-        """Append an SSE-ready event to the in-memory stream log."""
+        """Append an SSE-ready event to the in-memory stream log.
+
+        The event is also persisted to Redis Stream (fire-and-forget) so
+        that SSE clients can replay missed events after a server restart.
+        If Redis is unavailable the in-memory behaviour continues unchanged.
+        """
         self.stream_event_seq += 1
         stream_event = {
             "event_id": f"evt_{self.stream_event_seq:06d}",
@@ -64,6 +69,16 @@ class GameSession:
             "created_at": datetime.now(UTC).isoformat(),
         }
         self.stream_events.append(stream_event)
+        # Fire-and-forget Redis persistence
+        try:
+            import asyncio
+
+            from ai_werewolf.infra.stream import publish_event
+
+            loop = asyncio.get_running_loop()
+            loop.create_task(publish_event(self.state.game_id, stream_event))
+        except Exception:
+            pass  # Redis unavailable or no running loop; continue in-memory
         return stream_event
 
     def append_public_event(
