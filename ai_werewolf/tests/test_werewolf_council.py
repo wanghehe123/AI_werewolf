@@ -42,7 +42,7 @@ from ai_werewolf.llm.graphs.werewolf_council import (
 def _mock_decider(target_id: str, reason: str = "test reason", risk: int = 3):
     """Create a MagicMock that behaves like a PlayerDecider for proposals."""
     decider = MagicMock()
-    decider.decide.return_value = {
+    decider.decide_raw.return_value = {
         "target_id": target_id,
         "reason": reason,
         "risk": risk,
@@ -56,7 +56,7 @@ def _disagreeing_factory(mapping: dict[str, str]):
     def factory(wolf_id: str):
         decider = MagicMock()
         tid = mapping.get(wolf_id, "v1")
-        decider.decide.return_value = {
+        decider.decide_raw.return_value = {
             "target_id": tid,
             "reason": f"{wolf_id} wants {tid}",
             "risk": 3,
@@ -218,7 +218,7 @@ class TestCommonNodes:
 
         def failing_factory(wolf_id):
             decider = MagicMock()
-            decider.decide.side_effect = RuntimeError("LLM down")
+            decider.decide_raw.side_effect = RuntimeError("LLM down")
             return decider
 
         result = call_llm_for_proposal("w1", state, failing_factory)
@@ -279,7 +279,7 @@ class TestCommonNodes:
 
         def failing_factory(wolf_id):
             decider = MagicMock()
-            decider.decide.side_effect = RuntimeError("LLM down")
+            decider.decide_raw.side_effect = RuntimeError("LLM down")
             return decider
 
         result = call_llm_for_vote("w1", state, failing_factory)
@@ -472,11 +472,11 @@ class TestFullGraph:
         def factory(wolf_id):
             decider = MagicMock()
             if wolf_id == "w1":
-                decider.decide.return_value = {
+                decider.decide_raw.return_value = {
                     "target_id": "v1", "reason": "r1", "risk": 4,
                 }
             else:
-                decider.decide.return_value = {
+                decider.decide_raw.return_value = {
                     "target_id": "v2", "reason": "r2", "risk": 1,
                 }
             return decider
@@ -509,11 +509,11 @@ class TestFullGraph:
         def factory(wolf_id):
             decider = MagicMock()
             if wolf_id == "w3":
-                decider.decide.return_value = {
+                decider.decide_raw.return_value = {
                     "target_id": "v2", "reason": "r3", "risk": 1,
                 }
             else:
-                decider.decide.return_value = {
+                decider.decide_raw.return_value = {
                     "target_id": "v1", "reason": "r", "risk": 2,
                 }
             return decider
@@ -531,7 +531,7 @@ class TestFullGraph:
         """When LLM fails for all wolves, fallback targets are used."""
         def failing_factory(wolf_id):
             decider = MagicMock()
-            decider.decide.side_effect = RuntimeError("LLM down")
+            decider.decide_raw.side_effect = RuntimeError("LLM down")
             return decider
 
         result = run_werewolf_council(
@@ -592,7 +592,7 @@ class TestTimeoutFallback:
                 time.sleep(10)  # simulate slow LLM
                 return {"target_id": "v1", "reason": "slow", "risk": 3}
 
-            decider.decide.side_effect = slow_decide
+            decider.decide_raw.side_effect = slow_decide
             return decider
 
         result = run_werewolf_council(

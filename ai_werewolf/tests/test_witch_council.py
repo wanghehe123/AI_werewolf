@@ -33,7 +33,7 @@ from ai_werewolf.llm.graphs.witch_council import (
 def _mock_decider(return_value: dict) -> MagicMock:
     """Create a MagicMock that behaves like a PlayerDecider."""
     decider = MagicMock()
-    decider.decide.return_value = return_value
+    decider.decide_raw.return_value = return_value
     return decider
 
 
@@ -327,7 +327,7 @@ class TestFullGraph:
                     return {"save": True, "reason": "seer is valuable"}
                 return {"poison_target": None, "reason": "save already used"}
             decider = MagicMock()
-            decider.decide.side_effect = decide
+            decider.decide_raw.side_effect = decide
             return decider
 
         result = run_witch_council(
@@ -357,7 +357,7 @@ class TestTimeoutFallback:
                 time.sleep(10)
                 return {"save": True, "reason": "slow"}
 
-            decider.decide.side_effect = slow_decide
+            decider.decide_raw.side_effect = slow_decide
             return decider
 
         result = run_witch_council(

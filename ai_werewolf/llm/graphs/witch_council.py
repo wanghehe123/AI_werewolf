@@ -122,7 +122,7 @@ def _make_n1_assess_with_llm(decider_factory: Callable[[str], Any]) -> Callable:
 
         try:
             decider = decider_factory(state.get("witch_id", ""))
-            raw = decider.decide(prompt)
+            raw = decider.decide_raw(prompt)  # raw dict, no PlayerDecision validation
             should_save = _extract_bool(raw, "save")
             reason = _extract_str(raw, "reason")
             return {
@@ -188,7 +188,7 @@ def _make_n3_decide_poison(decider_factory: Callable[[str], Any]) -> Callable:
 
         try:
             decider = decider_factory(witch_id)
-            raw = decider.decide(prompt)
+            raw = decider.decide_raw(prompt)  # raw dict, no PlayerDecision validation
             target = _extract_str(raw, "poison_target")
             # Validate target is in valid_targets
             if target and target in valid_targets:

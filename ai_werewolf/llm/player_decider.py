@@ -120,6 +120,24 @@ class PlayerDecider:
 
         return decision
 
+    def decide_raw(self, prompt: str) -> dict:
+        """Call the LLM and return the raw dict **without** PlayerDecision validation.
+
+        This is intended for callers (like the LangGraph council graph) that
+        ask for a custom JSON schema (e.g. ``{"target_id": "...", "reason":
+        "...", "risk": 3}``) and handle parsing themselves.  Skipping
+        validation avoids spurious "LLM 决策解析失败" warnings and preserves
+        non-standard fields that ``PlayerDecision`` does not model.
+        """
+        if self._chain is not None:
+            try:
+                chain_result = asyncio.run(self._chain.decide(prompt))
+                return chain_result.response
+            except Exception:
+                logger.exception("ProviderChain failed in decide_raw, falling back to single provider")
+                return self.model.decide(prompt)
+        return self.model.decide(prompt)
+
     def stream_speech(self, prompt: str) -> Iterator[str]:
         """Yield safe speech chunks, falling back to normal decision if needed."""
         if not hasattr(self.model, "stream_speech"):

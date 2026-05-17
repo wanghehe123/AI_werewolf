@@ -120,8 +120,8 @@ def call_llm_for_proposal(
 
     try:
         decider = decider_factory(wolf_id)
-        raw = decider.decide(prompt)
-        # raw should be a PlayerDecision-like object or a dict
+        raw = decider.decide_raw(prompt)  # raw dict, no PlayerDecision validation
+        # raw should be a dict with target_id, reason, risk
         target_id = _extract_target_id(raw, candidates)
         reason = _extract_reason(raw)
         risk = _extract_risk(raw)
@@ -184,7 +184,7 @@ def call_llm_for_vote(
 
     try:
         decider = decider_factory(wolf_id)
-        raw = decider.decide(prompt)
+        raw = decider.decide_raw(prompt)  # raw dict, no PlayerDecision validation
         target_id = _extract_target_id(raw, proposed_targets)
         return {"wolf_id": wolf_id, "target_id": target_id}
     except Exception:
