@@ -8,10 +8,13 @@
 - 根据角色绑定关系，查找对应角色的 Provider
 - 从 YAML 配置文件构建完整的注册中心
 - 支持默认 Provider 回退机制
+- 构建 ProviderChain 降级链
 """
 
 import logging
 
+from ai_werewolf.llm.chain.provider_chain import ProviderChain, ProviderTier
+from ai_werewolf.llm.chain.rule_engine import RuleEngineProvider
 from ai_werewolf.llm.model_config import (
     LLMConfig,
     LLMProviderConfig,
@@ -192,3 +195,57 @@ def build_registry_from_yaml(path: str | None = None) -> tuple[ModelProviderRegi
     registry.set_default(config.default_provider)
 
     return registry, config.role_bindings
+
+
+def build_chain_from_config(
+    chain_config: list[dict],
+    registry: ModelProviderRegistry,
+) -> ProviderChain:
+    """Build a :class:`ProviderChain` from a YAML ``chains`` section.
+
+    For each tier in *chain_config* the provider is looked up in *registry*.
+    If the provider id is ``"rule_engine"``, a :class:`RuleEngineProvider`
+    is created automatically (it is never registered in the YAML providers
+    section).
+
+    Args:
+        chain_config: List of tier dicts, each containing at least ``provider``
+            and optional ``timeout_ms``, ``max_retries``, ``triggers_to_next``.
+        registry: The registry that holds already-built providers.
+
+    Returns:
+        A fully wired :class:`ProviderChain`.
+    """
+    tiers: list[ProviderTier] = []
+    providers: dict[str, ModelProvider] = {}
+
+    for entry in chain_config:
+        provider_id = entry.get("provider", entry.get("tier", "unknown"))
+        timeout_ms = entry.get("timeout_ms", 6000)
+        max_retries = entry.get("max_retries", 1)
+        triggers = entry.get("triggers_to_next", ["timeout", "5xx", "429", "json_parse_error"])
+
+        tier = ProviderTier(
+            provider_id=provider_id,
+            model_name=entry.get("model_name", provider_id),
+            timeout_ms=timeout_ms,
+            max_retries=max_retries,
+            triggers_to_next=list(triggers),
+        )
+        tiers.append(tier)
+
+        # Resolve the provider instance
+        if provider_id == "rule_engine":
+            providers[provider_id] = RuleEngineProvider()
+        else:
+            existing = registry.get(provider_id)
+            if existing is not None:
+                providers[provider_id] = existing
+            else:
+                logger.warning(
+                    "Chain tier '%s': provider not found in registry, "
+                    "tier will be skipped at runtime.",
+                    provider_id,
+                )
+
+    return ProviderChain(tiers=tiers, providers=providers)

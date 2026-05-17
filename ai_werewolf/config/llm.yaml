@@ -65,3 +65,28 @@ role_bindings:
 # ==================== 全局默认 ====================
 # 当角色未在 role_bindings 中配置时，使用此默认 Provider
 default_provider: fake
+
+
+# ==================== 降级链 ====================
+# 4-tier degradation: primary -> secondary -> cheap_fallback -> static rule engine
+chains:
+  default:
+    - tier: primary
+      provider: glm
+      timeout_ms: 6000
+      max_retries: 1
+      triggers_to_next: [timeout, 5xx, 429, json_parse_error]
+    - tier: secondary
+      provider: deepseek
+      timeout_ms: 4000
+      max_retries: 1
+      triggers_to_next: [timeout, 5xx]
+    - tier: cheap_fallback
+      provider: minimax
+      timeout_ms: 3000
+      max_retries: 0
+      triggers_to_next: [always]
+    - tier: static
+      provider: rule_engine
+      timeout_ms: 50
+      max_retries: 0

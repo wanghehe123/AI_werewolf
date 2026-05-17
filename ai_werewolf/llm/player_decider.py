@@ -8,16 +8,23 @@ AI 玩家决策器
 2. 将 LLM 响应解析为结构化的 PlayerDecision
 3. 对响应进行安全过滤
 4. 处理 LLM 调用失败的情况（fallback 到安全响应）
+5. 支持 ProviderChain 降级链（可选）
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
 import json
 import re
-from collections.abc import Iterator
-from typing import Protocol
+from collections.abc import AsyncIterator, Iterator
+from typing import TYPE_CHECKING, Protocol
 
 from ai_werewolf.llm.safety import is_safe_speech
 from ai_werewolf.llm.schemas import PlayerDecision
+
+if TYPE_CHECKING:
+    from ai_werewolf.llm.chain.provider_chain import ProviderChain
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +57,23 @@ class PlayerDecider:
         print(decision.speech)  # 安全的发言内容
     """
 
-    def __init__(self, model: DecisionModel) -> None:
+    def __init__(
+        self,
+        model: DecisionModel,
+        chain: ProviderChain | None = None,
+    ) -> None:
         """
         初始化决策器
 
         Args:
             model: 实现了 decide 方法的 LLM Provider
+            chain: Optional degradation chain.  When provided, ``decide()``
+                and ``stream_speech()`` will use the chain instead of the
+                single *model*.  When *None* the existing single-provider
+                behaviour is preserved (backward compatible).
         """
         self.model = model
+        self._chain = chain
 
     def decide(self, prompt: str) -> PlayerDecision:
         """
@@ -75,7 +91,11 @@ class PlayerDecider:
         Returns:
             经过验证和安全过滤的 PlayerDecision 对象
         """
-        # 调用 LLM 获取原始决策
+        # If a chain is configured, delegate to the async chain path.
+        if self._chain is not None:
+            return self._decide_via_chain(prompt)
+
+        # Original single-provider path (unchanged).
         raw_decision = self.model.decide(prompt)
 
         try:
@@ -119,6 +139,45 @@ class PlayerDecider:
         speech = "".join(visible_chunks)
         if speech and not is_safe_speech(speech):
             logger.warning("不安全的流式发言被过滤: %s", speech[:100])
+
+    # ------------------------------------------------------------------
+    # Chain-based decision helpers
+    # ------------------------------------------------------------------
+
+    def _decide_via_chain(self, prompt: str) -> PlayerDecision:
+        """Use the ProviderChain to get a decision, then validate and filter."""
+        assert self._chain is not None  # guaranteed by caller
+        try:
+            chain_result = asyncio.run(self._chain.decide(prompt))
+        except Exception:
+            logger.exception("ProviderChain failed, falling back to single provider")
+            return self._build_fallback(self.model.decide(prompt))
+
+        if chain_result.fallback_occurred:
+            logger.info(
+                "ProviderChain fell back to tier '%s'",
+                chain_result.tier_used,
+            )
+
+        raw_decision = chain_result.response
+
+        try:
+            decision = PlayerDecision.model_validate(raw_decision)
+        except Exception:
+            logger.warning("Chain decision parse failed, using fallback: %s", raw_decision)
+            return self._build_fallback(raw_decision)
+
+        if not is_safe_speech(decision.speech):
+            logger.warning("不安全的发言被过滤: %s", decision.speech[:100])
+            return PlayerDecision(
+                speech="我目前没有太多想说的，先听听大家的意见。",
+                action_type=decision.action_type,
+                target_id=decision.target_id,
+                public_reason=decision.public_reason,
+                private_memory_update=decision.private_memory_update,
+            )
+
+        return decision
 
     def _build_fallback(self, raw: dict) -> PlayerDecision:
         """Build fallback PlayerDecision, preserving action_type and target_id if possible.
