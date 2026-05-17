@@ -18,29 +18,36 @@ providers:
   # ---- DeepSeek（推荐，性价比高）----
   - id: deepseek
     type: openai_compatible
-    model_name: deepseek-v4-flash       # DeepSeek V3 模型
+    model_name: deepseek-v4-flash
     base_url: https://api.deepseek.com
     api_key: sk-ba862ff615e5480aab116946d0b33db3
     temperature: 0.8                 # 生成温度，越高越随机（0.0-2.0）
     max_tokens: 1024                 # 单次回复最大 token 数
     timeout: 30                      # 请求超时（秒）
 
-  # ---- 智谱 GLM ----
-  - id: glm
+  - id: sf-glm
     type: openai_compatible
-    model_name: glm-4.7         # 智谱 GLM-4 模型
-    base_url: https://open.bigmodel.cn/api/paas/v4
-    api_key: 83ca0a13383f418baec1c13a1a11b949.1BY4hkXIpDnAm1nD
+    model_name: Pro/zai-org/GLM-4.7        # 智谱 GLM-4 模型
+    base_url: https://api.siliconflow.cn/v1/chat/completions
+    api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
     max_tokens: 1024
     timeout: 30
 
-  # ---- MiniMax ----
-  - id: minimax
+  - id: sf-kimi
     type: openai_compatible
-    model_name: MiniMax-M2.7     # MiniMax Text 模型
-    base_url: https://api.minimaxi.com/v1
-    api_key: sk-cp-GxDO-5KN1E_TIj6SIsZe5DT07R4V_zpKfI7EVXe8I1eY5y5M4suB8AG4knkzjKaIdP7rh9VJkDJNmhYY7tdEb5e4cuV79w--Kn8fKnix_JgGK1ylwEH-tPs
+    model_name: Pro/moonshotai/Kimi-K2.5
+    base_url: https://api.siliconflow.cn/v1/chat/completions
+    api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
+    temperature: 0.8
+    max_tokens: 1024
+    timeout: 30
+
+  - id: sf-minimax
+    type: openai_compatible
+    model_name: Pro/MiniMaxAI/MiniMax-M2.5
+    base_url: https://api.siliconflow.cn/v1/chat/completions
+    api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
     max_tokens: 1024
     timeout: 30
@@ -55,11 +62,11 @@ providers:
 # 为每个游戏角色指定使用哪个 Provider
 # AI 玩家在扮演该角色时，会使用对应 Provider 的模型进行决策和发言
 role_bindings:
-  werewolf: minimax         # 狼人角色使用 MiniMax
-  seer: minimax             # 预言家角色使用 MiniMax
-  witch: minimax            # 女巫角色使用 MiniMax
-  hunter: minimax           # 猎人角色使用 MiniMax
-  villager: minimax         # 平民角色使用 MiniMax
+  werewolf: deepseek         # 狼人角色使用 MiniMax
+  seer: sf-glm           # 预言家角色使用 MiniMax
+  witch: sf-kimi            # 女巫角色使用 MiniMax
+  hunter: deepseek           # 猎人角色使用 MiniMax
+  villager: sf-minimax         # 平民角色使用 MiniMax
 
 
 # ==================== 全局默认 ====================
@@ -77,12 +84,12 @@ chains:
       max_retries: 1
       triggers_to_next: [timeout, 5xx, 429, json_parse_error]
     - tier: secondary
-      provider: deepseek
+      provider: sf-glm
       timeout_ms: 4000
       max_retries: 1
       triggers_to_next: [timeout, 5xx]
     - tier: cheap_fallback
-      provider: deepseek
+      provider: sf-kimi
       timeout_ms: 3000
       max_retries: 0
       triggers_to_next: [always]
