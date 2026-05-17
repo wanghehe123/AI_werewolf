@@ -358,7 +358,99 @@ MemoryWriteBack
 | `PlayerSuspicionMemory` | 单个 AI 私有 | 玩家主观怀疑链 | 是 |
 | `PrivateRoleMemory` | 单个玩家私有 | 狼队友、查验、药品等角色信息 | 是 |
 
-### 6.2 RawEventLog
+### 6.2 存储策略
+
+记忆存储预留两种策略：
+
+1. Redis 存储。
+2. PostgreSQL 存储。
+
+当前项目是个人项目，第一阶段只落地 Redis。PostgreSQL 只保留接口和空实现，不做真实读写，不阻塞主链路。
+
+策略选择：
+
+```text
+MemoryStore
+  ├─ RedisMemoryStore        # 当前默认实现，真实读写
+  └─ PostgresMemoryStore     # 当前空实现，返回空结果或 no-op
+```
+
+默认配置：
+
+```yaml
+memory:
+  backend: redis
+  redis:
+    key_prefix: aiw:memory
+    ttl_seconds: 604800
+  postgres:
+    enabled: false
+```
+
+设计原则：
+
+- Redis 是当前唯一真实存储，用于全局记忆、每日摘要、AI 私有怀疑链、私有角色记忆和决策 trace。
+- PostgreSQL 只保留 `MemoryStore` 接口适配，后续需要长期复盘、数据分析或跨进程审计时再补真实实现。
+- 所有 key 必须显式区分 `global`、`player`、`role_private`、`trace` 等语义，禁止把公开摘要和私有记忆混在一个 key 里。
+- 读取 prompt 上下文时必须按当前 `player_id` 精确读取私有 key，不能扫描或拼接其他玩家私有记忆。
+- Redis 不可用时，短期可以降级为空记忆上下文，但不能把私有记忆写入公开上下文。
+
+### 6.3 Redis Key 命名规范
+
+统一前缀：
+
+```text
+aiw:memory
+```
+
+Key 结构必须包含 `game_id` 和可见性范围。
+
+| Key | 类型 | 可见性 | 说明 |
+| --- | --- | --- | --- |
+| `aiw:memory:{game_id}:global:day:{day}:summary` | String(JSON) | 全局公开 | 第 N 天公开摘要 |
+| `aiw:memory:{game_id}:global:day:index` | List | 全局公开 | 已生成摘要的 day 列表 |
+| `aiw:memory:{game_id}:global:recent_events` | List | 全局公开 | 当前阶段短期公开事件窗口 |
+| `aiw:memory:{game_id}:global:claims` | Hash | 全局公开 | 玩家公开身份声明索引 |
+| `aiw:memory:{game_id}:player:{player_id}:suspicion` | String(JSON) | 单 AI 私有 | 当前 AI 的怀疑链 |
+| `aiw:memory:{game_id}:player:{player_id}:private_role` | String(JSON) | 单玩家私有 | 当前玩家可见的角色私有信息快照 |
+| `aiw:memory:{game_id}:player:{player_id}:decision_trace:{phase}:{seq}` | String(JSON) | 单 AI 私有/调试 | 决策图每次执行 trace |
+| `aiw:memory:{game_id}:wolf_team:{team_hash}:council` | String(JSON) | 狼队私有 | 狼队协商结果，只对同队狼人可读 |
+
+Key 约束：
+
+- `global` key 只能存公开事实或公开摘要。
+- `player:{player_id}` key 只能由该玩家上下文读取。
+- `private_role` 不允许写入 `global` key。
+- 狼队共享记忆必须使用 `wolf_team:{team_hash}`，不能使用单个狼人 `player_id` 代替。
+- `team_hash` 由本局狼队 player_id 排序后哈希生成，避免 key 暴露完整狼队列表。
+- 所有 JSON value 必须包含 `schema_version`，便于后续迁移。
+- 默认 TTL 为 7 天；对局结束后可延长或转存，当前阶段不做 PostgreSQL 落库。
+
+### 6.4 MemoryStore 接口
+
+新增抽象接口，业务只依赖接口，不直接依赖 Redis SDK。
+
+```python
+class MemoryStore(Protocol):
+    def get_day_summaries(self, game_id: str) -> list[DaySummary]: ...
+    def save_day_summary(self, summary: DaySummary) -> None: ...
+    def get_recent_events(self, game_id: str) -> list[MemoryEvent]: ...
+    def append_recent_event(self, game_id: str, event: MemoryEvent) -> None: ...
+    def get_player_suspicion(self, game_id: str, player_id: str) -> PlayerSuspicionMemory | None: ...
+    def save_player_suspicion(self, memory: PlayerSuspicionMemory) -> None: ...
+    def get_private_role_memory(self, game_id: str, player_id: str) -> PrivateRoleMemory | None: ...
+    def save_private_role_memory(self, memory: PrivateRoleMemory) -> None: ...
+    def append_decision_trace(self, trace: DecisionTrace) -> None: ...
+```
+
+实现要求：
+
+- `RedisMemoryStore` 完成真实读写。
+- `PostgresMemoryStore` 当前是空实现，方法返回空列表、`None` 或直接 no-op。
+- `CompositeMemoryStore` 暂不需要；避免个人项目阶段复杂化。
+- 测试中优先使用 `FakeMemoryStore`，不要依赖真实 Redis。
+
+### 6.5 RawEventLog
 
 保留完整事件，不再作为默认 prompt 输入。
 
@@ -379,7 +471,7 @@ MemoryWriteBack
 - 质量评估。
 - prompt trace 排查。
 
-### 6.3 DaySummary
+### 6.6 DaySummary
 
 每天结束后生成一次公开摘要。
 
@@ -418,7 +510,7 @@ MemoryWriteBack
 - 不包含预言家私有查验结果，除非该结果已经被公开发言表达。
 - 摘要必须短，优先保留身份声明、冲突、共边、投票、死亡、低信息玩家。
 
-### 6.4 PlayerSuspicionMemory
+### 6.7 PlayerSuspicionMemory
 
 每个 AI 玩家维护一份私有怀疑链。
 
@@ -450,7 +542,7 @@ MemoryWriteBack
 - 旧证据超过 2 天未被新事实支撑时降低权重。
 - 被公开证伪的信息必须降权或删除。
 
-### 6.5 PrivateRoleMemory
+### 6.8 PrivateRoleMemory
 
 继续沿用现有 `PlayerPrivateInfo`，但在 prompt 中应结构化展示。
 
@@ -667,6 +759,50 @@ class PlayerDecisionGraphState(TypedDict, total=False):
     error: str | None
 ```
 
+### 10.4 MemoryStoreConfig
+
+```python
+class MemoryBackend(str, Enum):
+    REDIS = "redis"
+    POSTGRES = "postgres"
+
+
+class MemoryStoreConfig(BaseModel):
+    backend: MemoryBackend = MemoryBackend.REDIS
+    key_prefix: str = "aiw:memory"
+    ttl_seconds: int = 604800
+    postgres_enabled: bool = False
+```
+
+当前约束：
+
+- `backend=redis` 是默认且唯一真实可用策略。
+- `backend=postgres` 可以被配置对象识别，但当前只返回 `PostgresMemoryStore` 空实现。
+- 如果误配为 PostgreSQL，系统应记录 warning，并返回空记忆上下文，不能影响对局推进。
+
+### 10.5 RedisMemoryEnvelope
+
+所有写入 Redis 的 JSON 外层统一包一层 envelope。
+
+```python
+class RedisMemoryEnvelope(BaseModel):
+    schema_version: int = 1
+    game_id: str
+    visibility: Literal["global", "player", "role_private", "wolf_team", "trace"]
+    owner_id: str | None
+    payload_type: str
+    payload: dict
+    created_at: datetime
+    updated_at: datetime
+```
+
+字段说明：
+
+- `visibility=global` 时 `owner_id` 必须为 `None`。
+- `visibility=player` 或 `role_private` 时 `owner_id` 必须是 `player_id`。
+- `visibility=wolf_team` 时 `owner_id` 必须是 `team_hash`。
+- `payload_type` 用于区分 `day_summary`、`suspicion_memory`、`private_role_memory`、`decision_trace`。
+
 ---
 
 ## 11. 迭代计划
@@ -678,12 +814,19 @@ class PlayerDecisionGraphState(TypedDict, total=False):
 - 新增 `MemoryContextBuilder`。
 - 新增 `DaySummary` 数据结构。
 - 新增 `PlayerSuspicionMemory` 数据结构。
+- 新增 `MemoryStore` 抽象接口。
+- 实现 `RedisMemoryStore`，作为当前默认真实存储。
+- 实现 `PostgresMemoryStore` 空实现，保留后续迁移接口。
+- 明确 Redis key 前缀、可见性范围和 TTL。
 - 将 `build_game_context()` 的纯字符串输出升级为可组合上下文。
 
 验收：
 
 - 第 3 天以后，prompt 不再包含第 1 天完整逐字发言。
 - `DaySummary` 能准确列出冲突、共边、低信息玩家和投票结果。
+- Redis 中全局摘要和玩家私有记忆 key 明确分离。
+- PostgreSQL 空实现不会写入真实数据，也不会阻塞对局流程。
+- 读取某个 AI 的 prompt 上下文时，不会读取其他玩家的 `player:{player_id}` 私有 key。
 
 ### M2：白天发言接入决策图
 
