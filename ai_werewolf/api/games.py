@@ -82,13 +82,9 @@ _orchestrator = PhaseOrchestrator(_model_registry, _role_registry, _role_model_b
 
 
 async def synthesize_tts_audio(text: str, voice: str | None = None) -> bytes:
-    """Generate TTS audio through the configured MiniMax backend."""
+    """Generate TTS audio. Uses Edge-TTS (free) to conserve MiniMax quota."""
     async with _tts_generation_lock:
-        try:
-            return await synthesize_with_minimax(text, voice_id=voice)
-        except MiniMaxTtsError:
-            logger.exception("MiniMax TTS failed; falling back to edge-tts")
-            return await synthesize_with_edge_tts(text)
+        return await synthesize_with_edge_tts(text)
 
 
 async def synthesize_with_edge_tts(text: str, voice: str = "zh-CN-YunxiNeural") -> bytes:

@@ -38,6 +38,7 @@ class CouncilState(TypedDict, total=False):
     round_id: str  # e.g. "night_2"
     participants: list[str]  # wolf player_ids
     candidates: list[str]  # valid kill targets (non-wolves, alive)
+    candidate_labels: dict[str, str]  # candidate display labels (ID -> "X号 Name")
     game_context: str  # compressed game context for prompts
     proposals: Annotated[list[dict], operator.add]  # each wolf's Proposal as dict
     votes: Annotated[list[dict], operator.add]  # each wolf's vote (target_id only)
@@ -59,6 +60,7 @@ def empty_council_state(
     round_id: str,
     participants: list[str],
     candidates: list[str],
+    candidate_labels: dict[str, str] | None = None,
     game_context: str = "",
 ) -> CouncilState:
     """Return a blank ``CouncilState`` ready to be fed into the graph."""
@@ -67,6 +69,7 @@ def empty_council_state(
         round_id=round_id,
         participants=participants,
         candidates=candidates,
+        candidate_labels=candidate_labels or {},
         game_context=game_context,
         proposals=[],
         votes=[],

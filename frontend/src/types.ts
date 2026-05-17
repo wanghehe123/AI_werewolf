@@ -136,6 +136,12 @@ export interface PlayerActionOptionDto {
     player_id: string;
     label: string;
   }>;
+  night_kill_info?: {
+    target_id: string;
+    target_label: string;
+    can_save: boolean;
+    reason?: string;
+  };
 }
 
 export interface GameStateDto {

@@ -453,7 +453,23 @@ class OpenAICompatibleProvider:
                     )
 
             # 解析响应为结构化决策
-            return self._parse_response(content)
+            parsed = self._parse_response(content)
+
+            # ---- 全链路诊断：标记 speech 为空的情况 ----
+            speech_val = parsed.get("speech") if isinstance(parsed, dict) else None
+            action_val = parsed.get("action_type") if isinstance(parsed, dict) else None
+            if isinstance(speech_val, str) and not speech_val.strip() and action_val:
+                # speech 为空但 JSON 合法 —— 这是后续 "空发言 fallback" 的来源
+                logger.info(
+                    "[PROVIDER_PARSE] provider=%s model=%s JSON解析成功但speech为空 "
+                    "action_type=%s target_id=%s raw_chars=%d raw_preview=%.200s",
+                    self.config.provider_id,
+                    self.config.model_name,
+                    action_val,
+                    parsed.get("target_id") if isinstance(parsed, dict) else "?",
+                    len(content), content[:200],
+                )
+            return parsed
 
         except Exception:
             # 捕获所有异常（网络错误、API 错误、解析错误等）

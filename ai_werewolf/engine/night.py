@@ -89,6 +89,77 @@ class NightResolver:
 
         return events
 
+    def resolve_pre_witch(self, session: GameSession, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Run wolf/seer/guard steps only.  Store wolf kill target in session.
+
+        Used for the two-step night when the human player is a witch.
+        """
+        session.night_actions.clear()
+        context = build_game_context(session)
+        events: list[dict[str, Any]] = []
+
+        # 1. Wolf kill
+        if self._has_alive_role(session, {"werewolf"}):
+            events.append(event("night_step_started", "狼人开始行动。", step="werewolf"))
+        wolf_target_id = self._collect_wolf_kill(session, context, human_action)
+        if self._has_alive_role(session, {"werewolf"}):
+            events.append(event("night_step_finished", "狼人行动完成。", step="werewolf"))
+
+        # 2. Seer check
+        if self._has_alive_role(session, {"seer"}):
+            events.append(event("night_step_started", "预言家开始行动。", step="seer"))
+        events.extend(self._collect_seer_check(session, context, human_action))
+        if self._has_alive_role(session, {"seer"}):
+            events.append(event("night_step_finished", "预言家行动完成。", step="seer"))
+
+        # 3. Guard protect
+        if self._has_alive_role(session, {"guard", "guardian"}):
+            events.append(event("night_step_started", "守卫开始行动。", step="guard"))
+        guard_target_id = self._collect_guard(session, context, human_action)
+        if self._has_alive_role(session, {"guard", "guardian"}):
+            events.append(event("night_step_finished", "守卫行动完成。", step="guard"))
+
+        # Cache wolf kill target and guard target for the witch step
+        session.night_pending_kill_target_id = wolf_target_id
+        session.night_pending_guard_target_id = guard_target_id
+
+        return events
+
+    def resolve_witch_step(self, session: GameSession, human_action: dict[str, Any]) -> list[dict[str, Any]]:
+        """Run witch step and resolve deaths.  Uses cached wolf kill target.
+
+        Called after resolve_pre_witch() when the human witch submits their action.
+        """
+        wolf_target_id = session.night_pending_kill_target_id
+        guard_target_id = getattr(session, "night_pending_guard_target_id", None)
+        context = build_game_context(session)
+        events: list[dict[str, Any]] = []
+
+        # 4. Witch decision
+        if self._has_alive_role(session, {"witch"}):
+            events.append(event("night_step_started", "女巫开始行动。", step="witch"))
+        witch_poison_target = self._collect_witch(session, context, wolf_target_id, human_action)
+        if self._has_alive_role(session, {"witch"}):
+            events.append(event("night_step_finished", "女巫行动完成。", step="witch"))
+
+        # 5. Resolve deaths
+        deaths = self._resolve_deaths(session, wolf_target_id, guard_target_id, witch_poison_target)
+
+        # 6. Record deaths and set phase
+        session.state.phase = GamePhase.DAY_ANNOUNCEMENT
+        events.append(event("phase_changed", "天亮了，所有玩家睁眼。"))
+        if deaths:
+            death_names = [player_label(pid, session) for pid in deaths]
+            events.append(event("night_result", f"昨夜，玩家{', '.join(death_names)} 出局。"))
+        else:
+            events.append(event("night_result", "昨夜平安夜，没有玩家出局。"))
+
+        # Clean up
+        session.night_pending_kill_target_id = None
+        session.night_pending_guard_target_id = None
+
+        return events
+
     def _collect_wolf_kill(self, session: GameSession, context: str, human_action: dict[str, Any] | None = None) -> str | None:
         """Ask wolf AI(s) to choose a kill target.
 
@@ -97,16 +168,38 @@ class NightResolver:
         single AI wolf (or when the council times out) the original
         single-wolf path is used as fallback.
         """
+        # ================================================================
+        # Step 1: 获取所有存活狼人（含人类狼人）
+        # ================================================================
         alive_wolves = [p for p in session.state.players if p.alive and p.role_key == "werewolf"]
         if not alive_wolves:
+            logger.info("[COLLECT_WOLF_KILL] day=%s 无存活狼人，跳过刀人阶段", session.state.day_count)
             return None
 
-        # --- Handle human wolf action (unchanged) ---
+        wolf_labels = {w.player_id: player_label(w.player_id, session) for w in alive_wolves}
+        wolf_is_human_flags = {w.player_id: w.is_human for w in alive_wolves}
+        logger.info(
+            "[COLLECT_WOLF_KILL] day=%s 存活狼人数量=%d: %s",
+            session.state.day_count,
+            len(alive_wolves),
+            {player_label: f"human={wolf_is_human_flags[pid]}" for pid, player_label in wolf_labels.items()},
+        )
+
+        # ================================================================
+        # Step 2: 处理人类狼人的行动（如果有）
+        # ================================================================
         human_target = self._human_night_target(session, human_action, "werewolf", {"wolf_kill"})
-        human_wolf_id = None
         if human_target:
+            logger.info(
+                "[COLLECT_WOLF_KILL] day=%s 检测到人类狼人行动 target_raw=%s",
+                session.state.day_count, human_target,
+            )
             target_id = self._validate_target(human_target, session, exclude_wolves=True)
             if target_id:
+                logger.info(
+                    "[COLLECT_WOLF_KILL] day=%s 人类狼人目标验证通过 target=%s (%s)",
+                    session.state.day_count, target_id, player_label(target_id, session),
+                )
                 human_wolf_id = session.human_player_id
                 session.night_actions.append({
                     "actor_player_id": human_wolf_id,
@@ -122,31 +215,68 @@ class NightResolver:
                     source="human",
                     decision=human_action,
                 )
-                # If this is the only wolf, we are done.
+                # 如果人类是唯一的狼人，直接返回
                 if len(alive_wolves) <= 1:
+                    logger.info(
+                        "[COLLECT_WOLF_KILL] day=%s 人类是唯一狼人，直接返回 target=%s",
+                        session.state.day_count, target_id,
+                    )
                     return target_id
-                # Otherwise fall through -- the human target is injected as a
-                # proposal in the council so AI wolves can consider it.
+                # 多狼场景：将人类提议注入议会，让AI狼人投票时参考
                 human_proposal = {
                     "wolf_id": human_wolf_id,
                     "target_id": target_id,
                     "reason": "人类狼人选定",
                     "risk": 3,
                 }
-                # Rebuild alive_ai_wolves without the human
+                # 从 alive_wolves 中排除人类狼人，得到纯AI狼人列表
                 alive_ai_wolves = [w for w in alive_wolves if not w.is_human]
+                logger.info(
+                    "[COLLECT_WOLF_KILL] day=%s 人类狼人+AI狼人=%d人，将人类提议注入议会 AI狼人=%s",
+                    session.state.day_count,
+                    len(alive_wolves),
+                    [player_label(w.player_id, session) for w in alive_ai_wolves],
+                )
                 return self._run_council_or_fallback(
                     session, context, alive_ai_wolves, human_proposal=human_proposal,
                 )
+            else:
+                logger.warning(
+                    "[COLLECT_WOLF_KILL] day=%s 人类狼人目标验证失败 target_raw=%s，跳过人类行动",
+                    session.state.day_count, human_target,
+                )
+        else:
+            logger.info(
+                "[COLLECT_WOLF_KILL] day=%s 无人类狼人行动（human_action=%s）",
+                session.state.day_count,
+                human_action.get("action_type") if human_action else "None",
+            )
 
-        # --- Identify AI wolves ---
+        # ================================================================
+        # Step 3: 筛选纯AI狼人，选择执行路径
+        # ================================================================
+        # 注意：此处重新计算 alive_ai_wolves ——
+        # 如果上面人类狼人提交了行动但目标验证失败，代码会落到这里，
+        # 此时 alive_ai_wolves 需要包含所有AI狼人（人类狼人的行动被忽略）
         alive_ai_wolves = [w for w in alive_wolves if not w.is_human]
 
-        # Single AI wolf (no human wolf or human didn't act) -> original path
         if len(alive_ai_wolves) <= 1:
+            # 路径A: 单AI狼人 → 直接调用 _single_wolf_kill（原逻辑）
+            logger.info(
+                "[COLLECT_WOLF_KILL] day=%s AI狼人数量=%d（≤1），走单狼路径 _single_wolf_kill AI狼人=%s",
+                session.state.day_count,
+                len(alive_ai_wolves),
+                [player_label(w.player_id, session) for w in alive_ai_wolves],
+            )
             return self._single_wolf_kill(session, context, alive_ai_wolves)
 
-        # Multi-wolf council
+        # 路径B: 多AI狼人 → 走狼人议会（LangGraph council）
+        logger.info(
+            "[COLLECT_WOLF_KILL] day=%s AI狼人数量=%d（≥2），走议会路径 _run_council_or_fallback AI狼人=%s",
+            session.state.day_count,
+            len(alive_ai_wolves),
+            [player_label(w.player_id, session) for w in alive_ai_wolves],
+        )
         return self._run_council_or_fallback(session, context, alive_ai_wolves)
 
     def _single_wolf_kill(
@@ -188,16 +318,84 @@ class NightResolver:
         *,
         human_proposal: dict[str, Any] | None = None,
     ) -> str | None:
-        """Run the werewolf council graph.  Falls back to single-wolf on error."""
+        """Run the werewolf council graph.  Falls back to single-wolf on error.
+
+        关键反偏见措施：
+        1. candidate_labels 将原始 player_id（如 "human", UUID）映射为可读标签（如 "1号 你", "2号 小灰"）
+           —— 防止 LLM 对裸 "human" 字符串产生强烈偏好
+        2. random.shuffle(candidates) 打乱候选顺序
+           —— 防止 LLM 对列表第一位的位置偏见（positional bias）
+        """
+        # ================================================================
+        # Step 1: 收集候选目标（存活非狼人玩家）
+        # ================================================================
         candidates = [
             p.player_id for p in session.state.players
             if p.alive and p.role_key != "werewolf"
         ]
         if not candidates:
+            logger.info("[WOLF_COUNCIL] day=%s 无可选目标（所有存活玩家都是狼人），返回None", session.state.day_count)
             return None
 
-        participants = [w.player_id for w in ai_wolves]
+        logger.info(
+            "[WOLF_COUNCIL] day=%s 候选目标数量=%d 原始顺序=%s",
+            session.state.day_count,
+            len(candidates),
+            [player_label(pid, session) for pid in candidates],
+        )
 
+        # ================================================================
+        # Step 2: 构建 display labels —— 核心防偏见机制
+        # ================================================================
+        # 将原始 player_id 映射为 "X号 名称" 格式的标签
+        # 这对于防止 LLM 偏见至关重要：裸 "human" 字符串在语义上过于显眼
+        candidate_labels = {pid: player_label(pid, session) for pid in candidates}
+        # 狼人本身也需要标签（在议会提示词中显示"你的狼队友：2号 小明"）
+        wolf_ids = [w.player_id for w in ai_wolves]
+        for wid in wolf_ids:
+            candidate_labels[wid] = player_label(wid, session)
+
+        logger.info(
+            "[WOLF_COUNCIL] day=%s candidate_labels: 目标=%s 狼人=%s",
+            session.state.day_count,
+            {pid: candidate_labels[pid] for pid in candidates},  # 仅目标，不含狼人
+            {wid: candidate_labels[wid] for wid in wolf_ids},    # 狼人标签
+        )
+
+        # ================================================================
+        # Step 3: Shuffle 候选列表 —— 防位置偏见
+        # ================================================================
+        # LLM 对列表第一个元素有天然偏好（primacy bias）
+        # 不 shuffle 会导致每次都倾向于刀第一个候选（通常是座次最小的玩家）
+        candidates_before = candidates.copy()  # 保存一份用于对比日志
+        random.shuffle(candidates)
+
+        logger.info(
+            "[WOLF_COUNCIL] day=%s shuffle后候选顺序=%s (之前=%s)",
+            session.state.day_count,
+            [player_label(pid, session) for pid in candidates],
+            [player_label(pid, session) for pid in candidates_before],
+        )
+
+        # ================================================================
+        # Step 4: 调用狼人议会图
+        # ================================================================
+        participants = wolf_ids
+        round_id = f"night_{session.state.day_count}"
+        # 上下文截断至最后500字符——控制提示词长度，LLM只需要近期事件
+        truncated_context = context[-500:] if context else ""
+
+        logger.info(
+            "[WOLF_COUNCIL] day=%s 即将调用狼人议会 participants=%s candidates=%s human_proposal=%s context_len=%d timeout=45s",
+            session.state.day_count,
+            [player_label(pid, session) for pid in participants],
+            [player_label(pid, session) for pid in candidates],
+            bool(human_proposal),
+            len(truncated_context),
+        )
+
+        # ---- 构造 decider_factory ----
+        # 每个狼人调用 LLM 时需要自己的 PlayerDecider 实例
         def decider_factory(wolf_id: str) -> PlayerDecider:
             player = session.state.player_by_id(wolf_id)
             provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
@@ -206,29 +404,85 @@ class NightResolver:
         try:
             result = run_werewolf_council(
                 game_id=session.state.game_id,
-                round_id=f"night_{session.state.day_count}",
+                round_id=round_id,
                 participants=participants,
                 candidates=candidates,
+                candidate_labels=candidate_labels,
                 decider_factory=decider_factory,
-                game_context=context[-500:] if context else "",
+                game_context=truncated_context,
                 human_proposal=human_proposal,
                 timeout_s=45.0,
             )
         except Exception:
-            logger.exception("Werewolf council failed, falling back to single-wolf path")
+            logger.exception(
+                "[WOLF_COUNCIL] day=%s 狼人议会异常，回退到单狼路径 _single_wolf_kill",
+                session.state.day_count,
+            )
             return self._single_wolf_kill(session, context, ai_wolves)
 
-        target_id = result.get("decision")
+        # ================================================================
+        # Step 5: 解析并验证议会结果
+        # ================================================================
+        raw_decision = result.get("decision")
+        tally = result.get("tally", {})
+        rationale = result.get("rationale", "")
+        council_error = result.get("error")
+
+        logger.info(
+            "[WOLF_COUNCIL] day=%s 议会结果: decision=%s rationale=%s tally=%s error=%s proposals=%d votes=%d",
+            session.state.day_count,
+            raw_decision,
+            rationale,
+            tally,
+            council_error,
+            len(result.get("proposals", [])),
+            len(result.get("votes", [])),
+        )
+
+        # 记录每个狼人的提案和投票详情（调试用）
+        for p in result.get("proposals", []):
+            logger.info(
+                "[WOLF_COUNCIL] day=%s 提案: wolf=%s target=%s risk=%s reason=%s",
+                session.state.day_count,
+                player_label(p.get("wolf_id", "?"), session),
+                player_label(p.get("target_id", "?"), session) if p.get("target_id") else "None",
+                p.get("risk", "?"),
+                p.get("reason", "")[:60],
+            )
+        for v in result.get("votes", []):
+            logger.info(
+                "[WOLF_COUNCIL] day=%s 投票: wolf=%s target=%s",
+                session.state.day_count,
+                player_label(v.get("wolf_id", "?"), session),
+                player_label(v.get("target_id", "?"), session) if v.get("target_id") else "None",
+            )
+
+        # ---- 验证目标合法性 ----
+        target_id = raw_decision
         if target_id:
             target_id = self._validate_target(target_id, session, exclude_wolves=True)
+            if target_id != raw_decision:
+                logger.warning(
+                    "[WOLF_COUNCIL] day=%s _validate_target 修改了目标: %s → %s",
+                    session.state.day_count, raw_decision, target_id,
+                )
 
         if not target_id:
-            # Council failed to produce a valid target -> fallback
+            logger.warning(
+                "[WOLF_COUNCIL] day=%s 议会未能产生有效目标（decision=%s），回退到 _single_wolf_kill",
+                session.state.day_count, raw_decision,
+            )
             return self._single_wolf_kill(session, context, ai_wolves)
 
-        # Record the kill action (attribute to first AI wolf as representative)
+        # ================================================================
+        # Step 6: 记录行动并返回
+        # ================================================================
         actor_id = participants[0]
-        rationale = result.get("rationale", "")
+        logger.info(
+            "[WOLF_COUNCIL] day=%s 最终刀人目标: %s (%s), tally=%s source=ai_council",
+            session.state.day_count, target_id, player_label(target_id, session), tally,
+        )
+
         session.night_actions.append({
             "actor_player_id": actor_id,
             "action_type": "wolf_kill",
@@ -242,7 +496,7 @@ class NightResolver:
             target_id=target_id,
             source="ai_council",
             decision={"action_type": "wolf_kill", "target_id": target_id, "rationale": rationale},
-            metadata={"council": True, "tally": result.get("tally", {})},
+            metadata={"council": True, "tally": tally},
         )
         return target_id
 
@@ -612,6 +866,17 @@ class NightResolver:
             decider = PlayerDecider(provider)
             record_prompt_trace(session, player_id, "night_action", prompt)
             decision = decider.decide(prompt)
+
+            # ---- 全链路诊断：标记空发言决策 ----
+            if not decision.speech.strip():
+                logger.info(
+                    "[NIGHT_DECISION_EMPTY_SPEECH] player=%s(%s) role=%s action=%s target=%s "
+                    "day=%s -- 上层日志 [DECIDER_EMPTY_SPEECH] 和 [PROVIDER_PARSE] 应已记录详情",
+                    player_label(player_id, session), player_id[:8],
+                    player.role_key, decision.action_type, decision.target_id,
+                    session.state.day_count,
+                )
+
             log_player_action(
                 session,
                 actor_id=player_id,

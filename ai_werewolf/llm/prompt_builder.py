@@ -43,6 +43,7 @@ def build_player_prompt(
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
+    self_label: str = "",
 ) -> str:
     """
     构建 AI 玩家的完整 Prompt（基于通用提示词规范）
@@ -95,10 +96,14 @@ def build_player_prompt(
     ]
 
     # ---- 人物设定 ----
-    parts.extend([
+    identity_lines = [
         "=" * 40,
         "【人物设定】",
         "=" * 40,
+    ]
+    if self_label:
+        identity_lines.append(f"你的座位号：{self_label}")
+    identity_lines.extend([
         f"玩家名称：{agent.name}",
         f"性格特点：{agent.persona}",
         f"发言风格：{agent.speech_style}",
@@ -110,6 +115,7 @@ def build_player_prompt(
         f"记忆风格：{agent.memory_style}",
         "",
     ])
+    parts.extend(identity_lines)
 
     # ---- 身份信息 ----
     camp_name = "好人阵营" if camp == "good" else "狼人阵营"
@@ -275,6 +281,7 @@ def build_speech_prompt(
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     speech_progress: str = "",
+    self_label: str = "",
 ) -> str:
     """
     构建白天发言阶段的 Prompt
@@ -301,12 +308,22 @@ def build_speech_prompt(
     """
     action_hint = (
         "现在是白天发言阶段。请发表你的观点和判断。\n"
+        "你的性格和发言风格已经在人物设定中指定，请务必按照你的性格说话。\n"
+        "\n"
         "你可以：\n"
         "1. 表明自己的立场和身份判断\n"
         "2. 分析其他玩家的发言，指出谁像好人谁像狼人\n"
         "3. 质疑或辩护特定玩家\n"
         "4. 给出投票建议\n"
         "5. 必要时说明自己是否要跳身份\n"
+        "\n"
+        "【重要：避免复读机式发言】\n"
+        "- 不要重复前面玩家已经说过的相同逻辑和分析。\n"
+        "- 你的发言应该提供新的视角或补充，而不是换句话重述别人的内容。\n"
+        "- 如果你认同前人的观点，只需要简短提及「我同意X号的部分分析」，然后补充你自己的新发现。\n"
+        "- 如果你反对前人的观点，明确指出他们逻辑中的具体问题，而不是泛泛而谈「我觉得X号像狼」。\n"
+        "- 引用具体的发言细节和玩家编号来支撑你的论点。\n"
+        "- 发言控制在100-200字左右，不要太过冗长。\n"
         "发言要：有明确立场、有逻辑依据、有身份视角、不贴脸、不场外。"
     )
     # Inject speech progress into game_context if provided
@@ -328,6 +345,7 @@ def build_speech_prompt(
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
+        self_label=self_label,
     )
 
 
@@ -344,6 +362,7 @@ def build_vote_prompt(
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
+    self_label: str = "",
 ) -> str:
     """
     构建投票阶段的 Prompt
@@ -389,6 +408,7 @@ def build_vote_prompt(
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
+        self_label=self_label,
     )
 
 
@@ -404,6 +424,7 @@ def build_last_words_prompt(
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
+    self_label: str = "",
 ) -> str:
     """
     构建遗言阶段的 Prompt。
@@ -432,6 +453,7 @@ def build_last_words_prompt(
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
+        self_label=self_label,
     )
 
 
@@ -448,6 +470,7 @@ def build_night_action_prompt(
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
+    self_label: str = "",
 ) -> str:
     """
     构建夜晚行动阶段的 Prompt
@@ -497,6 +520,7 @@ def build_night_action_prompt(
         player_references=player_references,
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
+        self_label=self_label,
     )
 
 

@@ -45,16 +45,20 @@ def make_isolated_prompt(
     see other wolves' private thoughts.  This ensures the LLM call is
     "isolated" -- each wolf reasons independently.
     """
-    candidates_str = ", ".join(state.get("candidates", []))
+    candidates = state.get("candidates", [])
+    labels = state.get("candidate_labels", {})
+    candidates_str = ", ".join(labels.get(c, c) for c in candidates)
+
     participants = state.get("participants", [])
     game_context = state.get("game_context", "")
     round_id = state.get("round_id", "night_1")
 
-    other_wolves = [w for w in participants if w != wolf_id]
+    other_wolves = [labels.get(w, w) for w in participants if w != wolf_id]
     other_str = ", ".join(other_wolves) if other_wolves else "无"
+    wolf_label = labels.get(wolf_id, wolf_id)
 
     parts = [
-        f"你是狼人 {wolf_id}，现在是夜晚狼队讨论时间（{round_id}）。",
+        f"你是狼人 {wolf_label}，现在是夜晚狼队讨论时间（{round_id}）。",
         f"你的狼队友：{other_str}",
         f"可选击杀目标：{candidates_str}",
     ]
@@ -113,7 +117,7 @@ def call_llm_for_proposal(
         extra_instructions=(
             "请选择你要击杀的目标，并给出理由和风险评估（1=最安全，5=最危险）。\n"
             '输出 JSON 格式：{"target_id": "xxx", "reason": "理由", "risk": 3}\n'
-            "target_id 必须是以下之一：" + ", ".join(candidates)
+            "target_id 必须是以下之一（需要填入原始ID，不是显示名称）：" + ", ".join(candidates)
         ),
     )
 
@@ -166,13 +170,14 @@ def call_llm_for_vote(
             "target_id": fallback_target(candidates),
         }
 
+    labels = state.get("candidate_labels", {})
     prompt = make_isolated_prompt(
         wolf_id,
         state,
         extra_instructions=(
             "以下是各狼队友的击杀提案：\n"
             + "\n".join(
-                f"- 狼人 {p['wolf_id']}：击杀 {p['target_id']}（理由：{p.get('reason', '无')}，风险：{p.get('risk', '?')}）"
+                f"- 狼人 {labels.get(p['wolf_id'], p['wolf_id'])}：击杀 {labels.get(p['target_id'], p['target_id'])}（理由：{p.get('reason', '无')}，风险：{p.get('risk', '?')}）"
                 for p in proposals
             )
             + "\n\n请投票选择你认为最佳的击杀目标。\n"

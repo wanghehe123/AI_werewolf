@@ -71,6 +71,8 @@ class PhaseOrchestrator:
 
         if state.phase == GamePhase.SETUP and action_type == "start_game":
             self._start_game(session)
+        elif state.phase == GamePhase.NIGHT and action_type == "night_start":
+            self._resolve_night_pre_witch(session, action)
         elif state.phase == GamePhase.NIGHT and action_type in {"skip", "wolf_kill", "seer_check", "guard", "witch_save", "witch_poison", "no_action"}:
             self._resolve_night(session, action)
         elif state.phase == GamePhase.DAY_ANNOUNCEMENT and action_type == "continue":
@@ -93,6 +95,12 @@ class PhaseOrchestrator:
         session.append_public_event("phase_changed", "夜幕降临，所有玩家闭眼。")
 
     def _resolve_night(self, session: GameSession, action: dict | None = None) -> None:
+        # Two-step witch night: if human is witch and kill target is cached, run witch step only
+        human = self._human_player(session)
+        if human and human.alive and human.role_key == "witch" and session.night_pending_kill_target_id is not None:
+            self._resolve_night_witch_step(session, action)
+            return
+
         events = self.night.resolve(session, human_action=action)
         for public_event in events:
             self._append_event_dict(session, public_event)
@@ -101,6 +109,53 @@ class PhaseOrchestrator:
             # night-step announcements play sequentially as each action
             # completes rather than all at once when day breaks.
             time.sleep(0.5)
+
+        # Check if any dead player is a hunter (can shoot on night kill)
+        for player in session.state.players:
+            if not player.alive and player.role_key == "hunter":
+                info = session.private_infos.get(player.player_id, PlayerPrivateInfo())
+                if info.hunter_can_shoot:
+                    shoot_events = self.hunter.try_shoot(session, player.player_id, death_cause="night_kill")
+                    for public_event in shoot_events:
+                        self._append_event_dict(session, public_event)
+
+        # Check win after night + hunter shoot
+        winner = evaluate_winner(session.state, self.role_registry)
+        if winner is not None:
+            self._end_game(session, winner)
+
+    def _resolve_night_pre_witch(self, session: GameSession, action: dict) -> None:
+        """First step of two-step witch night: run wolf/seer/guard, cache kill target."""
+        events = self.night.resolve_pre_witch(session, human_action=action)
+        for public_event in events:
+            self._append_event_dict(session, public_event)
+            time.sleep(0.3)
+
+        # Send private info to the human witch about who was killed
+        kill_target_id = session.night_pending_kill_target_id
+        if kill_target_id:
+            kill_label = player_label(kill_target_id, session)
+            from ai_werewolf.domain.game_state import PlayerPrivateInfo
+            witch_info = session.private_infos.get(session.human_player_id, PlayerPrivateInfo())
+            can_save_self = session.state.day_count == 1
+            if kill_target_id == session.human_player_id and not can_save_self:
+                msg = f"今晚 {kill_label} 被狼人击杀（你不能自救）。"
+            else:
+                msg = f"今晚 {kill_label} 被狼人击杀。"
+            session.publish_stream_event(
+                "private_info",
+                {"message": msg, "kill_target_id": kill_target_id, "kill_target_label": kill_label},
+                actor_id=None,
+                target_id=session.human_player_id,
+                visibility="self",
+            )
+
+    def _resolve_night_witch_step(self, session: GameSession, action: dict) -> None:
+        """Second step of two-step witch night: apply witch action and resolve deaths."""
+        events = self.night.resolve_witch_step(session, human_action=action)
+        for public_event in events:
+            self._append_event_dict(session, public_event)
+            time.sleep(0.3)
 
         # Check if any dead player is a hunter (can shoot on night kill)
         for player in session.state.players:
@@ -423,6 +478,7 @@ class PhaseOrchestrator:
             "witch_save",
             "witch_poison",
             "no_action",
+            "night_start",
             "speech",
             "vote",
             "abstain",

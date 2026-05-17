@@ -108,8 +108,14 @@ class PlayerDecider:
             return self._build_fallback(raw_decision)
 
         # 空发言虽然能通过部分 schema，但对外不可展示，这里统一走 speak 兜底。
+        # 触发条件：JSON 合法 + action_type != "speak" + speech 为空或纯空格
+        # （action_type="speak" 会被 Pydantic validator 拦截掉，不会到这里）
         if not decision.speech.strip():
-            logger.warning("LLM 返回空发言，使用默认 speak fallback: %s", raw_decision)
+            logger.warning(
+                "[DECIDER_EMPTY_SPEECH] LLM 返回空发言，使用默认 speak fallback "
+                "action_type=%s target_id=%s raw=%s",
+                decision.action_type, decision.target_id, raw_decision,
+            )
             return self._build_default_speak_fallback(raw_decision)
 
         # 安全校验：检查发言是否包含禁止术语
@@ -169,7 +175,10 @@ class PlayerDecider:
     # ------------------------------------------------------------------
 
     def _decide_via_chain(self, prompt: str) -> PlayerDecision:
-        """Use the ProviderChain to get a decision, then validate and filter."""
+        """Use the ProviderChain to get a decision, then validate and filter.
+
+        与单 provider 路径（decide()）一致，包含空发言检查和安全性校验。
+        """
         assert self._chain is not None  # guaranteed by caller
         try:
             chain_result = asyncio.run(self._chain.decide(prompt))
@@ -190,6 +199,15 @@ class PlayerDecider:
         except Exception:
             logger.warning("Chain decision parse failed, using fallback: %s", raw_decision)
             return self._build_fallback(raw_decision)
+
+        # 空发言检查 —— 与 decide() 保持一致
+        if not decision.speech.strip():
+            logger.warning(
+                "[DECIDER_EMPTY_SPEECH] Chain路径返回空发言，使用默认 speak fallback "
+                "action_type=%s target_id=%s raw=%s",
+                decision.action_type, decision.target_id, raw_decision,
+            )
+            return self._build_default_speak_fallback(raw_decision)
 
         if not is_safe_speech(decision.speech):
             logger.warning("不安全的发言被过滤: %s", decision.speech[:100])

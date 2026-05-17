@@ -93,6 +93,65 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
             targets = [player for player in state.players if player.alive]
             return [_target_action("guard", "守护玩家", targets, session)]
         if human.role_key == "witch":
+            # Two-step night: if wolf kill target is cached, show witch-specific actions
+            if session is not None and session.night_pending_kill_target_id is not None:
+                kill_target_id = session.night_pending_kill_target_id
+                kill_label = player_label(kill_target_id, session)
+                poison_targets = [player for player in state.players if player.alive]
+                actions: list[dict[str, Any]] = []
+
+                # Save option (only if save potion available and someone was killed)
+                has_save = session.witch_has_save_potion
+                if has_save and kill_target_id:
+                    # Check self-save rule
+                    can_save_self = state.day_count == 1
+                    if kill_target_id == human.player_id and not can_save_self:
+                        actions.append({
+                            "action_type": "no_action",
+                            "label": "不使用药",
+                            "night_kill_info": {
+                                "target_id": kill_target_id,
+                                "target_label": kill_label,
+                                "can_save": False,
+                                "reason": "第一夜之后不能自救",
+                            },
+                        })
+                    else:
+                        actions.append({
+                            "action_type": "witch_save",
+                            "label": f"使用解药救活 {kill_label}",
+                            "requires_target": False,
+                            "night_kill_info": {
+                                "target_id": kill_target_id,
+                                "target_label": kill_label,
+                                "can_save": True,
+                            },
+                        })
+
+                # Poison option (only if poison available)
+                has_poison = session.witch_has_poison
+                if has_poison:
+                    actions.append(_target_action("witch_poison", "使用毒药", poison_targets, session))
+
+                # Always show no_action
+                if not any(a["action_type"] == "no_action" for a in actions):
+                    actions.append({"action_type": "no_action", "label": "不使用药"})
+
+                # Attach kill info to all actions for frontend display
+                for a in actions:
+                    if "night_kill_info" not in a:
+                        a["night_kill_info"] = {
+                            "target_id": kill_target_id,
+                            "target_label": kill_label,
+                            "can_save": has_save,
+                        }
+
+                return actions
+
+            # Step 1: wolf kill target not yet known — show "start night" trigger
+            if session is not None and session.night_pending_kill_target_id is None:
+                return [{"action_type": "night_start", "label": "开始夜晚"}]
+
             targets = [player for player in state.players if player.alive]
             return [
                 _target_action("witch_save", "使用解药", targets, session),

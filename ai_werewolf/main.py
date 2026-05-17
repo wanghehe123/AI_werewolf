@@ -156,20 +156,11 @@ def create_app() -> FastAPI:
         logger.warning("Redis 不可用，将使用内存模式（不支持多实例水平扩展）")
 
     # ---- LLM 模型初始化 ----
-    # 数据库后台配置优先；没有持久化配置时回退到 YAML。
+    # 始终从 YAML 加载配置（数据库配置已废弃）。
     try:
-        database_registry = _registry_from_database() if persistence_enabled() else None
-        if database_registry is not None:
-            registry, role_bindings, providers = database_registry
-            logger.info("LLM 配置从数据库加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
-        else:
-            # 从 YAML 加载配置（api_key 直接从 YAML 中读取，无需环境变量）
-            registry, role_bindings = build_registry_from_yaml()
-            providers = [registry.get(provider_id).config for provider_id in registry.all_provider_ids() if registry.get(provider_id) is not None]
-            logger.info("LLM 配置从 YAML 加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
-
-        # 为 DB 加载的 Provider 从 YAML 文件覆写 api_key（保证 api_key 永远从 YAML 读取）
-        _overlay_api_keys_from_yaml(providers)
+        registry, role_bindings = build_registry_from_yaml()
+        providers = [registry.get(provider_id).config for provider_id in registry.all_provider_ids() if registry.get(provider_id) is not None]
+        logger.info("LLM 配置从 YAML 加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
         configure_model_registry(registry, role_bindings)
         _log_missing_llm_keys(providers, role_bindings)
     except Exception:

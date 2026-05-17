@@ -252,6 +252,7 @@ def run_werewolf_council(
     participants: list[str],
     candidates: list[str],
     decider_factory: Callable[[str], Any],
+    candidate_labels: dict[str, str] | None = None,
     game_context: str = "",
     human_proposal: dict | None = None,
     timeout_s: float = 45.0,
@@ -284,6 +285,7 @@ def run_werewolf_council(
         round_id=round_id,
         participants=participants,
         candidates=candidates,
+        candidate_labels=candidate_labels or {},
         game_context=game_context,
     )
 

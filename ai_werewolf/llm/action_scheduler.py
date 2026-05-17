@@ -92,6 +92,7 @@ class AIActionScheduler:
         prompt_kind: PromptKind,
     ) -> AIActionRequest:
         references = self._player_references(state, agents)
+        self_label = references.get(player.player_id, f"{player.seat}号")
         private_info = format_private_info(
             private_infos.get(player.player_id, PlayerPrivateInfo()),
             role_key=player.role_key,
@@ -117,6 +118,7 @@ class AIActionScheduler:
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
+                self_label=self_label,
             )
         elif prompt_kind == "day_speech":
             prompt = build_speech_prompt(
@@ -131,6 +133,7 @@ class AIActionScheduler:
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
+                self_label=self_label,
             )
         elif prompt_kind == "exile_vote":
             prompt = build_vote_prompt(
@@ -146,6 +149,7 @@ class AIActionScheduler:
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
+                self_label=self_label,
             )
         else:
             prompt = build_last_words_prompt(
@@ -160,6 +164,7 @@ class AIActionScheduler:
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
+                self_label=self_label,
             )
 
         return AIActionRequest(

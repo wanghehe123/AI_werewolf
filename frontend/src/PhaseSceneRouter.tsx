@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { GameStateDto, SubmitActionInput } from "./types";
+import type { GameStateDto, PlayerActionOptionDto, SubmitActionInput } from "./types";
 
 interface PhaseSceneRouterProps {
   game: GameStateDto;
@@ -45,6 +45,37 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
   if (game.phase === "night") {
     if (!primaryAction) {
       return <ObserverScene kicker="NIGHT" title="夜晚行动" message={isAlive ? "等待其他玩家行动中..." : "你已出局，正在等待夜晚结算。"} />;
+    }
+
+    // Witch two-step night: step 1 — trigger wolf/seer/guard
+    if (primaryAction.action_type === "night_start") {
+      return (
+        <section className="p-6 rounded-xl border border-[var(--color-blue-night)] bg-[var(--color-warm-card)]">
+          <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">NIGHT</p>
+          <h2>夜晚行动</h2>
+          <p>你是女巫。夜晚降临，其他角色即将行动。</p>
+          <p className="text-sm text-[var(--color-text-dim)] mt-2">点击按钮开始夜晚，你将在得知刀口后决定是否使用解药或毒药。</p>
+          <button
+            className="px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50"
+            disabled={pending}
+            onClick={() => onSubmitAction({ action_type: "night_start" })}
+          >
+            开始夜晚
+          </button>
+        </section>
+      );
+    }
+
+    // Witch two-step night: step 2 — show kill info + save/poison/no_action
+    if (primaryAction.night_kill_info) {
+      return (
+        <WitchNightAction
+          actions={game.allowed_actions}
+          killInfo={primaryAction.night_kill_info}
+          pending={pending}
+          onSubmitAction={onSubmitAction}
+        />
+      );
     }
 
     if (primaryAction?.requires_target) {
@@ -191,6 +222,105 @@ export function PhaseSceneRouter({ game, onSubmitAction, pending }: PhaseSceneRo
     </section>
   );
 }
+
+/* ── Witch Night Action (separate component to use hooks safely) ── */
+
+function WitchNightAction({
+  actions,
+  killInfo,
+  pending,
+  onSubmitAction,
+}: {
+  actions: PlayerActionOptionDto[];
+  killInfo: NonNullable<PlayerActionOptionDto["night_kill_info"]>;
+  pending: boolean;
+  onSubmitAction: (action: SubmitActionInput) => Promise<void>;
+}) {
+  const saveAction = actions.find((a) => a.action_type === "witch_save");
+  const poisonAction = actions.find((a) => a.action_type === "witch_poison");
+  const noAction = actions.find((a) => a.action_type === "no_action");
+  const poisonTargets = poisonAction?.target_options ?? [];
+
+  const [selectedAction, setSelectedAction] = useState<string>(
+    saveAction && killInfo.can_save ? "none" : "none",
+  );
+  const [poisonTarget, setPoisonTarget] = useState(poisonTargets[0]?.player_id ?? "");
+
+  const handleSubmit = () => {
+    if (selectedAction === "save" && saveAction) {
+      onSubmitAction({ action_type: "witch_save", target_player_id: killInfo.target_id });
+    } else if (selectedAction === "poison" && poisonTarget) {
+      onSubmitAction({ action_type: "witch_poison", target_player_id: poisonTarget });
+    } else {
+      onSubmitAction({ action_type: "no_action" });
+    }
+  };
+
+  return (
+    <section className="p-6 rounded-xl border border-[var(--color-blue-night)] bg-[var(--color-warm-card)]">
+      <p className="text-xs tracking-[0.2em] uppercase text-[var(--color-text-dim)] mb-2">NIGHT — 女巫</p>
+      <h2>夜晚行动</h2>
+
+      {/* Kill info banner */}
+      <div className="p-4 rounded-lg bg-red-900/20 border border-red-800/40 mb-4">
+        <p className="font-semibold text-red-300">
+          今晚 {killInfo.target_label} 被狼人击杀。
+        </p>
+        {!killInfo.can_save && killInfo.reason && (
+          <p className="text-sm text-red-400 mt-1">{killInfo.reason}</p>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        {/* Save option */}
+        {saveAction && killInfo.can_save && (
+          <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedAction === "save" ? "border-green-500 bg-green-900/20" : "border-[var(--color-warm-border)] hover:border-[var(--color-gold)] bg-[var(--color-warm-bg)]"}`}>
+            <input type="radio" name="witch-action" checked={selectedAction === "save"} onChange={() => setSelectedAction("save")} />
+            <span className="text-green-400">使用解药救活 {killInfo.target_label}</span>
+          </label>
+        )}
+
+        {/* Poison option */}
+        {poisonAction && (
+          <div className={`p-3 rounded-lg border transition-colors ${selectedAction === "poison" ? "border-purple-500 bg-purple-900/20" : "border-[var(--color-warm-border)] bg-[var(--color-warm-bg)]"}`}>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input type="radio" name="witch-action" checked={selectedAction === "poison"} onChange={() => setSelectedAction("poison")} />
+              <span className="text-purple-400">使用毒药</span>
+            </label>
+            {selectedAction === "poison" && poisonTargets.length > 0 && (
+              <div className="grid grid-cols-2 gap-2 mt-2 ml-6">
+                {poisonTargets.map((target) => (
+                  <label key={target.player_id} className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer text-sm ${poisonTarget === target.player_id ? "border-purple-500 bg-purple-900/10" : "border-[var(--color-warm-border)]"}`}>
+                    <input type="radio" name="poison-target" value={target.player_id} checked={poisonTarget === target.player_id} onChange={() => setPoisonTarget(target.player_id)} />
+                    <span>{target.label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* No action option */}
+        {noAction && (
+          <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedAction === "none" ? "border-[var(--color-gold)] bg-[var(--color-warm-card)]" : "border-[var(--color-warm-border)] hover:border-[var(--color-gold)] bg-[var(--color-warm-bg)]"}`}>
+            <input type="radio" name="witch-action" checked={selectedAction === "none"} onChange={() => setSelectedAction("none")} />
+            <span>{noAction.label}</span>
+          </label>
+        )}
+      </div>
+
+      <button
+        className="mt-4 px-6 py-3 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold hover:bg-[var(--color-gold-dim)] disabled:opacity-50"
+        disabled={pending}
+        onClick={handleSubmit}
+      >
+        {selectedAction === "save" ? "使用解药" : selectedAction === "poison" ? "使用毒药" : "不使用药"}
+      </button>
+    </section>
+  );
+}
+
+/* ── Shared helpers ── */
 
 function ObserverScene({ kicker, title, message }: { kicker: string; title: string; message: string }) {
   return (

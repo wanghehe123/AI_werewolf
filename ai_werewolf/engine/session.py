@@ -37,6 +37,8 @@ class GameSession:
     witch_has_poison: bool = True
     private_infos: dict[str, PlayerPrivateInfo] = field(default_factory=dict)
     pending_last_words_player_id: str | None = None
+    night_pending_kill_target_id: str | None = None
+    night_pending_guard_target_id: str | None = None
     stream_events: list[dict[str, Any]] = field(default_factory=list)
     stream_event_seq: int = 0
 
