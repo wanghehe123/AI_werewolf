@@ -7,4 +7,6 @@ dependencies = [
     "edge-tts>=6.1",
     "python-socketio[asyncio_client]>=5.0",
     "websockets>=14.0",
+    "redis>=5.0",
+    "orjson>=3.9",
 ]
