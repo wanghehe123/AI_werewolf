@@ -72,7 +72,7 @@ default_provider: fake
 chains:
   default:
     - tier: primary
-      provider: glm
+      provider: deepseek
       timeout_ms: 6000
       max_retries: 1
       triggers_to_next: [timeout, 5xx, 429, json_parse_error]
@@ -82,7 +82,7 @@ chains:
       max_retries: 1
       triggers_to_next: [timeout, 5xx]
     - tier: cheap_fallback
-      provider: minimax
+      provider: deepseek
       timeout_ms: 3000
       max_retries: 0
       triggers_to_next: [always]
