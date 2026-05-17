@@ -205,7 +205,7 @@ class NightResolver:
                 decider_factory=decider_factory,
                 game_context=context[-500:] if context else "",
                 human_proposal=human_proposal,
-                timeout_s=8.0,
+                timeout_s=45.0,
             )
         except Exception:
             logger.exception("Werewolf council failed, falling back to single-wolf path")
@@ -385,7 +385,7 @@ class NightResolver:
             night_number=session.state.day_count,
             alive_players=session.state.alive_player_ids(),
             decider_factory=decider_factory,
-            timeout_s=8.0,
+            timeout_s=45.0,
         )
 
         action_type = result.get("action_type", "no_action")
