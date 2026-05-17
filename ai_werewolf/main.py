@@ -12,6 +12,7 @@ AI 狼人杀 FastAPI 应用入口
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -33,6 +34,18 @@ import socketio as socketio_lib
 
 from ai_werewolf.storage.factory import build_game_repository, persistence_enabled
 from ai_werewolf.storage.repositories import LLMConfigRepository
+
+
+# ---------------------------------------------------------------------------
+# Lifespan -- graceful shutdown
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan context: close Redis clients on shutdown."""
+    yield
+    from ai_werewolf.infra.redis_client import close_clients
+    await close_clients()
 
 # 配置日志
 logging.basicConfig(
@@ -128,11 +141,19 @@ def create_app() -> FastAPI:
     if loaded_env_keys:
         logger.info("已从本地 env 文件加载环境变量: %s", ", ".join(loaded_env_keys))
 
-    app = FastAPI(title="AI Werewolf")
+    app = FastAPI(title="AI Werewolf", lifespan=lifespan)
 
     # ---- 数据库持久化 ----
     if persistence_enabled():
         configure_game_repository(build_game_repository())
+
+    # ---- Redis 检查 ----
+    from ai_werewolf.infra.redis_client import is_available as redis_is_available
+    redis_ok = redis_is_available()
+    if redis_ok:
+        logger.info("Redis 连接成功")
+    else:
+        logger.warning("Redis 不可用，将使用内存模式（不支持多实例水平扩展）")
 
     # ---- LLM 模型初始化 ----
     # 数据库后台配置优先；没有持久化配置时回退到 YAML。
