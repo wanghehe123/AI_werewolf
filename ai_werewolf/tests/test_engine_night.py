@@ -234,3 +234,41 @@ def test_beginner_night_announces_only_roles_present_in_board_order():
     ]
     assert all("女巫" not in message and "守卫" not in message for message in messages)
     assert event_types.index("night_result") > event_types.index("night_step_finished")
+
+
+def test_get_ai_decision_uses_unified_decision_graph():
+    session = _make_session(_default_players(), _default_agents())
+    resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    resolver.memory_context_builder = MagicMock()
+    resolver.memory_context_builder.build_for_player.return_value = MagicMock(
+        game_id="test",
+        player_id="seer1",
+        phase="night",
+        day=1,
+        model_dump=MagicMock(return_value={}),
+    )
+    resolver.memory_store = MagicMock()
+
+    provider = MagicMock()
+    provider.config.provider_id = "mock"
+    resolver.model_registry.provider_for_role.return_value = provider
+
+    with patch(
+        "ai_werewolf.engine.night.run_player_decision_graph",
+        return_value={
+            "decision": _mock_decision(action_type="seer_check", target_id="w1"),
+            "analysis": {"key_facts": ["2号夜里发言很怪"]},
+            "suspicion_update": {"records": [{"target_player_id": "w1", "suspicion_score": 75}]},
+            "strategy": {"strategy_type": "night_probe"},
+            "action_draft": {"action_type": "seer_check", "target_id": "w1"},
+            "error": None,
+        },
+    ) as run_graph:
+        decision = resolver._get_ai_decision(session, "seer1", "公开历史")
+
+    assert decision.action_type == "seer_check"
+    assert decision.target_id == "w1"
+    run_graph.assert_called_once()
+    saved = resolver.memory_store.save_player_suspicion.call_args.args[0]
+    assert saved.player_id == "seer1"
+    assert saved.records[0]["target_player_id"] == "w1"

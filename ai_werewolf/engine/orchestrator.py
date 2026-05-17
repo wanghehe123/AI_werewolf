@@ -19,6 +19,11 @@ from ai_werewolf.engine.vote import VoteResolver
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
 from ai_werewolf.llm.graphs.player_decision_graph import run_player_speech_graph
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
+from ai_werewolf.llm.memory.summary_builder import (
+    build_day_summary,
+    build_player_suspicion_memory,
+    build_private_role_memory,
+)
 from ai_werewolf.llm.memory.store import RedisMemoryStore
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
@@ -232,6 +237,7 @@ class PhaseOrchestrator:
             self._end_game(session, winner)
             return
 
+        self._persist_day_memory(session)
         session.state.day_count += 1
         session.state.phase = GamePhase.NIGHT
         session.voted_player_ids.clear()
@@ -332,6 +338,7 @@ class PhaseOrchestrator:
             memory_context=memory_context,
             speech_generator=speech_generator,
         )
+        self._persist_player_memories(session, player_id, result)
         self.memory_store.append_decision_trace(
             game_id=session.state.game_id,
             player_id=player_id,
@@ -346,6 +353,43 @@ class PhaseOrchestrator:
             },
         )
         return result
+
+    def _persist_day_memory(self, session: GameSession) -> None:
+        """每天结束时将公开摘要压缩进 Redis，避免后续 prompt 无限膨胀。"""
+        summary = build_day_summary(session)
+        logger.info(
+            "写回 DaySummary 到 Redis game_id=%s day=%s items=%d",
+            summary.game_id,
+            summary.day,
+            len(summary.summary_items),
+        )
+        self.memory_store.save_day_summary(summary)
+
+    def _persist_player_memories(self, session: GameSession, player_id: str, result: dict[str, Any]) -> None:
+        previous = self.memory_store.get_player_suspicion(session.state.game_id, player_id)
+        suspicion_memory = build_player_suspicion_memory(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            day=session.state.day_count,
+            suspicion_update=result.get("suspicion_update"),
+            previous=previous,
+        )
+        if suspicion_memory is not None:
+            logger.info(
+                "写回玩家怀疑链到 Redis game_id=%s player_id=%s records=%d",
+                session.state.game_id,
+                player_id,
+                len(suspicion_memory.records),
+            )
+            self.memory_store.save_player_suspicion(suspicion_memory)
+
+        private_role_memory = build_private_role_memory(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            private_info=session.private_infos.get(player_id),
+        )
+        if private_role_memory is not None:
+            self.memory_store.save_private_role_memory(private_role_memory)
 
     def _find_day_speech_task(self, session: GameSession, player_id: str, context: str):
         """定位白天发言任务，复用现有 scheduler 的 prompt 组装逻辑。"""

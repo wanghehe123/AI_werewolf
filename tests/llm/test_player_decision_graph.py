@@ -1,6 +1,6 @@
 from ai_werewolf.domain.agents import AgentProfile, RiskPreference
 from ai_werewolf.domain.game_state import PlayerState
-from ai_werewolf.llm.graphs.player_decision_graph import run_player_speech_graph
+from ai_werewolf.llm.graphs.player_decision_graph import run_player_decision_graph, run_player_speech_graph
 from ai_werewolf.llm.memory.context_builder import MemoryContext, MemoryContextEvent
 from ai_werewolf.llm.memory.models import DaySummary, PlayerSuspicionMemory, PrivateRoleMemory
 
@@ -107,3 +107,28 @@ def test_player_speech_graph_falls_back_when_speech_generator_raises():
 
     assert result["error"] == "speech_generation_failed"
     assert result["decision"].speech == "我先听听大家的意见，再做判断。"
+
+
+def test_player_decision_graph_supports_vote_phase():
+    result = run_player_decision_graph(
+        agent=_agent(),
+        player=_player(),
+        memory_context=_memory_context().model_copy(update={"phase": "exile_vote"}),
+        decision_kind="exile_vote",
+    )
+
+    assert result["decision"].action_type == "vote"
+    assert result["decision"].target_id == "p5"
+    assert result["strategy"]["strategy_type"] in {"vote_push", "attack"}
+
+
+def test_player_decision_graph_supports_night_action_phase():
+    result = run_player_decision_graph(
+        agent=_agent(),
+        player=_player(),
+        memory_context=_memory_context().model_copy(update={"phase": "night"}),
+        decision_kind="night_action",
+    )
+
+    assert result["decision"].action_type == "seer_check"
+    assert result["decision"].target_id == "p5"

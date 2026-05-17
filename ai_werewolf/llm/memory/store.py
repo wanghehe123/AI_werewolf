@@ -79,6 +79,7 @@ class RedisMemoryStore:
                 ),
             )
             # 这里把 day 额外写进索引，后续读取时只扫小列表，不需要模糊匹配 Redis key。
+            self.client.lrem(self._day_index_key(summary.game_id), 0, str(summary.day))
             self.client.rpush(self._day_index_key(summary.game_id), str(summary.day))
             self.client.expire(self._day_index_key(summary.game_id), self.ttl_seconds)
         except redis.ConnectionError:

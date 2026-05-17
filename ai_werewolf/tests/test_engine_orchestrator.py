@@ -8,6 +8,7 @@ from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
 from ai_werewolf.engine.context import build_private_infos
 from ai_werewolf.engine.orchestrator import PhaseOrchestrator
 from ai_werewolf.engine.session import GameSession
+from ai_werewolf.llm.memory.models import DaySummary, PlayerSuspicionMemory
 
 
 def _make_players():
@@ -249,3 +250,77 @@ def test_get_ai_speech_prefers_player_speech_graph():
 
     assert speech == "图决策发言"
     run_graph.assert_called_once()
+
+
+def test_check_win_or_next_night_saves_day_summary():
+    agents = {pid: MagicMock(name=f"Agent_{pid}") for pid in ["w1", "w2", "s1", "v1", "v2"]}
+    orch, session = _mock_orchestrator(agents)
+    session.state.phase = GamePhase.LAST_WORDS
+    session.state.day_count = 1
+    session.append_public_event("night_result", "昨夜，5号 v1 出局。")
+    session.append_public_event("speech", "2号 狼人甲：我继续怀疑4号。", actor_id="w1")
+    session.append_public_event("speech", "4号 预言家：2号像冲锋狼。", actor_id="s1")
+    session.append_public_event("vote", "2号 狼人甲 投票给了 4号 预言家。", actor_id="w1", target_id="s1")
+    session.append_public_event("vote", "4号 预言家 投票给了 2号 狼人甲。", actor_id="s1", target_id="w1")
+
+    orch.memory_store = MagicMock()
+
+    orch._check_win_or_next_night(session)
+
+    summary = orch.memory_store.save_day_summary.call_args.args[0]
+    assert isinstance(summary, DaySummary)
+    assert summary.game_id == "g"
+    assert summary.day == 1
+    assert "2号持续攻击4号" in summary.summary_items
+    assert summary.vote_summary["main_votes"]
+
+
+def test_run_ai_speech_graph_persists_suspicion_memory():
+    agents = {"s1": MagicMock(name="Agent_s1")}
+    orch, session = _mock_orchestrator(agents)
+    session.state.phase = GamePhase.DAY_SPEECH
+    session.state.day_count = 2
+    session.agents["s1"] = MagicMock()
+    orch.memory_store = MagicMock()
+
+    with (
+        _patch(
+            "ai_werewolf.engine.orchestrator.MemoryContextBuilder.build_for_player",
+            return_value=MagicMock(
+                game_id="g",
+                player_id="s1",
+                phase="day_speech",
+                day=2,
+                model_dump=MagicMock(return_value={}),
+            ),
+        ),
+        _patch(
+            "ai_werewolf.engine.orchestrator.run_player_speech_graph",
+            return_value={
+                "decision": MagicMock(speech="图决策发言"),
+                "analysis": {"key_facts": ["5号持续攻击1号"]},
+                "suspicion_update": {
+                    "records": [
+                        {
+                            "target_player_id": "w1",
+                            "suspicion_score": 88,
+                            "trust_score": 12,
+                            "evidence": ["夜间查杀线成立"],
+                        }
+                    ],
+                    "primary_target": "w1",
+                },
+                "strategy": {"strategy_type": "attack"},
+                "action_draft": {"action_type": "speak"},
+                "speech": "图决策发言",
+                "error": None,
+            },
+        ),
+    ):
+        orch._run_ai_speech_graph(session, "s1", "公开历史")
+
+    saved = orch.memory_store.save_player_suspicion.call_args.args[0]
+    assert isinstance(saved, PlayerSuspicionMemory)
+    assert saved.player_id == "s1"
+    assert saved.day == 2
+    assert saved.records[0]["target_player_id"] == "w1"

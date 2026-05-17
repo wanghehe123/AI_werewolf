@@ -11,8 +11,12 @@ from ai_werewolf.engine.helpers import display_name, event, player_label, player
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
+from ai_werewolf.llm.graphs.player_decision_graph import run_player_decision_graph
 from ai_werewolf.llm.graphs.werewolf_council import run_werewolf_council
 from ai_werewolf.llm.graphs.witch_council import run_witch_council
+from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
+from ai_werewolf.llm.memory.summary_builder import build_player_suspicion_memory, build_private_role_memory
+from ai_werewolf.llm.memory.store import RedisMemoryStore
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_night_action_prompt, format_private_info
 from ai_werewolf.llm.schemas import PlayerDecision
@@ -29,6 +33,8 @@ class NightResolver:
         self.role_model_bindings = role_model_bindings
         self.role_registry = role_registry
         self.scheduler = AIActionScheduler(role_registry)
+        self.memory_store = RedisMemoryStore()
+        self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
 
     def resolve(self, session: GameSession, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Collect all night actions via LLM and resolve deaths.
@@ -567,18 +573,35 @@ class NightResolver:
         return deaths
 
     def _get_ai_decision(self, session: GameSession, player_id: str, context: str) -> PlayerDecision:
-        """Get LLM decision for a player using the standard scheduler pipeline."""
-        tasks = self.scheduler.schedule(
-            state=session.state,
-            agents=session.agents,
-            private_infos=session.private_infos,
-            game_context=context,
-        )
-        task = next((t for t in tasks if t.player_id == player_id), None)
-        if task is None:
-            return PlayerDecision(speech="无行动", action_type="speak", target_id=None, public_reason=None, private_memory_update=None)
+        """Get LLM decision for a player using the unified night decision graph."""
+        player = session.state.player_by_id(player_id)
+        agent = session.agents.get(player_id)
+        if agent is None:
+            return PlayerDecision(speech="无行动", action_type="no_action", target_id=None, public_reason=None, private_memory_update=None)
 
-        return self._get_ai_decision_with_prompt(session, player_id, task.prompt)
+        memory_context = self.memory_context_builder.build_for_player(session, player_id)
+
+        def decision_generator(_state: dict[str, Any]) -> PlayerDecision:
+            tasks = self.scheduler.schedule(
+                state=session.state,
+                agents=session.agents,
+                private_infos=session.private_infos,
+                game_context=context,
+            )
+            task = next((t for t in tasks if t.player_id == player_id), None)
+            if task is None:
+                return PlayerDecision(speech="无行动", action_type="no_action", target_id=None, public_reason=None, private_memory_update=None)
+            return self._get_ai_decision_with_prompt(session, player_id, task.prompt)
+
+        result = run_player_decision_graph(
+            agent=agent,
+            player=player,
+            memory_context=memory_context,
+            decision_kind="night_action",
+            decision_generator=decision_generator,
+        )
+        self._persist_player_memories(session, player_id, result)
+        return result["decision"]
 
     def _get_ai_decision_with_prompt(self, session: GameSession, player_id: str, prompt: str) -> PlayerDecision:
         """Call LLM with a specific prompt and return PlayerDecision."""
@@ -610,6 +633,26 @@ class NightResolver:
                 metadata={"stage": "night_decision_fallback"},
             )
             return fallback
+
+    def _persist_player_memories(self, session: GameSession, player_id: str, result: dict[str, Any]) -> None:
+        previous = self.memory_store.get_player_suspicion(session.state.game_id, player_id)
+        suspicion_memory = build_player_suspicion_memory(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            day=session.state.day_count,
+            suspicion_update=result.get("suspicion_update"),
+            previous=previous,
+        )
+        if suspicion_memory is not None:
+            logger.info("夜晚决策后写回怀疑链 player_id=%s records=%d", player_id, len(suspicion_memory.records))
+            self.memory_store.save_player_suspicion(suspicion_memory)
+        private_role_memory = build_private_role_memory(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            private_info=session.private_infos.get(player_id),
+        )
+        if private_role_memory is not None:
+            self.memory_store.save_private_role_memory(private_role_memory)
 
     def _validate_target(self, target_id: str | None, session: GameSession, exclude_wolves: bool = False, exclude_player_id: str | None = None) -> str | None:
         """Validate that a target is an alive player. Returns None if invalid."""

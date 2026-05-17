@@ -60,6 +60,14 @@ class MemoryContextBuilder:
         day_summaries = self.store.get_day_summaries(session.state.game_id)
         suspicion_memory = self.store.get_player_suspicion(session.state.game_id, player_id)
         private_role_memory = self.store.get_private_role_memory(session.state.game_id, player_id)
+        if private_role_memory is None:
+            private_info = session.private_infos.get(player_id)
+            if private_info is not None:
+                private_role_memory = PrivateRoleMemory(
+                    game_id=session.state.game_id,
+                    player_id=player_id,
+                    payload=private_info.model_dump(mode="json"),
+                )
 
         logger.info(
             "记忆上下文已组装 player_id=%s recent_events=%d day_summaries=%d has_suspicion=%s has_private_role=%s",
