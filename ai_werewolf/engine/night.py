@@ -11,6 +11,7 @@ from ai_werewolf.engine.helpers import display_name, event, player_label, player
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
+from ai_werewolf.llm.graphs.werewolf_council import run_werewolf_council
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_night_action_prompt, format_private_info
 from ai_werewolf.llm.schemas import PlayerDecision
@@ -81,33 +82,73 @@ class NightResolver:
         return events
 
     def _collect_wolf_kill(self, session: GameSession, context: str, human_action: dict[str, Any] | None = None) -> str | None:
-        """Ask wolf AI to choose a kill target."""
+        """Ask wolf AI(s) to choose a kill target.
+
+        When two or more AI wolves are alive, the werewolf council graph is
+        used so that each wolf proposes, votes, and reaches consensus.  For a
+        single AI wolf (or when the council times out) the original
+        single-wolf path is used as fallback.
+        """
         alive_wolves = [p for p in session.state.players if p.alive and p.role_key == "werewolf"]
         if not alive_wolves:
             return None
 
+        # --- Handle human wolf action (unchanged) ---
         human_target = self._human_night_target(session, human_action, "werewolf", {"wolf_kill"})
+        human_wolf_id = None
         if human_target:
             target_id = self._validate_target(human_target, session, exclude_wolves=True)
             if target_id:
+                human_wolf_id = session.human_player_id
                 session.night_actions.append({
-                    "actor_player_id": session.human_player_id,
+                    "actor_player_id": human_wolf_id,
                     "action_type": "wolf_kill",
                     "target_player_id": target_id,
                     "round": f"night{session.state.day_count}",
                 })
                 log_player_action(
                     session,
-                    actor_id=session.human_player_id,
+                    actor_id=human_wolf_id,
                     action_type="wolf_kill",
                     target_id=target_id,
                     source="human",
                     decision=human_action,
                 )
-                return target_id
+                # If this is the only wolf, we are done.
+                if len(alive_wolves) <= 1:
+                    return target_id
+                # Otherwise fall through -- the human target is injected as a
+                # proposal in the council so AI wolves can consider it.
+                human_proposal = {
+                    "wolf_id": human_wolf_id,
+                    "target_id": target_id,
+                    "reason": "人类狼人选定",
+                    "risk": 3,
+                }
+                # Rebuild alive_ai_wolves without the human
+                alive_ai_wolves = [w for w in alive_wolves if not w.is_human]
+                return self._run_council_or_fallback(
+                    session, context, alive_ai_wolves, human_proposal=human_proposal,
+                )
 
-        # Use first AI wolf as representative; skip human wolves
-        wolf = next((w for w in alive_wolves if not w.is_human), None)
+        # --- Identify AI wolves ---
+        alive_ai_wolves = [w for w in alive_wolves if not w.is_human]
+
+        # Single AI wolf (no human wolf or human didn't act) -> original path
+        if len(alive_ai_wolves) <= 1:
+            return self._single_wolf_kill(session, context, alive_ai_wolves)
+
+        # Multi-wolf council
+        return self._run_council_or_fallback(session, context, alive_ai_wolves)
+
+    def _single_wolf_kill(
+        self,
+        session: GameSession,
+        context: str,
+        ai_wolves: list,
+    ) -> str | None:
+        """Original single-wolf kill path (used as fallback)."""
+        wolf = next(iter(ai_wolves), None)
         if wolf is None:
             return None
         decision = self._get_ai_decision(session, wolf.player_id, context)
@@ -130,6 +171,72 @@ class NightResolver:
             )
             return target_id
         return None
+
+    def _run_council_or_fallback(
+        self,
+        session: GameSession,
+        context: str,
+        ai_wolves: list,
+        *,
+        human_proposal: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Run the werewolf council graph.  Falls back to single-wolf on error."""
+        candidates = [
+            p.player_id for p in session.state.players
+            if p.alive and p.role_key != "werewolf"
+        ]
+        if not candidates:
+            return None
+
+        participants = [w.player_id for w in ai_wolves]
+
+        def decider_factory(wolf_id: str) -> PlayerDecider:
+            player = session.state.player_by_id(wolf_id)
+            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
+            return PlayerDecider(provider)
+
+        try:
+            result = run_werewolf_council(
+                game_id=session.state.game_id,
+                round_id=f"night_{session.state.day_count}",
+                participants=participants,
+                candidates=candidates,
+                decider_factory=decider_factory,
+                game_context=context[-500:] if context else "",
+                human_proposal=human_proposal,
+                timeout_s=8.0,
+            )
+        except Exception:
+            logger.exception("Werewolf council failed, falling back to single-wolf path")
+            return self._single_wolf_kill(session, context, ai_wolves)
+
+        target_id = result.get("decision")
+        if target_id:
+            target_id = self._validate_target(target_id, session, exclude_wolves=True)
+
+        if not target_id:
+            # Council failed to produce a valid target -> fallback
+            return self._single_wolf_kill(session, context, ai_wolves)
+
+        # Record the kill action (attribute to first AI wolf as representative)
+        actor_id = participants[0]
+        rationale = result.get("rationale", "")
+        session.night_actions.append({
+            "actor_player_id": actor_id,
+            "action_type": "wolf_kill",
+            "target_player_id": target_id,
+            "round": f"night{session.state.day_count}",
+        })
+        log_player_action(
+            session,
+            actor_id=actor_id,
+            action_type="wolf_kill",
+            target_id=target_id,
+            source="ai_council",
+            decision={"action_type": "wolf_kill", "target_id": target_id, "rationale": rationale},
+            metadata={"council": True, "tally": result.get("tally", {})},
+        )
+        return target_id
 
     def _collect_seer_check(self, session: GameSession, context: str, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Ask seer AI to choose a check target."""
