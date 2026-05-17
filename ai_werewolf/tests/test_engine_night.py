@@ -133,10 +133,7 @@ def test_witch_save_prevents_death():
     session = _make_session(players, _default_agents())
     resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
 
-    call_count = {"n": 0}
-
     def mock_decide(session, player_id, context):
-        call_count["n"] += 1
         if player_id == "w1":
             return _mock_decision(action_type="wolf_kill", target_id="human")
         if player_id == "seer1":
@@ -144,7 +141,9 @@ def test_witch_save_prevents_death():
         return _mock_decision()
 
     with patch.object(resolver, "_get_ai_decision", side_effect=mock_decide), \
-         patch.object(resolver, "_get_ai_decision_with_prompt", return_value=_mock_decision(action_type="witch_save", target_id="human")):
+         patch("ai_werewolf.engine.night.run_witch_council", return_value={
+             "action_type": "witch_save", "target_id": "human", "error": None,
+         }):
         events = resolver.resolve(session)
 
     human = session.state.player_by_id("human")
@@ -166,7 +165,9 @@ def test_witch_poison_kills_extra():
         return _mock_decision()
 
     with patch.object(resolver, "_get_ai_decision", side_effect=mock_decide), \
-         patch.object(resolver, "_get_ai_decision_with_prompt", return_value=_mock_decision(action_type="witch_poison", target_id="w2")):
+         patch("ai_werewolf.engine.night.run_witch_council", return_value={
+             "action_type": "witch_poison", "target_id": "w2", "error": None,
+         }):
         resolver.resolve(session)
 
     w2 = session.state.player_by_id("w2")

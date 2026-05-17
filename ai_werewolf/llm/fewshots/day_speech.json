@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "examples": {
+    "default": [
+      {
+        "role": "villager",
+        "scenario": "first_speaker",
+        "speech": "大家好，我是这轮第一个发言的。目前信息不多，我先听听后面几位怎么说，初步站边偏好人阵营。",
+        "action_type": "speak"
+      },
+      {
+        "role": "werewolf",
+        "scenario": "deflecting_suspicion",
+        "speech": "我觉得3号的发言逻辑链条不太完整，一直在摇摆没有给出明确站边，建议大家重点关注。",
+        "action_type": "speak"
+      }
+    ]
+  }
+}

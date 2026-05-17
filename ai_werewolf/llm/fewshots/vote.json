@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "examples": {
+    "default": [
+      {
+        "role": "villager",
+        "scenario": "strong_suspicion",
+        "speech": "",
+        "action_type": "vote",
+        "reason": "3号站边摇摆，发言没有明确逻辑链"
+      }
+    ]
+  }
+}

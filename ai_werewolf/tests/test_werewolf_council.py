@@ -824,6 +824,13 @@ class TestNightResolveWithCouncil:
                 "tally": {"human": 2},
                 "error": None,
             },
+        ), patch(
+            "ai_werewolf.engine.night.run_witch_council",
+            return_value={
+                "action_type": "no_action",
+                "target_id": None,
+                "error": None,
+            },
         ), patch.object(
             resolver, "_get_ai_decision", return_value=_mock_decision(action_type="seer_check", target_id="w1"),
         ):

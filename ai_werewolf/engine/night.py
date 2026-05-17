@@ -12,6 +12,7 @@ from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
 from ai_werewolf.llm.graphs.werewolf_council import run_werewolf_council
+from ai_werewolf.llm.graphs.witch_council import run_witch_council
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_night_action_prompt, format_private_info
 from ai_werewolf.llm.schemas import PlayerDecision
@@ -335,7 +336,12 @@ class NightResolver:
         wolf_target_id: str | None,
         human_action: dict[str, Any] | None = None,
     ) -> str | None:
-        """Ask witch AI to decide save/poison. Returns poison target if used."""
+        """Ask witch AI to decide save/poison. Returns poison target if used.
+
+        When the witch is AI, the witch decision graph is used for multi-step
+        reasoning (assess -> decide_save -> decide_poison -> finalize).
+        On error or timeout, falls back to the original single-decision path.
+        """
         alive_witch = next((p for p in session.state.players if p.alive and p.role_key == "witch"), None)
         if alive_witch is None:
             return None
@@ -347,10 +353,62 @@ class NightResolver:
             target_id = human_action.get("target_player_id") if human_action else None
             return self._apply_witch_decision(session, alive_witch.player_id, info, action, target_id)
 
+        # --- Try witch council graph first ---
+        try:
+            return self._run_witch_graph_or_fallback(session, context, alive_witch, info, wolf_target_id)
+        except Exception:
+            logger.exception("Witch graph failed, falling back to single-decision path")
+            return self._witch_single_decision(session, context, alive_witch, info, wolf_target_id)
+
+    def _run_witch_graph_or_fallback(
+        self,
+        session: GameSession,
+        context: str,
+        alive_witch: Any,
+        info: PlayerPrivateInfo,
+        wolf_target_id: str | None,
+    ) -> str | None:
+        """Run the witch decision graph, falling back to single-decision on error."""
+
+        def decider_factory(witch_id: str) -> PlayerDecider:
+            player = session.state.player_by_id(witch_id)
+            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
+            return PlayerDecider(provider)
+
+        result = run_witch_council(
+            game_id=session.state.game_id,
+            round_id=f"night_{session.state.day_count}",
+            witch_id=alive_witch.player_id,
+            killed_player_id=wolf_target_id,
+            has_save_potion=info.witch_medicine.get("save", False),
+            has_poison=info.witch_medicine.get("poison", False),
+            night_number=session.state.day_count,
+            alive_players=session.state.alive_player_ids(),
+            decider_factory=decider_factory,
+            timeout_s=8.0,
+        )
+
+        action_type = result.get("action_type", "no_action")
+        target_id = result.get("target_id")
+
+        if result.get("error"):
+            logger.warning("Witch graph returned error '%s', falling back to single-decision", result["error"])
+            return self._witch_single_decision(session, context, alive_witch, info, wolf_target_id)
+
+        return self._apply_witch_decision(session, alive_witch.player_id, info, action_type, target_id)
+
+    def _witch_single_decision(
+        self,
+        session: GameSession,
+        context: str,
+        alive_witch: Any,
+        info: PlayerPrivateInfo,
+        wolf_target_id: str | None,
+    ) -> str | None:
+        """Original single-decision path for the witch (used as fallback)."""
         # Build death info string to pass in private_info
         death_info = ""
         if wolf_target_id and info.witch_medicine.get("save", False):
-            # First night: witch can save self. After first night: cannot save self.
             can_save_self = session.state.day_count == 1
             if wolf_target_id == alive_witch.player_id and not can_save_self:
                 death_info = f"今晚 {player_label(wolf_target_id, session)} 被狼人击杀（你不能自救）。"
@@ -358,13 +416,11 @@ class NightResolver:
                 death_info = f"今晚 {player_label(wolf_target_id, session)} 被狼人击杀。"
 
         if death_info:
-            # Inject death info into the witch's private info for prompt building
             base_private = format_private_info(info, "witch", player_label=lambda player_id: player_label(player_id, session))
             augmented_private = base_private + "\n" + death_info if base_private else death_info
         else:
             augmented_private = format_private_info(info, "witch", player_label=lambda player_id: player_label(player_id, session))
 
-        # Build prompt with augmented private info
         agent = session.agents.get(alive_witch.player_id)
         if agent is None:
             return None
@@ -385,7 +441,6 @@ class NightResolver:
         )
 
         decision = self._get_ai_decision_with_prompt(session, alive_witch.player_id, prompt)
-
         return self._apply_witch_decision(session, alive_witch.player_id, info, str(decision.action_type), decision.target_id)
 
     def _apply_witch_decision(
