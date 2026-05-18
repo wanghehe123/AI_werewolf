@@ -1,0 +1,104 @@
+# AI 狼人杀 LLM 配置文件（示例模板）
+# ===========================================
+# 复制本文件为 config/llm.yaml 并填写你的 API Key。
+# 支持所有 OpenAI 兼容接口：OpenAI / DeepSeek / 通义千问 / Ollama 等。
+#
+# API Key 配置方式（二选一）：
+#   方式 1 - 直接写入（开发环境）: api_key: sk-xxx
+#   方式 2 - 从环境变量读取（推荐）: api_key_env: YOUR_ENV_VAR_NAME
+#   优先级：api_key > api_key_env
+#
+# Provider 类型：
+#   openai_compatible : 支持 OpenAI 兼容接口
+#   fake              : 内置假模型，用于测试
+
+# ==================== Provider 配置 ====================
+providers:
+  # ---- DeepSeek（推荐，性价比高）----
+  - id: deepseek
+    type: openai_compatible
+    model_name: deepseek-ai/DeepSeek-V3.2
+    base_url: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY    # 从环境变量读取
+    temperature: 0.8
+    max_tokens: 4096
+    timeout: 30
+
+  - id: sf-qw
+    type: openai_compatible
+    model_name: Qwen/Qwen3.6-27B
+    base_url: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY
+    temperature: 0.8
+    max_tokens: 4096
+    timeout: 30
+
+  - id: sf-kimi
+    type: openai_compatible
+    model_name: deepseek-ai/DeepSeek-R1
+    base_url: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY
+    temperature: 0.8
+    max_tokens: 4096
+    timeout: 30
+
+  - id: sf-minimax
+    type: openai_compatible
+    model_name: Pro/MiniMaxAI/MiniMax-M2.5
+    base_url: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY
+    temperature: 0.8
+    max_tokens: 4096
+    timeout: 30
+
+  # ---- MiniMax TTS（语音合成，可选）----
+  - id: minimax-speak
+    type: openai_compatible
+    model_name: speech-2.8-hd
+    base_url: https://api.minimaxi.com/v1/t2a_v2
+    api_key_env: MINIMAX_API_KEY
+    timeout: 30
+
+  # ---- 假模型（测试用，不调用真实 API）----
+  - id: fake
+    type: fake
+    model_name: fake-default
+
+
+# ==================== 角色绑定 ====================
+# 为每个游戏角色指定使用哪个 Provider
+role_bindings:
+  werewolf: deepseek
+  seer: sf-qw
+  witch: sf-kimi
+  hunter: deepseek
+  villager: sf-minimax
+
+
+# ==================== 全局默认 ====================
+default_provider: deepseek
+
+
+# ==================== 降级链 ====================
+# 4-tier: primary -> secondary -> cheap_fallback -> rule_engine(静态兜底)
+chains:
+  default:
+    - tier: primary
+      provider: deepseek
+      timeout_ms: 6000
+      max_retries: 1
+      triggers_to_next: [timeout, 5xx, 429, json_parse_error]
+    - tier: secondary
+      provider: sf-qw
+      timeout_ms: 4000
+      max_retries: 1
+      triggers_to_next: [timeout, 5xx]
+    - tier: cheap_fallback
+      provider: sf-kimi
+      timeout_ms: 3000
+      max_retries: 0
+      triggers_to_next: [always]
+    - tier: static
+      provider: rule_engine
+      timeout_ms: 50
+      max_retries: 0
