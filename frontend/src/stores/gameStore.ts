@@ -117,6 +117,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     if (event.event_type === "private_info") {
       const payload = event.payload as unknown as PrivateInfoPayload;
+      // Witch kill notification — not a seer result, skip seerResult creation.
+      // The kill info is already shown in the WitchNightAction component.
+      if (payload.subtype === "witch_kill") return;
       const targetId = event.target_id;
       if (!targetId) return;
       const msg = payload.message ?? "";

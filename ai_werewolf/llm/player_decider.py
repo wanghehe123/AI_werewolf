@@ -107,16 +107,23 @@ class PlayerDecider:
             logger.warning("LLM 决策解析失败，使用 fallback: %s", raw_decision)
             return self._build_fallback(raw_decision)
 
-        # 空发言虽然能通过部分 schema，但对外不可展示，这里统一走 speak 兜底。
-        # 触发条件：JSON 合法 + action_type != "speak" + speech 为空或纯空格
-        # （action_type="speak" 会被 Pydantic validator 拦截掉，不会到这里）
+        # 空发言处理：
+        # - action_type="speak" 的空 speech 会被 Pydantic validator 拦截，不会到这里
+        # - 其他 action（seer_check, wolf_kill, witch_save 等）是夜晚私有行动，不需要发言
+        #   不能强制改为 speak（会丢失查验/刀人/救人目标），只替换 speech 占位即可
         if not decision.speech.strip():
-            logger.warning(
-                "[DECIDER_EMPTY_SPEECH] LLM 返回空发言，使用默认 speak fallback "
-                "action_type=%s target_id=%s raw=%s",
-                decision.action_type, decision.target_id, raw_decision,
+            logger.info(
+                "[DECIDER_EMPTY_SPEECH] 非发言行动，空speech正常 "
+                "action_type=%s target_id=%s 保留原动作",
+                decision.action_type, decision.target_id,
             )
-            return self._build_default_speak_fallback(raw_decision)
+            return PlayerDecision(
+                speech=self._safe_fallback_speech(raw_decision),
+                action_type=decision.action_type,
+                target_id=decision.target_id,
+                public_reason=decision.public_reason,
+                private_memory_update=decision.private_memory_update,
+            )
 
         # 安全校验：检查发言是否包含禁止术语
         if not is_safe_speech(decision.speech):
@@ -200,14 +207,20 @@ class PlayerDecider:
             logger.warning("Chain decision parse failed, using fallback: %s", raw_decision)
             return self._build_fallback(raw_decision)
 
-        # 空发言检查 —— 与 decide() 保持一致
+        # 空发言检查 —— 与 decide() 保持一致：保留 action_type 和 target_id
         if not decision.speech.strip():
-            logger.warning(
-                "[DECIDER_EMPTY_SPEECH] Chain路径返回空发言，使用默认 speak fallback "
-                "action_type=%s target_id=%s raw=%s",
-                decision.action_type, decision.target_id, raw_decision,
+            logger.info(
+                "[DECIDER_EMPTY_SPEECH] Chain路径，非发言行动空speech正常 "
+                "action_type=%s target_id=%s 保留原动作",
+                decision.action_type, decision.target_id,
             )
-            return self._build_default_speak_fallback(raw_decision)
+            return PlayerDecision(
+                speech=self._safe_fallback_speech(raw_decision),
+                action_type=decision.action_type,
+                target_id=decision.target_id,
+                public_reason=decision.public_reason,
+                private_memory_update=decision.private_memory_update,
+            )
 
         if not is_safe_speech(decision.speech):
             logger.warning("不安全的发言被过滤: %s", decision.speech[:100])

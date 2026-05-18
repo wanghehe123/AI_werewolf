@@ -459,12 +459,16 @@ class OpenAICompatibleProvider:
             speech_val = parsed.get("speech") if isinstance(parsed, dict) else None
             action_val = parsed.get("action_type") if isinstance(parsed, dict) else None
             if isinstance(speech_val, str) and not speech_val.strip() and action_val:
-                # speech 为空但 JSON 合法 —— 这是后续 "空发言 fallback" 的来源
-                logger.info(
-                    "[PROVIDER_PARSE] provider=%s model=%s JSON解析成功但speech为空 "
+                # 夜晚私有行动（查验、刀人、用药、守人等）不需要公开发言，空speech是正常行为
+                _NIGHT_ONLY_ACTIONS = {"seer_check", "wolf_kill", "witch_save", "witch_poison", "guard", "no_action", "hunter_shoot"}
+                expected = action_val in _NIGHT_ONLY_ACTIONS
+                log_func = logger.debug if expected else logger.info
+                log_func(
+                    "[PROVIDER_PARSE] provider=%s model=%s JSON解析成功但speech为空%s "
                     "action_type=%s target_id=%s raw_chars=%d raw_preview=%.200s",
                     self.config.provider_id,
                     self.config.model_name,
+                    "（夜晚行动，预期行为）" if expected else "",
                     action_val,
                     parsed.get("target_id") if isinstance(parsed, dict) else "?",
                     len(content), content[:200],

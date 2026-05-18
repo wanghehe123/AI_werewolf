@@ -137,14 +137,17 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
                 if not any(a["action_type"] == "no_action" for a in actions):
                     actions.append({"action_type": "no_action", "label": "不使用药"})
 
-                # Attach kill info to all actions for frontend display
-                for a in actions:
-                    if "night_kill_info" not in a:
-                        a["night_kill_info"] = {
-                            "target_id": kill_target_id,
-                            "target_label": kill_label,
-                            "can_save": has_save,
-                        }
+                # Attach kill info to all actions for frontend display — only
+                # while the witch still has save potion.  After the antidote
+                # is used, the witch should not know the knife wound target.
+                if has_save:
+                    for a in actions:
+                        if "night_kill_info" not in a:
+                            a["night_kill_info"] = {
+                                "target_id": kill_target_id,
+                                "target_label": kill_label,
+                                "can_save": True,
+                            }
 
                 return actions
 

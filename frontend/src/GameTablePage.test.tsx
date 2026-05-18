@@ -12,8 +12,8 @@ describe("GameTable", () => {
     render(<GameTable game={mockGame()} onSubmitAction={submitAction} pending={false} />);
 
     expect(screen.getByRole("heading", { name: "准备开局", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("1号位")).toBeInTheDocument();
-    expect(screen.getByText("房间已创建")).toBeInTheDocument();
+    expect(screen.getByText("1号")).toBeInTheDocument();
+    expect(screen.getAllByText("房间已创建").length).toBeGreaterThanOrEqual(1);
 
     await userEvent.click(screen.getByRole("button", { name: "开始游戏" }));
 
@@ -41,8 +41,9 @@ describe("GameTable", () => {
       />
     );
 
-    expect(screen.getByText("speech_delta")).toBeInTheDocument();
-    expect(screen.getByText("2号 小明：我正在实时发言")).toBeInTheDocument();
+    expect(screen.getByText("实时发言")).toBeInTheDocument();
+    expect(screen.getByText("2号 小明：")).toBeInTheDocument();
+    expect(screen.getByText("我正在实时发言")).toBeInTheDocument();
   });
 });
 

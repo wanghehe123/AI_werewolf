@@ -126,6 +126,7 @@ export interface SeerCheckResult {
 
 export interface PrivateInfoPayload {
   message: string;
+  subtype?: "witch_kill";
 }
 
 export interface PlayerActionOptionDto {
