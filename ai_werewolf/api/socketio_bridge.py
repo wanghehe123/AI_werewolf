@@ -18,9 +18,16 @@ from ai_werewolf.engine.helpers import frontend_state
 
 logger = logging.getLogger(__name__)
 
+
+def _local_dev_socketio_origins() -> list[str]:
+    ports = [4173, *range(5173, 5181)]
+    hosts = ("localhost", "127.0.0.1")
+    return [f"http://{host}:{port}" for host in hosts for port in ports]
+
+
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    cors_allowed_origins=_local_dev_socketio_origins(),
     logger=False,
     engineio_logger=False,
 )

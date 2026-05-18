@@ -17,7 +17,7 @@ import logging
 import os
 import re
 from collections.abc import Iterator
-from typing import Protocol
+from typing import Any, Protocol
 
 from ai_werewolf.llm.model_config import LLMProviderConfig
 
@@ -153,7 +153,7 @@ class OpenAICompatibleProvider:
         return os.getenv(self.config.api_key_env)
 
     def _client_base_url(self) -> str | None:
-        """Return the LangChain base URL, ensuring it ends with /v1 for OpenAI-compatible APIs."""
+        """Return the provider base URL without chat endpoint suffixes."""
         if not self.config.base_url:
             return None
         base_url = self.config.base_url.rstrip("/")
@@ -161,9 +161,13 @@ class OpenAICompatibleProvider:
         suffix = "/chat/completions"
         if base_url.lower().endswith(suffix):
             base_url = base_url[: -len(suffix)] or None
-        # Ensure base_url ends with /v1 for LangChain ChatOpenAI
+        return base_url
+
+    def _sdk_base_url(self) -> str | None:
+        """Return a transport-ready base URL for OpenAI-compatible SDK clients."""
+        base_url = self._client_base_url()
         if base_url and not base_url.endswith("/v1"):
-            base_url = base_url + "/v1"
+            return base_url + "/v1"
         return base_url
 
     def _build_system_prompt(self) -> str:
@@ -336,48 +340,99 @@ class OpenAICompatibleProvider:
         }
 
     def _get_llm_client(self):
-        """Get or create a cached LangChain ChatOpenAI client."""
+        """Get or create a cached LangChain or OpenAI-compatible client."""
         if self._llm_client is None:
-            from ai_werewolf.llm.client_pool import get_chat_openai
+            try:
+                from ai_werewolf.llm.client_pool import get_chat_openai
 
-            self._llm_client = get_chat_openai(
-                model=self.config.model_name,
-                api_key=self._get_api_key(),
-                base_url=self._client_base_url(),
-                timeout=self.config.timeout,
-                max_tokens=self.config.max_tokens,
-                temperature=self.config.temperature,
-                max_retries=0,  # Disabled, ProviderChain handles fallback
-            )
+                self._llm_client = get_chat_openai(
+                    model=self.config.model_name,
+                    api_key=self._get_api_key(),
+                    base_url=self._client_base_url(),
+                    timeout=self.config.timeout,
+                    max_tokens=self.config.max_tokens,
+                    temperature=self.config.temperature,
+                    max_retries=0,  # Disabled, ProviderChain handles fallback
+                )
+            except ModuleNotFoundError as exc:
+                if exc.name != "langchain_openai":
+                    raise
+                logger.warning(
+                    "Provider %s: langchain_openai 不可用，回退到 openai 兼容 SDK。model=%s base_url=%s",
+                    self.config.provider_id,
+                    self.config.model_name,
+                    self._client_base_url() or "(未设置)",
+                )
+                from openai import OpenAI
+
+                self._llm_client = OpenAI(
+                    api_key=self._get_api_key(),
+                    base_url=self._sdk_base_url(),
+                    timeout=self.config.timeout,
+                    max_retries=0,
+                )
         return self._llm_client
 
     def _chat_completion(self, llm, prompt: str, max_tokens: int):
-        """Call LangChain ChatOpenAI with SystemMessage and HumanMessage."""
-        from langchain_core.messages import HumanMessage, SystemMessage
+        """Call LangChain ChatOpenAI or OpenAI-compatible SDK."""
+        if hasattr(llm, "invoke"):
+            from langchain_core.messages import HumanMessage, SystemMessage
 
-        messages = [
-            SystemMessage(content=self._build_system_prompt()),
-            HumanMessage(content=prompt),
-        ]
-        return llm.invoke(messages)
+            messages = [
+                SystemMessage(content=self._build_system_prompt()),
+                HumanMessage(content=prompt),
+            ]
+            return llm.invoke(messages)
+
+        return llm.chat.completions.create(
+            model=self.config.model_name,
+            messages=[
+                {"role": "system", "content": self._build_system_prompt()},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=max_tokens,
+            temperature=self.config.temperature,
+        )
 
     def _response_content(self, response) -> str:
-        """Extract content from LangChain ChatMessage response."""
-        return response.content if hasattr(response, "content") else str(response)
+        """Extract content from LangChain or OpenAI-compatible responses."""
+        if hasattr(response, "content"):
+            return response.content
+        choices = getattr(response, "choices", None)
+        if choices:
+            message = getattr(choices[0], "message", None)
+            content = getattr(message, "content", None)
+            return content if isinstance(content, str) else str(content or "")
+        return str(response)
 
     def _response_diagnostics(self, response) -> dict:
-        """Extract diagnostic info from LangChain response."""
-        # LangChain response_metadata contains usage info
-        metadata = getattr(response, "response_metadata", {})
-        usage = metadata.get("usage", {}) if metadata else {}
+        """Extract diagnostic info from LangChain or OpenAI-compatible responses."""
+        if hasattr(response, "response_metadata"):
+            metadata = getattr(response, "response_metadata", {}) or {}
+            usage = metadata.get("usage", {}) if metadata else {}
+            return {
+                "finish_reason": metadata.get("finish_reason", None),
+                "content_chars": len(str(response.content)) if hasattr(response, "content") else 0,
+                "reasoning_chars": 0,
+                "usage": usage,
+            }
 
-        # Get finish reason from response metadata
-        finish_reason = metadata.get("finish_reason", None) if metadata else None
+        usage_obj = getattr(response, "usage", None)
+        usage = usage_obj.model_dump() if hasattr(usage_obj, "model_dump") else {}
+        finish_reason = None
+        reasoning_chars = 0
+        choices = getattr(response, "choices", None)
+        if choices:
+            finish_reason = getattr(choices[0], "finish_reason", None)
+            message = getattr(choices[0], "message", None)
+            reasoning_content = getattr(message, "reasoning_content", "") or ""
+            reasoning_chars = len(reasoning_content)
 
+        content = self._response_content(response)
         return {
             "finish_reason": finish_reason,
-            "content_chars": len(str(response.content)) if hasattr(response, "content") else 0,
-            "reasoning_chars": 0,  # LangChain doesn't expose reasoning_tokens directly
+            "content_chars": len(content),
+            "reasoning_chars": reasoning_chars,
             "usage": usage,
         }
 

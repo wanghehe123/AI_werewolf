@@ -54,6 +54,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+LOCAL_DEV_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
 
 def _registry_from_database() -> tuple[ModelProviderRegistry, list[RoleModelBinding], list[LLMProviderConfig]] | None:
     engine = create_engine_and_tables(configured_database_url())
@@ -175,7 +177,10 @@ def create_app() -> FastAPI:
             "http://127.0.0.1:5173",
             "http://localhost:5174",
             "http://127.0.0.1:5174",
+            "http://localhost:5175",
+            "http://127.0.0.1:5175",
         ],
+        allow_origin_regex=LOCAL_DEV_CORS_ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
