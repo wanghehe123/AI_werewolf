@@ -8,6 +8,7 @@ from ai_werewolf.domain.game_state import PlayerPrivateInfo
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import display_name, event
 from ai_werewolf.engine.session import GameSession
+from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_last_words_prompt, format_private_info
 from ai_werewolf.llm.schemas import PlayerDecision
@@ -18,9 +19,16 @@ logger = logging.getLogger(__name__)
 class HunterResolver:
     """Handle hunter shoot when the hunter dies."""
 
-    def __init__(self, model_registry: Any, role_model_bindings: list) -> None:
+    def __init__(
+        self,
+        model_registry: Any,
+        role_model_bindings: list,
+        *,
+        chain_config: list[dict] | None = None,
+    ) -> None:
         self.model_registry = model_registry
         self.role_model_bindings = role_model_bindings
+        self.chain_config = chain_config
 
     def try_shoot(self, session: GameSession, dead_player_id: str, death_cause: str = "night_kill") -> list[dict[str, Any]]:
         """Try to trigger hunter shoot.
@@ -97,8 +105,12 @@ class HunterResolver:
                 alive_players=[p.player_id for p in session.state.players if p.alive and p.player_id != player_id],
                 private_info=private_info_str,
             )
-            provider = self.model_registry.provider_for_role("hunter", self.role_model_bindings)
-            decider = PlayerDecider(provider)
+            decider = build_decider_for_role(
+                "hunter",
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
             return decider.decide(prompt)
         except Exception:
             logger.exception("AI hunter %s shoot decision failed", player_id)

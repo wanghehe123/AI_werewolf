@@ -8,6 +8,8 @@ from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import VoteResolver, _append_locked_decision_block
+from ai_werewolf.llm.model_config import LLMProviderConfig
+from ai_werewolf.llm.providers import FakeModelProvider
 from ai_werewolf.llm.schemas import PlayerDecision
 
 
@@ -150,6 +152,61 @@ def test_get_ai_vote_uses_unified_decision_graph():
     saved = resolver.memory_store.save_player_suspicion.call_args.args[0]
     assert saved.player_id == "ai_2"
     assert saved.records[0]["target_player_id"] == "human"
+
+
+def test_get_ai_vote_passes_provider_chain_into_decider():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(
+        model_registry=MagicMock(),
+        role_model_bindings=[],
+        role_registry=MagicMock(),
+        chain_config=[
+            {"provider": "deepseek", "timeout_ms": 6000, "max_retries": 1},
+            {"provider": "rule_engine", "timeout_ms": 50, "max_retries": 0},
+        ],
+    )
+    resolver.memory_context_builder = MagicMock()
+    resolver.memory_context_builder.build_for_player.return_value = MagicMock(
+        game_id="g",
+        player_id="ai_2",
+        phase="exile_vote",
+        day=1,
+        model_dump=MagicMock(return_value={}),
+    )
+    resolver.memory_store = MagicMock()
+
+    provider = FakeModelProvider(
+        LLMProviderConfig(
+            provider_id="mock-seer",
+            provider_type="fake",
+            model_name="mock-model",
+        ),
+    )
+    resolver.model_registry.provider_for_role.return_value = provider
+    resolver.model_registry.get.side_effect = lambda provider_id: provider if provider_id == "mock-seer" else None
+
+    with patch(
+        "ai_werewolf.engine.vote.run_player_decision_graph",
+        return_value={
+            "decision": PlayerDecision(
+                speech="我这一票给1号。",
+                action_type="vote",
+                target_id="human",
+                public_reason="怀疑最高",
+                private_memory_update="继续压人",
+            ),
+            "analysis": {"key_facts": ["1号站边摇摆"]},
+            "suspicion_update": {"records": [{"target_player_id": "human", "suspicion_score": 80}]},
+            "strategy": {"strategy_type": "vote_push"},
+            "action_draft": {"action_type": "vote", "target_id": "human"},
+            "error": None,
+        },
+    ) as run_graph:
+        resolver._get_ai_vote(session, "ai_2", "公开历史")
+
+    semantic_decider = run_graph.call_args.kwargs["semantic_decider"]
+    assert semantic_decider._chain is not None
+    assert semantic_decider._chain._tiers[0].provider_id == "mock-seer"
 
 
 def test_locked_vote_prompt_includes_identity_and_strategy_constraints():

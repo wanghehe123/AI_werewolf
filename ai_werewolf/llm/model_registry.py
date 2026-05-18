@@ -12,6 +12,7 @@
 """
 
 import logging
+import math
 
 from ai_werewolf.llm.chain.provider_chain import ProviderChain, ProviderTier
 from ai_werewolf.llm.chain.rule_engine import RuleEngineProvider
@@ -200,6 +201,8 @@ def build_registry_from_yaml(path: str | None = None) -> tuple[ModelProviderRegi
 def build_chain_from_config(
     chain_config: list[dict],
     registry: ModelProviderRegistry,
+    *,
+    primary_provider_id: str | None = None,
 ) -> ProviderChain:
     """Build a :class:`ProviderChain` from a YAML ``chains`` section.
 
@@ -218,8 +221,9 @@ def build_chain_from_config(
     """
     tiers: list[ProviderTier] = []
     providers: dict[str, ModelProvider] = {}
+    entries = _normalize_chain_entries(chain_config, registry, primary_provider_id=primary_provider_id)
 
-    for entry in chain_config:
+    for entry in entries:
         provider_id = entry.get("provider", entry.get("tier", "unknown"))
         timeout_ms = entry.get("timeout_ms", 6000)
         max_retries = entry.get("max_retries", 1)
@@ -240,7 +244,7 @@ def build_chain_from_config(
         else:
             existing = registry.get(provider_id)
             if existing is not None:
-                providers[provider_id] = existing
+                providers[provider_id] = _clone_provider_for_tier(existing, timeout_ms)
             else:
                 logger.warning(
                     "Chain tier '%s': provider not found in registry, "
@@ -249,3 +253,57 @@ def build_chain_from_config(
                 )
 
     return ProviderChain(tiers=tiers, providers=providers)
+
+
+def build_decider_for_role(
+    role_key: str,
+    registry: ModelProviderRegistry,
+    bindings: list[RoleModelBinding],
+    *,
+    chain_config: list[dict] | None = None,
+):
+    """Create a PlayerDecider for a role, optionally wiring the fallback chain."""
+    from ai_werewolf.llm.player_decider import PlayerDecider
+
+    provider = registry.provider_for_role(role_key, bindings)
+    chain = None
+    if chain_config:
+        chain = build_chain_from_config(
+            chain_config,
+            registry,
+            primary_provider_id=provider.config.provider_id,
+        )
+    return PlayerDecider(provider, chain=chain)
+
+
+def _normalize_chain_entries(
+    chain_config: list[dict],
+    registry: ModelProviderRegistry,
+    *,
+    primary_provider_id: str | None = None,
+) -> list[dict]:
+    entries = [dict(entry) for entry in chain_config]
+    if not entries or not primary_provider_id:
+        return entries
+
+    primary_entry = dict(entries[0])
+    primary_entry["provider"] = primary_provider_id
+    primary_provider = registry.get(primary_provider_id)
+    if primary_provider is not None:
+        primary_entry["model_name"] = primary_provider.config.model_name
+
+    normalized = [primary_entry]
+    seen_provider_ids = {primary_provider_id}
+    for entry in entries:
+        provider_id = entry.get("provider", entry.get("tier", "unknown"))
+        if provider_id in seen_provider_ids:
+            continue
+        normalized.append(dict(entry))
+        seen_provider_ids.add(provider_id)
+    return normalized
+
+
+def _clone_provider_for_tier(provider: ModelProvider, timeout_ms: int) -> ModelProvider:
+    timeout_seconds = max(1, math.ceil(timeout_ms / 1000))
+    cloned_config = provider.config.model_copy(update={"timeout": timeout_seconds})
+    return build_provider(cloned_config)

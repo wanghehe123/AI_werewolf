@@ -1,5 +1,6 @@
 import sys
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from ai_werewolf.llm.model_config import LLMProviderConfig, RoleModelBinding
 from ai_werewolf.llm.model_registry import ModelProviderRegistry
@@ -193,3 +194,71 @@ def test_openai_provider_retries_empty_length_response_with_more_tokens(monkeypa
     assert "LLM 返回空 content" in caplog.text
     assert "finish_reason=length" in caplog.text
     assert "reasoning_chars=8" in caplog.text
+
+
+def test_load_llm_config_from_yaml_keeps_chain_definitions(tmp_path):
+    from ai_werewolf.llm.model_config import load_llm_config_from_yaml
+
+    config_path = tmp_path / "llm.yaml"
+    config_path.write_text(
+        """
+providers:
+  - id: deepseek
+    type: openai_compatible
+    model_name: deepseek-ai/DeepSeek-V3.2
+    api_key: test-key
+role_bindings:
+  werewolf: deepseek
+default_provider: deepseek
+chains:
+  default:
+    - tier: primary
+      provider: deepseek
+      timeout_ms: 6000
+      max_retries: 1
+      triggers_to_next: [timeout, 5xx]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_llm_config_from_yaml(config_path)
+
+    assert "default" in config.chains
+    assert config.chains["default"][0]["provider"] == "deepseek"
+    assert config.chains["default"][0]["timeout_ms"] == 6000
+
+
+def test_openai_provider_logs_retry_stage_when_retry_timeout_raises(monkeypatch, caplog):
+    from openai import APITimeoutError
+
+    monkeypatch.setenv("TEST_DEEPSEEK_KEY", "set-but-not-secret")
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kwargs: object()))
+    provider = OpenAICompatibleProvider(LLMProviderConfig(
+        provider_id="deepseek",
+        provider_type="openai_compatible",
+        model_name="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        api_key_env="TEST_DEEPSEEK_KEY",
+        max_tokens=64,
+    ))
+
+    first_response = _FakeResponse(
+        "",
+        finish_reason="length",
+        reasoning_content="推理内容占满预算",
+        usage=_FakeUsage(completion_tokens=64, reasoning_tokens=64),
+    )
+    responses = iter([first_response, APITimeoutError(request=MagicMock())])
+
+    def fake_chat_completion(*args, **kwargs):
+        result = next(responses)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    with patch.object(provider, "_chat_completion", side_effect=fake_chat_completion):
+        decision = provider.decide("当前阶段：exile_vote\n请投票")
+
+    assert decision["public_reason"] == "LLM call failed"
+    assert "retry_after_empty_content" in caplog.text
+    assert "retry_max_tokens=" in caplog.text

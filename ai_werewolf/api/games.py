@@ -62,10 +62,13 @@ _game_repository: Any | None = None
 
 _model_registry = ModelProviderRegistry()
 _role_model_bindings: list = []
+_default_chain_config: list[dict[str, Any]] | None = None
 _tts_generation_lock = asyncio.Lock()
 
 # 从 config/llm.yaml 加载 LLM 配置（优先）；若 YAML 不可用则注册 fake 回退
 try:
+    llm_config = load_llm_config_from_yaml()
+    _default_chain_config = llm_config.chains.get("default")
     _model_registry, _role_model_bindings = build_registry_from_yaml()
     logger.info("LLM 配置从 config/llm.yaml 加载成功，已注册 %d 个 Provider", len(_model_registry.all_provider_ids()))
 except Exception:
@@ -78,7 +81,12 @@ except Exception:
         for r in ["werewolf", "seer", "witch", "hunter", "villager"]
     ]
 
-_orchestrator = PhaseOrchestrator(_model_registry, _role_registry, _role_model_bindings)
+_orchestrator = PhaseOrchestrator(
+    _model_registry,
+    _role_registry,
+    _role_model_bindings,
+    chain_config=_default_chain_config,
+)
 
 
 async def synthesize_tts_audio(text: str, voice: str | None = None) -> bytes:
@@ -113,11 +121,21 @@ def configure_game_repository(repository: Any | None) -> None:
     _game_repository = repository
 
 
-def configure_model_registry(registry: ModelProviderRegistry, role_model_bindings: list) -> None:
-    global _model_registry, _role_model_bindings, _orchestrator
+def configure_model_registry(
+    registry: ModelProviderRegistry,
+    role_model_bindings: list,
+    chain_config: list[dict[str, Any]] | None = None,
+) -> None:
+    global _model_registry, _role_model_bindings, _orchestrator, _default_chain_config
     _model_registry = registry
     _role_model_bindings = role_model_bindings
-    _orchestrator = PhaseOrchestrator(_model_registry, _role_registry, role_model_bindings)
+    _default_chain_config = chain_config
+    _orchestrator = PhaseOrchestrator(
+        _model_registry,
+        _role_registry,
+        role_model_bindings,
+        chain_config=_default_chain_config,
+    )
 
 
 # ==================== 工具函数 ====================

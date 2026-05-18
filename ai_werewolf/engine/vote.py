@@ -18,6 +18,7 @@ from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nod
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
 from ai_werewolf.llm.memory.summary_builder import build_player_suspicion_memory, build_private_role_memory
 from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_store
+from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
@@ -82,6 +83,7 @@ class VoteResolver:
         role_registry: BuiltInRoleRegistry,
         *,
         memory_store: MemoryStore | None = None,
+        chain_config: list[dict] | None = None,
     ) -> None:
         self.model_registry = model_registry
         self.role_model_bindings = role_model_bindings
@@ -89,6 +91,7 @@ class VoteResolver:
         self.scheduler = AIActionScheduler(role_registry)
         self.memory_store = memory_store or get_shared_redis_memory_store()
         self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
+        self.chain_config = chain_config
 
     def resolve(self, session: GameSession, human_vote: dict) -> dict[str, Any]:
         """Collect all votes and resolve exile.
@@ -185,8 +188,12 @@ class VoteResolver:
 
         try:
             memory_context = self.memory_context_builder.build_for_player(session, player_id)
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            decider = PlayerDecider(provider)
+            decider = build_decider_for_role(
+                player.role_key,
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
 
             def decision_generator(state: dict[str, Any]) -> PlayerDecision:
                 tasks = self.scheduler.schedule(

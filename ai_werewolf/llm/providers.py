@@ -353,11 +353,28 @@ class OpenAICompatibleProvider:
                 )
         return self._llm_client
 
-    def _chat_completion(self, llm, prompt: str, max_tokens: int):
+    def _chat_completion(
+        self,
+        llm,
+        prompt: str,
+        max_tokens: int,
+        *,
+        timeout: int | None = None,
+    ):
         """Call LangChain ChatOpenAI or OpenAI-compatible SDK."""
         if hasattr(llm, "invoke"):
+            from ai_werewolf.llm.client_pool import get_chat_openai
             from langchain_core.messages import HumanMessage, SystemMessage
 
+            llm = get_chat_openai(
+                model=self.config.model_name,
+                api_key=self._get_api_key(),
+                base_url=self._client_base_url(),
+                timeout=timeout or self.config.timeout,
+                max_tokens=max_tokens,
+                temperature=self.config.temperature,
+                max_retries=0,
+            )
             messages = [
                 SystemMessage(content=self._build_system_prompt()),
                 HumanMessage(content=prompt),
@@ -372,6 +389,7 @@ class OpenAICompatibleProvider:
             ],
             max_tokens=max_tokens,
             temperature=self.config.temperature,
+            timeout=timeout or self.config.timeout,
         )
 
     def _response_content(self, response) -> str:
@@ -422,7 +440,10 @@ class OpenAICompatibleProvider:
             usage = diagnostics.get("usage", {})
             details = usage.get("completion_tokens_details") or {}
             reasoning_tokens = details.get("reasoning_tokens") or 0
-            if reasoning_tokens > 0 and diagnostics.get("content_chars", 1) == 0:
+            reasoning_chars = diagnostics.get("reasoning_chars", 0) or 0
+            if (reasoning_tokens > 0 or reasoning_chars > 0) and diagnostics.get("content_chars", 1) == 0:
+                if current_max_tokens >= 2048:
+                    return None
                 # Reasoning model exhausted budget on thinking — need much more headroom
                 retry = max(current_max_tokens * 4, 8192)
                 return retry if retry > current_max_tokens else None
@@ -431,6 +452,11 @@ class OpenAICompatibleProvider:
         if retry_max_tokens <= current_max_tokens:
             return None
         return retry_max_tokens
+
+    def _retry_timeout_seconds(self, retry_max_tokens: int) -> int:
+        if retry_max_tokens <= self.config.max_tokens:
+            return self.config.timeout
+        return min(max(self.config.timeout + 5, int(self.config.timeout * 1.5)), 60)
 
     def decide(self, prompt: str) -> dict:
         """
@@ -469,6 +495,9 @@ class OpenAICompatibleProvider:
         try:
             # 获取或创建缓存的 LangChain ChatOpenAI 客户端
             llm = self._get_llm_client()
+            request_stage = "initial_request"
+            last_diagnostics: dict[str, Any] | None = None
+            retry_max_tokens: int | None = None
 
             response = self._chat_completion(llm, prompt, self.config.max_tokens)
 
@@ -476,8 +505,11 @@ class OpenAICompatibleProvider:
             content = self._response_content(response)
             if not content.strip():
                 diagnostics = self._response_diagnostics(response)
+                last_diagnostics = diagnostics
                 retry_max_tokens = self._empty_content_retry_tokens(self.config.max_tokens, diagnostics)
+                retried = False
                 if retry_max_tokens is not None:
+                    retried = True
                     logger.warning(
                         "Provider %s: LLM 返回空 content，准备提高 max_tokens 后重试。model=%s base_url=%s "
                         "finish_reason=%s content_chars=%s reasoning_chars=%s usage=%s retry_max_tokens=%s",
@@ -490,15 +522,23 @@ class OpenAICompatibleProvider:
                         diagnostics["usage"],
                         retry_max_tokens,
                     )
-                    response = self._chat_completion(llm, prompt, retry_max_tokens)
+                    request_stage = "retry_after_empty_content"
+                    response = self._chat_completion(
+                        llm,
+                        prompt,
+                        retry_max_tokens,
+                        timeout=self._retry_timeout_seconds(retry_max_tokens),
+                    )
                     content = self._response_content(response)
                 if not content.strip():
                     diagnostics = self._response_diagnostics(response)
+                    last_diagnostics = diagnostics
                     logger.warning(
-                        "Provider %s: LLM 重试后仍返回空 content，将使用 fallback。model=%s base_url=%s "
+                        "Provider %s: LLM %s返回空 content，将使用 fallback。model=%s base_url=%s "
                         "finish_reason=%s content_chars=%s reasoning_chars=%s usage=%s",
                         self.config.provider_id,
                         self.config.model_name,
+                        "重试后仍" if retried else "在当前预算下",
                         base_url or "(未设置)",
                         diagnostics["finish_reason"],
                         diagnostics["content_chars"],
@@ -533,10 +573,13 @@ class OpenAICompatibleProvider:
             # 捕获所有异常（网络错误、API 错误、解析错误等）
             # 记录错误但不中断游戏，返回 fallback 决策
             logger.exception(
-                "Provider %s: LLM API 调用失败，使用 fallback 响应。model=%s base_url=%s",
+                "Provider %s: LLM API 调用失败，使用 fallback 响应。model=%s base_url=%s stage=%s retry_max_tokens=%s diagnostics=%s",
                 self.config.provider_id,
                 self.config.model_name,
                 base_url or "(未设置)",
+                locals().get("request_stage", "initial_request"),
+                locals().get("retry_max_tokens"),
+                locals().get("last_diagnostics"),
             )
             return self._fallback_decision(prompt, "LLM call failed")
 

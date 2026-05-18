@@ -16,6 +16,7 @@ LLM 模型配置模块
 
 import os
 from pathlib import Path
+from typing import Any
 from typing import Literal
 
 import yaml
@@ -85,6 +86,7 @@ class LLMConfig(BaseModel):
     providers: list[LLMProviderConfig]
     role_bindings: list[RoleModelBinding]
     default_provider: str = "fake"
+    chains: dict[str, list[dict[str, Any]]] = {}
 
 
 def default_provider_configs() -> list[LLMProviderConfig]:
@@ -174,6 +176,7 @@ def load_llm_config_from_yaml(path: str | Path | None = None) -> LLMConfig:
             providers=default_provider_configs(),
             role_bindings=default_role_model_bindings(),
             default_provider="default",
+            chains={},
         )
 
     # 读取并解析 YAML 文件
@@ -215,4 +218,5 @@ def load_llm_config_from_yaml(path: str | Path | None = None) -> LLMConfig:
         providers=providers,
         role_bindings=role_bindings,
         default_provider=raw.get("default_provider", "default"),
+        chains=raw.get("chains", {}),
     )

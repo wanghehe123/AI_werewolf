@@ -26,6 +26,7 @@ from ai_werewolf.llm.memory.summary_builder import (
     build_private_role_memory,
 )
 from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_store
+from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import Winner, evaluate_winner
@@ -65,24 +66,28 @@ class PhaseOrchestrator:
         role_model_bindings: list,
         *,
         memory_store: MemoryStore | None = None,
+        chain_config: list[dict] | None = None,
     ) -> None:
         self.model_registry = model_registry
         self.role_registry = role_registry
         self.role_model_bindings = role_model_bindings
+        self.chain_config = chain_config
         self.memory_store = memory_store or get_shared_redis_memory_store()
         self.night = NightResolver(
             model_registry,
             role_model_bindings,
             role_registry,
             memory_store=self.memory_store,
+            chain_config=chain_config,
         )
         self.vote = VoteResolver(
             model_registry,
             role_model_bindings,
             role_registry,
             memory_store=self.memory_store,
+            chain_config=chain_config,
         )
-        self.hunter = HunterResolver(model_registry, role_model_bindings)
+        self.hunter = HunterResolver(model_registry, role_model_bindings, chain_config=chain_config)
         self.scheduler = AIActionScheduler(role_registry)
         self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
 
@@ -390,8 +395,12 @@ class PhaseOrchestrator:
             task = next((t for t in tasks if t.player_id == player_id), None)
             if task is None:
                 return "没有遗言。"
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            decider = PlayerDecider(provider)
+            decider = build_decider_for_role(
+                player.role_key,
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
             record_prompt_trace(session, player_id, "last_words", task.prompt)
             decision = decider.decide(task.prompt)
             return decision.speech
@@ -423,8 +432,12 @@ class PhaseOrchestrator:
             }
 
         memory_context = self.memory_context_builder.build_for_player(session, player_id)
-        provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-        decider = PlayerDecider(provider)
+        decider = build_decider_for_role(
+            player.role_key,
+            self.model_registry,
+            self.role_model_bindings,
+            chain_config=self.chain_config,
+        )
 
         def speech_generator(state: dict) -> str:
             task = self._find_day_speech_task(session, player_id, context)

@@ -19,6 +19,7 @@ from ai_werewolf.llm.graphs.witch_council import run_witch_council
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
 from ai_werewolf.llm.memory.summary_builder import build_player_suspicion_memory, build_private_role_memory
 from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_store
+from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_night_action_prompt, format_private_info
 from ai_werewolf.llm.schemas import PlayerDecision
@@ -59,6 +60,7 @@ class NightResolver:
         role_registry: BuiltInRoleRegistry,
         *,
         memory_store: MemoryStore | None = None,
+        chain_config: list[dict] | None = None,
     ) -> None:
         self.model_registry = model_registry
         self.role_model_bindings = role_model_bindings
@@ -66,6 +68,7 @@ class NightResolver:
         self.scheduler = AIActionScheduler(role_registry)
         self.memory_store = memory_store or get_shared_redis_memory_store()
         self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
+        self.chain_config = chain_config
 
     def resolve(self, session: GameSession, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Collect all night actions via LLM and resolve deaths.
@@ -428,8 +431,12 @@ class NightResolver:
         # 每个狼人调用 LLM 时需要自己的 PlayerDecider 实例
         def decider_factory(wolf_id: str) -> PlayerDecider:
             player = session.state.player_by_id(wolf_id)
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            return PlayerDecider(provider)
+            return build_decider_for_role(
+                player.role_key,
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
 
         try:
             result = run_werewolf_council(
@@ -663,8 +670,12 @@ class NightResolver:
 
         def decider_factory(witch_id: str) -> PlayerDecider:
             player = session.state.player_by_id(witch_id)
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            return PlayerDecider(provider)
+            return build_decider_for_role(
+                player.role_key,
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
 
         result = run_witch_council(
             game_id=session.state.game_id,
@@ -865,8 +876,12 @@ class NightResolver:
             return PlayerDecision(speech="无行动", action_type="no_action", target_id=None, public_reason=None, private_memory_update=None)
 
         memory_context = self.memory_context_builder.build_for_player(session, player_id)
-        provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-        decider = PlayerDecider(provider)
+        decider = build_decider_for_role(
+            player.role_key,
+            self.model_registry,
+            self.role_model_bindings,
+            chain_config=self.chain_config,
+        )
 
         def decision_generator(state: dict[str, Any]) -> PlayerDecision:
             tasks = self.scheduler.schedule(
@@ -905,8 +920,12 @@ class NightResolver:
         try:
             decision_decider = decider
             if decision_decider is None:
-                provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-                decision_decider = PlayerDecider(provider)
+                decision_decider = build_decider_for_role(
+                    player.role_key,
+                    self.model_registry,
+                    self.role_model_bindings,
+                    chain_config=self.chain_config,
+                )
             record_prompt_trace(session, player_id, "night_action", prompt)
             decision = decision_decider.decide(prompt)
 

@@ -160,10 +160,12 @@ def create_app() -> FastAPI:
     # ---- LLM 模型初始化 ----
     # 始终从 YAML 加载配置（数据库配置已废弃）。
     try:
+        llm_config = load_llm_config_from_yaml()
         registry, role_bindings = build_registry_from_yaml()
+        chain_config = llm_config.chains.get("default")
         providers = [registry.get(provider_id).config for provider_id in registry.all_provider_ids() if registry.get(provider_id) is not None]
         logger.info("LLM 配置从 YAML 加载成功，已注册 %d 个 Provider", len(registry.all_provider_ids()))
-        configure_model_registry(registry, role_bindings)
+        configure_model_registry(registry, role_bindings, chain_config=chain_config)
         _log_missing_llm_keys(providers, role_bindings)
     except Exception:
         logger.exception("LLM 配置加载失败，将使用默认配置")

@@ -12,3 +12,6 @@ logs/
 
 # LLM config with real API keys (use config/llm.yaml.example as template)
 ai_werewolf/config/llm.yaml
+
+# Local resume drafts
+ai_werewolf/docs/resume/

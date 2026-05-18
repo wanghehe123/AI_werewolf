@@ -9,6 +9,7 @@ dependencies = [
   "sqlmodel",
   "psycopg[binary]",
   "langgraph",
+  "langchain-openai",
   "openai>=1.0",
   "orjson",
   "pyyaml>=6.0",
