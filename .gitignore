@@ -6,12 +6,17 @@ __pycache__/
 node_modules/
 dist/
 coverage/
-logs/
 .worktrees/
 *.tsbuildinfo
 
+# Ignore everything except frontend and ai_werewolf
+/*
+!/frontend/
+!/ai_werewolf/
+
+# But ignore these inside ai_werewolf
+ai_werewolf/docs/
+ai_werewolf/logs/
+
 # LLM config with real API keys (use config/llm.yaml.example as template)
 ai_werewolf/config/llm.yaml
-
-# Local resume drafts
-ai_werewolf/docs/resume/
