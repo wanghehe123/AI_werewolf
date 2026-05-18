@@ -114,17 +114,18 @@ class FakeModelProvider:
 
 class OpenAICompatibleProvider:
     """
-    OpenAI 兼容接口 Provider
+    OpenAI 兼容接口 Provider（使用 LangChain ChatOpenAI）
 
     支持所有兼容 OpenAI Chat Completions API 格式的服务，包括：
     - OpenAI (GPT-4o, GPT-4o-mini 等)
     - DeepSeek (deepseek-chat, deepseek-reasoner 等)
     - 通义千问 (qwen-plus, qwen-turbo 等)
+    - SiliconFlow (GLM-4.7, Kimi-K2.5 等)
     - 本地 Ollama (qwen3, llama3 等)
 
     工作流程：
     1. 从配置中获取 base_url 和 API Key（通过环境变量）
-    2. 使用 OpenAI SDK 发送 Chat Completion 请求
+    2. 使用 LangChain ChatOpenAI 发送请求（客户端可复用）
     3. System Prompt 指导模型返回 JSON 格式的决策
     4. 解析模型响应，提取 JSON 内容
     5. 如果解析失败，返回 fallback 决策
@@ -132,6 +133,8 @@ class OpenAICompatibleProvider:
 
     def __init__(self, config: LLMProviderConfig) -> None:
         self.config = config
+        # Lazy-loaded LangChain client (cached in client_pool)
+        self._llm_client: Any = None
 
     def _get_api_key(self) -> str | None:
         """
@@ -150,13 +153,17 @@ class OpenAICompatibleProvider:
         return os.getenv(self.config.api_key_env)
 
     def _client_base_url(self) -> str | None:
-        """Return the OpenAI SDK base URL, accepting accidental full endpoint URLs."""
+        """Return the LangChain base URL, ensuring it ends with /v1 for OpenAI-compatible APIs."""
         if not self.config.base_url:
             return None
         base_url = self.config.base_url.rstrip("/")
+        # Remove /chat/completions suffix if present (common mistake)
         suffix = "/chat/completions"
         if base_url.lower().endswith(suffix):
-            return base_url[: -len(suffix)] or None
+            base_url = base_url[: -len(suffix)] or None
+        # Ensure base_url ends with /v1 for LangChain ChatOpenAI
+        if base_url and not base_url.endswith("/v1"):
+            base_url = base_url + "/v1"
         return base_url
 
     def _build_system_prompt(self) -> str:
@@ -328,29 +335,49 @@ class OpenAICompatibleProvider:
             "private_memory_update": None,
         }
 
-    def _chat_completion(self, client, prompt: str, max_tokens: int):
-        return client.chat.completions.create(
-            model=self.config.model_name,
-            messages=[
-                {"role": "system", "content": self._build_system_prompt()},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=self.config.temperature,
-            max_tokens=max_tokens,
-        )
+    def _get_llm_client(self):
+        """Get or create a cached LangChain ChatOpenAI client."""
+        if self._llm_client is None:
+            from ai_werewolf.llm.client_pool import get_chat_openai
+
+            self._llm_client = get_chat_openai(
+                model=self.config.model_name,
+                api_key=self._get_api_key(),
+                base_url=self._client_base_url(),
+                timeout=self.config.timeout,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+                max_retries=0,  # Disabled, ProviderChain handles fallback
+            )
+        return self._llm_client
+
+    def _chat_completion(self, llm, prompt: str, max_tokens: int):
+        """Call LangChain ChatOpenAI with SystemMessage and HumanMessage."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        messages = [
+            SystemMessage(content=self._build_system_prompt()),
+            HumanMessage(content=prompt),
+        ]
+        return llm.invoke(messages)
 
     def _response_content(self, response) -> str:
-        return response.choices[0].message.content or ""
+        """Extract content from LangChain ChatMessage response."""
+        return response.content if hasattr(response, "content") else str(response)
 
     def _response_diagnostics(self, response) -> dict:
-        choice = response.choices[0]
-        message = choice.message
-        reasoning_content = getattr(message, "reasoning_content", "") or ""
-        usage = response.usage.model_dump() if getattr(response, "usage", None) else {}
+        """Extract diagnostic info from LangChain response."""
+        # LangChain response_metadata contains usage info
+        metadata = getattr(response, "response_metadata", {})
+        usage = metadata.get("usage", {}) if metadata else {}
+
+        # Get finish reason from response metadata
+        finish_reason = metadata.get("finish_reason", None) if metadata else None
+
         return {
-            "finish_reason": getattr(choice, "finish_reason", None),
-            "content_chars": len(getattr(message, "content", "") or ""),
-            "reasoning_chars": len(reasoning_content),
+            "finish_reason": finish_reason,
+            "content_chars": len(str(response.content)) if hasattr(response, "content") else 0,
+            "reasoning_chars": 0,  # LangChain doesn't expose reasoning_tokens directly
             "usage": usage,
         }
 
@@ -372,12 +399,12 @@ class OpenAICompatibleProvider:
 
     def decide(self, prompt: str) -> dict:
         """
-        调用 OpenAI 兼容 API 获取模型决策
+        调用 LangChain ChatOpenAI 获取模型决策
 
         完整流程：
         1. 检查 API Key 是否已配置
-        2. 创建 OpenAI 客户端
-        3. 发送 Chat Completion 请求
+        2. 获取或创建缓存的 LangChain ChatOpenAI 客户端（可复用连接）
+        3. 发送 Chat Completion 请求（使用 SystemMessage + HumanMessage）
         4. 解析响应内容为结构化决策
 
         如果 API 调用失败（网络错误、Key 无效等），会记录错误并返回 fallback 决策，
@@ -405,20 +432,10 @@ class OpenAICompatibleProvider:
             return self._fallback_decision(prompt, "API key not configured")
 
         try:
-            # 延迟导入，避免在不需要时加载 openai 库
-            from openai import OpenAI
+            # 获取或创建缓存的 LangChain ChatOpenAI 客户端
+            llm = self._get_llm_client()
 
-            # 创建 OpenAI 客户端
-            # base_url 支持自定义端点（DeepSeek、Ollama 等）
-            # max_retries=0: 禁用 SDK 内置重试，由上层 ProviderChain 控制降级逻辑
-            client = OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                timeout=self.config.timeout,
-                max_retries=0,  # 避免 SDK 与 ProviderChain 双重重试
-            )
-
-            response = self._chat_completion(client, prompt, self.config.max_tokens)
+            response = self._chat_completion(llm, prompt, self.config.max_tokens)
 
             # 提取响应文本
             content = self._response_content(response)
@@ -438,7 +455,7 @@ class OpenAICompatibleProvider:
                         diagnostics["usage"],
                         retry_max_tokens,
                     )
-                    response = self._chat_completion(client, prompt, retry_max_tokens)
+                    response = self._chat_completion(llm, prompt, retry_max_tokens)
                     content = self._response_content(response)
                 if not content.strip():
                     diagnostics = self._response_diagnostics(response)
@@ -489,7 +506,7 @@ class OpenAICompatibleProvider:
             return self._fallback_decision(prompt, "LLM call failed")
 
     def stream_speech(self, prompt: str) -> Iterator[str]:
-        """Stream plain public speech text; fall back to chunked non-stream output."""
+        """Stream plain public speech text using LangChain; fall back to chunked non-stream output."""
         api_key = self._get_api_key()
         base_url = self._client_base_url()
         if not api_key:
@@ -497,31 +514,24 @@ class OpenAICompatibleProvider:
             return
 
         try:
-            from openai import OpenAI
+            from langchain_core.messages import HumanMessage, SystemMessage
 
-            # max_retries=0: 禁用 SDK 内置重试，由上层控制降级逻辑
-            client = OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                timeout=self.config.timeout,
-                max_retries=0,  # 避免 SDK 与 ProviderChain 双重重试
-            )
-            stream = client.chat.completions.create(
-                model=self.config.model_name,
-                messages=[
-                    {"role": "system", "content": self._build_speech_stream_system_prompt()},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                stream=True,
-            )
+            # 获取或创建缓存的 LangChain ChatOpenAI 客户端
+            llm = self._get_llm_client()
+
+            # 使用 LangChain 的 stream() 方法
+            messages = [
+                SystemMessage(content=self._build_speech_stream_system_prompt()),
+                HumanMessage(content=prompt),
+            ]
+
             emitted = False
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content or ""
-                if delta:
+            for chunk in llm.stream(messages):
+                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                if content:
                     emitted = True
-                    yield delta
+                    yield content
+
             if not emitted:
                 yield from _chunk_text(self.decide(prompt)["speech"])
         except Exception:
