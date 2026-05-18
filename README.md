@@ -2,7 +2,7 @@
 
 > **基于 LangChain / LangGraph 的多智能体 AI 对战平台**
 >
-> Multi-Agent Werewolf Game powered by LangChain · LangGraph · FastAPI · Redis
+> Multi-Agent Werewolf Game powered by LangChain · LangGraph · FastAPI · Redis · MySQL/PostgreSQL
 
 [![Python](https://img.shields.io/badge/Python-3.14%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.136%2B-green)](https://fastapi.tiangolo.com/)
@@ -37,6 +37,7 @@ AI 狼人杀是一个**多智能体 AI 对战平台**。平台中，多个 AI �
 | LLM 框架 | LangChain 0.2+ · LangGraph |
 | AI 模型 | DeepSeek-V3.2 · Qwen3.6 · DeepSeek-R1 · MiniMax-M2.5 |
 | 数据验证 | Pydantic V2 |
+| 数据库 | MySQL 8+ / PostgreSQL 14+（SQLModel ORM） |
 | 缓存 / 会话 | Redis 5+ |
 | 实时通信 | Socket.IO · SSE |
 | 语音合成 | edge-tts · MiniMax TTS |
@@ -153,7 +154,11 @@ ai_werewolf/
 │   └── model_registry.py   # ModelProviderRegistry
 ├── infra/
 │   └── redis_client.py     # Redis 连接管理
-├── storage/                # 数据持久层（SQLModel）
+├── storage/                # 数据持久层（SQLModel + MySQL/PostgreSQL）
+│   ├── models.py           # SQLModel 数据模型
+│   ├── repositories.py     # 数据访问层
+│   ├── database.py         # 数据库连接与表创建
+│   └── catalog.py          # 数据库表目录
 ├── tts/                    # 语音合成模块
 ├── tests/                  # pytest 单元测试（384+）
 └── main.py                 # FastAPI 应用入口
@@ -166,6 +171,7 @@ ai_werewolf/
 ### 前置要求
 
 - Python 3.14+
+- MySQL 8+ 或 PostgreSQL 14+（用于数据持久化）
 - Redis 7+（本地运行 `redis-server` 或使用 Docker）
 - [uv](https://docs.astral.sh/uv/) 包管理器
 
@@ -208,7 +214,89 @@ providers:
 > api_key_env: SILICONFLOW_API_KEY
 > ```
 
-### 4. 启动 Redis
+### 4. 配置数据库
+
+项目支持 MySQL 和 PostgreSQL 两种数据库。选择其中一种进行配置。
+
+#### 使用 MySQL
+
+```bash
+# 使用 Docker 启动 MySQL
+docker run -d \
+  --name ai-werewolf-mysql \
+  -e MYSQL_ROOT_PASSWORD=rootpassword \
+  -e MYSQL_DATABASE=ai_werewolf \
+  -e MYSQL_USER=werewolf \
+  -e MYSQL_PASSWORD=werewolf123 \
+  -p 3306:3306 \
+  mysql:8
+
+# 等待 MySQL 启动后，创建数据库（如果未自动创建）
+docker exec -i ai-werewolf-mysql mysql -uroot -prootpassword -e "CREATE DATABASE IF NOT EXISTS ai_werewolf;"
+```
+
+编辑 `ai_werewolf/config/application.yaml`：
+
+```yaml
+app:
+  database:
+    enabled: true
+    username: werewolf
+    password: werewolf123
+    url: jdbc:mysql://127.0.0.1:3306/
+    database: ai_werewolf
+    schema: public
+    echo: false
+```
+
+#### 使用 PostgreSQL（默认）
+
+```bash
+# 使用 Docker 启动 PostgreSQL
+docker run -d \
+  --name ai-werewolf-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=ai_werewolf \
+  -p 5432:5432 \
+  postgres:16
+```
+
+编辑 `ai_werewolf/config/application.yaml`：
+
+```yaml
+app:
+  database:
+    enabled: true
+    username: postgres
+    password: postgres
+    url: jdbc:postgresql://127.0.0.1:5432/
+    database: ai_werewolf
+    schema: public
+    echo: false
+```
+
+#### 环境变量方式配置（推荐生产环境）
+
+创建 `.env` 文件：
+
+```bash
+# MySQL 配置示例
+AI_WEREWOLF_DATABASE_ENABLED=true
+AI_WEREWOLF_DATABASE_USERNAME=werewolf
+AI_WEREWOLF_DATABASE_PASSWORD=werewolf123
+AI_WEREWOLF_DATABASE_JDBC_URL=jdbc:mysql://127.0.0.1:3306/
+AI_WEREWOLF_DATABASE_NAME=ai_werewolf
+
+# PostgreSQL 配置示例
+# AI_WEREWOLF_DATABASE_ENABLED=true
+# AI_WEREWOLF_DATABASE_USERNAME=postgres
+# AI_WEREWOLF_DATABASE_PASSWORD=postgres
+# AI_WEREWOLF_DATABASE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/
+# AI_WEREWOLF_DATABASE_NAME=ai_werewolf
+```
+
+### 5. 启动 Redis
 
 ```bash
 # 本地 Docker
@@ -218,13 +306,13 @@ docker run -d -p 6379:6379 redis:7
 redis-server
 ```
 
-### 5. 启动后端
+### 6. 启动后端
 
 ```bash
 uv run uvicorn ai_werewolf.main:app --reload --port 8000
 ```
 
-### 6. 运行测试
+### 7. 运行测试
 
 ```bash
 uv run pytest tests/ -v
@@ -233,6 +321,79 @@ uv run pytest tests/ -v
 ---
 
 ## 配置说明
+
+### 数据库配置
+
+项目使用 SQLModel（基于 SQLAlchemy）作为 ORM，支持 MySQL 和 PostgreSQL。
+
+#### MySQL 配置
+
+确保安装 MySQL 驱动（项目默认包含）：
+
+```bash
+# 如果使用 MySQL，需要安装 pymysql 或 aiomysql
+uv add pymysql
+# 或异步版本
+uv add aiomysql
+```
+
+在 `config/application.yaml` 中配置：
+
+```yaml
+app:
+  database:
+    enabled: true
+    username: werewolf
+    password: werewolf123
+    url: jdbc:mysql://127.0.0.1:3306/
+    database: ai_werewolf
+    schema: public
+    echo: false  # 设为 true 可在控制台看到 SQL 语句
+```
+
+支持的 MySQL URL 格式：
+- `jdbc:mysql://host:port/`
+- `mysql://host:port/`
+- `mysql+pymysql://host:port/`
+
+#### PostgreSQL 配置
+
+PostgreSQL 是项目默认数据库，驱动 `psycopg[binary]` 已包含在依赖中。
+
+在 `config/application.yaml` 中配置：
+
+```yaml
+app:
+  database:
+    enabled: true
+    username: postgres
+    password: postgres
+    url: jdbc:postgresql://127.0.0.1:5432/
+    database: ai_werewolf
+    schema: public
+    echo: false
+```
+
+支持的 PostgreSQL URL 格式：
+- `jdbc:postgresql://host:port/`
+- `postgresql://host:port/`
+- `postgresql+psycopg://host:port/`
+
+#### 禁用数据库持久化
+
+如果仅使用 Redis 存储会话数据，可禁用数据库：
+
+```yaml
+app:
+  database:
+    enabled: false
+```
+
+或设置环境变量：
+
+```bash
+export AI_WEREWOLF_DATABASE_ENABLED=false
+```
 
 ### 替换 LLM Provider
 
