@@ -11,6 +11,7 @@ coverage/
 
 # Ignore everything except frontend and ai_werewolf
 /*
+!/.gitignore
 !/frontend/
 !/ai_werewolf/
 
