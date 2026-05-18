@@ -3,94 +3,334 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 from langgraph.graph import END, START, StateGraph
 
 from ai_werewolf.domain.actions import PlayerActionType
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import PlayerState
-from ai_werewolf.llm.graphs.player_decision_state import PlayerDecisionGraphState, PlayerSpeechGraphState
+from ai_werewolf.llm.graphs.player_decision_models import PlayerStrategy, SituationAnalysis, SuspicionUpdate
+from ai_werewolf.llm.graphs.player_decision_prompts import (
+    build_strategy_prompt,
+    build_situation_analysis_prompt,
+    build_suspicion_update_prompt,
+)
+from ai_werewolf.llm.graphs.player_decision_state import PlayerDecisionGraphState
 from ai_werewolf.llm.memory.context_builder import MemoryContext
 from ai_werewolf.llm.safety import is_safe_speech
 from ai_werewolf.llm.schemas import PlayerDecision
 
 logger = logging.getLogger(__name__)
 
-SpeechGenerator = Callable[[dict[str, Any]], str]
 DecisionGenerator = Callable[[dict[str, Any]], PlayerDecision]
 
 
-def n1_analyze_situation(state: PlayerDecisionGraphState) -> dict[str, Any]:
+class RawDecisionModel(Protocol):
+    def decide_raw(self, prompt: str) -> dict:
+        ...
+
+
+def configured_semantic_nodes() -> set[str]:
+    raw_value = os.getenv("AI_WEREWOLF_SEMANTIC_GRAPH_NODES")
+    if raw_value is None and ("PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules):
+        raw_value = ""
+    if raw_value is None:
+        raw_value = "n1"
+    nodes = {item.strip() for item in raw_value.split(",") if item.strip()}
+    return nodes & {"n1", "n2", "n3"}
+
+
+def _with_semantic_metadata(
+    *,
+    state: PlayerDecisionGraphState,
+    payload: dict[str, Any],
+    node_name: str,
+    source: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    result = dict(payload)
+    result["semantic_node_sources"] = {
+        **state.get("semantic_node_sources", {}),
+        node_name: source,
+    }
+    if error is not None:
+        result["semantic_node_errors"] = {
+            **state.get("semantic_node_errors", {}),
+            node_name: error,
+        }
+    return result
+
+
+def _fallback_analyze_situation(state: PlayerDecisionGraphState) -> dict[str, Any]:
     memory_context = state["memory_context"]
     recent_messages = [event["message"] for event in memory_context.get("recent_events", [])]
     summary_items: list[str] = []
     for summary in memory_context.get("day_summaries", []):
         summary_items.extend(summary.get("summary_items", []))
     key_facts = summary_items + recent_messages
-    return {
-        "analysis": {
-            "key_facts": key_facts[:6],
-            "recent_messages": recent_messages,
-            "low_signal_players": _collect_low_signal_players(memory_context),
-            "checked_players": _collect_checked_players(memory_context),
-        }
-    }
+    analysis = SituationAnalysis(
+        key_facts=key_facts[:6],
+        contradictions=[],
+        relationship_edges=[],
+        turning_points=[],
+        recent_messages=recent_messages,
+        low_signal_players=_collect_low_signal_players(memory_context),
+        checked_players=_collect_checked_players(memory_context),
+    )
+    return {"analysis": _normalize_analysis_for_state(analysis)}
 
 
-def n2_update_suspicion(state: PlayerDecisionGraphState) -> dict[str, Any]:
+def _fallback_update_suspicion(state: PlayerDecisionGraphState) -> dict[str, Any]:
     memory_context = state["memory_context"]
     suspicion_memory = memory_context.get("suspicion_memory")
-    records = suspicion_memory.get("records", []) if suspicion_memory else []
+    records = list(suspicion_memory.get("records", [])) if suspicion_memory else []
     primary_target = records[0]["target_player_id"] if records else None
     return {
         "suspicion_update": {
             "records": records,
+            "suspicion_records": records,
             "primary_target": primary_target,
+            "secondary_target": None,
+            "trusted_players": [],
         }
     }
 
 
-def n3_decide_strategy(state: PlayerDecisionGraphState) -> dict[str, Any]:
+def _fallback_decide_strategy(state: PlayerDecisionGraphState) -> dict[str, Any]:
     suspicion_update = state.get("suspicion_update", {})
     analysis = state.get("analysis", {})
     primary_target = suspicion_update.get("primary_target")
     decision_kind = state["decision_kind"]
     if primary_target and decision_kind == "exile_vote":
-        strategy = {
-            "strategy_type": "vote_push",
-            "primary_target": primary_target,
-            "tone": state["speech_style"],
-            "goal": f"推动本轮票型落在{primary_target}",
-            "supporting_fact": (analysis.get("key_facts") or ["票型信息还需要继续收束"])[0],
-        }
+        strategy = PlayerStrategy(
+            strategy_type="vote_push",
+            primary_target=primary_target,
+            secondary_target=suspicion_update.get("secondary_target"),
+            tone=state["speech_style"],
+            goal=f"推动本轮票型落在{primary_target}",
+            supporting_fact=(analysis.get("key_facts") or ["票型信息还需要继续收束"])[0],
+            vote_intent=f"优先把票压在{primary_target}",
+        )
     elif primary_target and decision_kind == "night_action":
-        strategy = {
-            "strategy_type": "night_probe",
-            "primary_target": primary_target,
-            "tone": state["speech_style"],
-            "goal": f"夜里优先处理{primary_target}",
-            "supporting_fact": (analysis.get("key_facts") or ["先沿着最强怀疑线行动"])[0],
-        }
+        strategy = PlayerStrategy(
+            strategy_type="night_probe",
+            primary_target=primary_target,
+            secondary_target=suspicion_update.get("secondary_target"),
+            tone=state["speech_style"],
+            goal=f"夜里优先处理{primary_target}",
+            supporting_fact=(analysis.get("key_facts") or ["先沿着最强怀疑线行动"])[0],
+        )
     elif primary_target:
-        # 这里先做一个可解释的最小策略选择：有重点怀疑对象就主动进攻。
-        strategy = {
-            "strategy_type": "attack",
-            "primary_target": primary_target,
-            "tone": state["speech_style"],
-            "goal": f"推动大家重新审视{primary_target}",
-            "supporting_fact": (analysis.get("key_facts") or ["我还在继续观察局势"])[0],
-        }
+        strategy = PlayerStrategy(
+            strategy_type="attack",
+            primary_target=primary_target,
+            secondary_target=suspicion_update.get("secondary_target"),
+            tone=state["speech_style"],
+            goal=f"推动大家重新审视{primary_target}",
+            supporting_fact=(analysis.get("key_facts") or ["我还在继续观察局势"])[0],
+            speech_intent=f"继续压{primary_target}的逻辑漏洞",
+        )
     else:
-        strategy = {
-            "strategy_type": "observe",
-            "primary_target": None,
-            "tone": state["speech_style"],
-            "goal": "继续观察局势",
-            "supporting_fact": (analysis.get("key_facts") or ["目前信息还不够完整"])[0],
+        strategy = PlayerStrategy(
+            strategy_type="observe",
+            primary_target=None,
+            secondary_target=None,
+            tone=state["speech_style"],
+            goal="继续观察局势",
+            supporting_fact=(analysis.get("key_facts") or ["目前信息还不够完整"])[0],
+        )
+    return {"strategy": _normalize_strategy_for_state(strategy)}
+
+
+def _normalize_analysis_for_state(analysis: SituationAnalysis) -> dict[str, Any]:
+    return {
+        "key_facts": list(analysis.key_facts),
+        "contradictions": [item.model_dump(mode="json") for item in analysis.contradictions],
+        "relationship_edges": [
+            {
+                "from": edge.from_player_id,
+                "to": edge.to_player_id,
+                "relation": edge.relation,
+                "confidence": edge.confidence,
+            }
+            for edge in analysis.relationship_edges
+        ],
+        "turning_points": list(analysis.turning_points),
+        "recent_messages": list(analysis.recent_messages),
+        "low_signal_players": list(analysis.low_signal_players),
+        "checked_players": list(analysis.checked_players),
+    }
+
+
+def _normalize_suspicion_for_state(update: SuspicionUpdate) -> dict[str, Any]:
+    trusted_players = [item.model_dump(mode="json") for item in update.trusted_players]
+    records = update.to_memory_records()
+    return {
+        "records": records,
+        "suspicion_records": records,
+        "primary_target": update.primary_target,
+        "secondary_target": update.secondary_target,
+        "trusted_players": trusted_players,
+    }
+
+
+def _normalize_strategy_for_state(strategy: PlayerStrategy) -> dict[str, Any]:
+    return strategy.model_dump(mode="json")
+
+
+def _merge_suspicion_with_rules(
+    update: dict[str, Any],
+    previous_records: list[dict[str, Any]],
+    alive_player_ids: list[str],
+    self_player_id: str,
+) -> dict[str, Any]:
+    alive_ids = set(alive_player_ids)
+    legal_records: list[dict[str, Any]] = []
+    for record in update.get("records", []):
+        target_id = record.get("target_player_id")
+        if not isinstance(target_id, str):
+            continue
+        if target_id == self_player_id or target_id not in alive_ids:
+            continue
+        legal_records.append(record)
+    legal_records.sort(key=lambda item: float(item.get("suspicion_score", 0.0)), reverse=True)
+    if not legal_records:
+        return {
+            "records": previous_records,
+            "suspicion_records": previous_records,
+            "primary_target": previous_records[0]["target_player_id"] if previous_records else None,
+            "secondary_target": None,
+            "trusted_players": update.get("trusted_players", []),
         }
-    return {"strategy": strategy}
+    legal_ids = {record["target_player_id"] for record in legal_records}
+    primary_target = update.get("primary_target")
+    if primary_target not in legal_ids:
+        primary_target = legal_records[0]["target_player_id"]
+    secondary_target = update.get("secondary_target")
+    if secondary_target not in legal_ids or secondary_target == primary_target:
+        secondary_target = next(
+            (record["target_player_id"] for record in legal_records if record["target_player_id"] != primary_target),
+            None,
+        )
+    return {
+        "records": legal_records,
+        "suspicion_records": legal_records,
+        "primary_target": primary_target,
+        "secondary_target": secondary_target,
+        "trusted_players": update.get("trusted_players", []),
+    }
+
+
+def _make_analyze_situation_node(
+    semantic_decider: RawDecisionModel | None,
+    semantic_nodes: set[str],
+) -> Callable[[PlayerDecisionGraphState], dict[str, Any]]:
+    def n1_analyze_situation(state: PlayerDecisionGraphState) -> dict[str, Any]:
+        fallback = _fallback_analyze_situation(state)
+        if semantic_decider is None or "n1" not in semantic_nodes:
+            return _with_semantic_metadata(state=state, payload=fallback, node_name="n1", source="fallback")
+        prompt = build_situation_analysis_prompt(state)
+        try:
+            raw = semantic_decider.decide_raw(prompt)
+            analysis = SituationAnalysis.model_validate(raw)
+            if (
+                not analysis.key_facts
+                and not analysis.contradictions
+                and not analysis.relationship_edges
+                and not analysis.turning_points
+            ):
+                raise ValueError("analysis payload has no semantic content")
+            merged = SituationAnalysis(
+                key_facts=analysis.key_facts,
+                contradictions=analysis.contradictions,
+                relationship_edges=analysis.relationship_edges,
+                turning_points=analysis.turning_points,
+                recent_messages=fallback["analysis"].get("recent_messages", []),
+                low_signal_players=fallback["analysis"].get("low_signal_players", []),
+                checked_players=fallback["analysis"].get("checked_players", []),
+            )
+            return _with_semantic_metadata(
+                state=state,
+                payload={"analysis": _normalize_analysis_for_state(merged)},
+                node_name="n1",
+                source="llm",
+            )
+        except Exception as exc:
+            logger.warning("[PLAYER_GRAPH_N1_LLM_FALLBACK] %s", exc)
+            return _with_semantic_metadata(state=state, payload=fallback, node_name="n1", source="fallback", error=str(exc))
+
+    return n1_analyze_situation
+
+
+def _make_update_suspicion_node(
+    semantic_decider: RawDecisionModel | None,
+    semantic_nodes: set[str],
+) -> Callable[[PlayerDecisionGraphState], dict[str, Any]]:
+    def n2_update_suspicion(state: PlayerDecisionGraphState) -> dict[str, Any]:
+        fallback = _fallback_update_suspicion(state)
+        memory_context = state["memory_context"]
+        previous_records = list((memory_context.get("suspicion_memory") or {}).get("records", []))
+        if semantic_decider is None or "n2" not in semantic_nodes:
+            return _with_semantic_metadata(state=state, payload=fallback, node_name="n2", source="fallback")
+        prompt = build_suspicion_update_prompt(state)
+        try:
+            raw = semantic_decider.decide_raw(prompt)
+            update = SuspicionUpdate.model_validate(raw)
+            merged = _merge_suspicion_with_rules(
+                _normalize_suspicion_for_state(update),
+                previous_records,
+                state["alive_player_ids"],
+                state["player_id"],
+            )
+            if not merged.get("records"):
+                raise ValueError("no legal suspicion records after merge")
+            return _with_semantic_metadata(
+                state=state,
+                payload={"suspicion_update": merged},
+                node_name="n2",
+                source="llm",
+            )
+        except Exception as exc:
+            logger.warning("[PLAYER_GRAPH_N2_LLM_FALLBACK] %s", exc)
+            return _with_semantic_metadata(state=state, payload=fallback, node_name="n2", source="fallback", error=str(exc))
+
+    return n2_update_suspicion
+
+
+def _make_decide_strategy_node(
+    semantic_decider: RawDecisionModel | None,
+    semantic_nodes: set[str],
+) -> Callable[[PlayerDecisionGraphState], dict[str, Any]]:
+    def n3_decide_strategy(state: PlayerDecisionGraphState) -> dict[str, Any]:
+        fallback = _fallback_decide_strategy(state)
+        if semantic_decider is None or "n3" not in semantic_nodes:
+            return _with_semantic_metadata(state=state, payload=fallback, node_name="n3", source="fallback")
+        prompt = build_strategy_prompt(state)
+        try:
+            raw = semantic_decider.decide_raw(prompt)
+            strategy = PlayerStrategy.model_validate(raw)
+            legal_targets = set(state["alive_player_ids"]) - {state["player_id"]}
+            if strategy.primary_target and strategy.primary_target not in legal_targets:
+                primary_target = state.get("suspicion_update", {}).get("primary_target")
+                if primary_target in legal_targets:
+                    strategy = strategy.model_copy(update={"primary_target": primary_target})
+                else:
+                    strategy = strategy.model_copy(update={"strategy_type": "observe", "primary_target": None})
+            return _with_semantic_metadata(
+                state=state,
+                payload={"strategy": _normalize_strategy_for_state(strategy)},
+                node_name="n3",
+                source="llm",
+            )
+        except Exception as exc:
+            logger.warning("[PLAYER_GRAPH_N3_LLM_FALLBACK] %s", exc)
+            return _with_semantic_metadata(state=state, payload=fallback, node_name="n3", source="fallback", error=str(exc))
+
+    return n3_decide_strategy
 
 
 def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
@@ -155,10 +395,23 @@ def _make_generate_speech_node(
     return n5_generate_decision
 
 
+def _language_only_decision(state: PlayerDecisionGraphState, generated: Any) -> PlayerDecision:
+    action_draft = state.get("action_draft", {})
+    expected_action = _expected_action_type(state)
+    if isinstance(generated, PlayerDecision):
+        return PlayerDecision(
+            speech=generated.speech,
+            action_type=expected_action,
+            target_id=action_draft.get("target_id"),
+            public_reason=generated.public_reason or action_draft.get("public_reason"),
+            private_memory_update=generated.private_memory_update or action_draft.get("private_memory_update"),
+        )
+    return _default_decision_from_state(state)
+
+
 def n6_validate_and_repair(state: PlayerDecisionGraphState) -> dict[str, Any]:
     action_draft = state.get("action_draft", {})
-    generated = state.get("generated_decision")
-    decision = generated if isinstance(generated, PlayerDecision) else _default_decision_from_state(state)
+    decision = _language_only_decision(state, state.get("generated_decision"))
     expected_action = _expected_action_type(state)
     target_id = decision.target_id
     if expected_action in {PlayerActionType.VOTE, PlayerActionType.WOLF_KILL, PlayerActionType.SEER_CHECK, PlayerActionType.GUARD}:
@@ -182,11 +435,14 @@ def n6_validate_and_repair(state: PlayerDecisionGraphState) -> dict[str, Any]:
 
 def build_player_speech_graph(
     decision_generator: DecisionGenerator | None = None,
+    semantic_decider: RawDecisionModel | None = None,
+    semantic_nodes: set[str] | None = None,
 ):
+    enabled_nodes = semantic_nodes or set()
     builder = StateGraph(PlayerDecisionGraphState)
-    builder.add_node("n1_analyze_situation", n1_analyze_situation)
-    builder.add_node("n2_update_suspicion", n2_update_suspicion)
-    builder.add_node("n3_decide_strategy", n3_decide_strategy)
+    builder.add_node("n1_analyze_situation", _make_analyze_situation_node(semantic_decider, enabled_nodes))
+    builder.add_node("n2_update_suspicion", _make_update_suspicion_node(semantic_decider, enabled_nodes))
+    builder.add_node("n3_decide_strategy", _make_decide_strategy_node(semantic_decider, enabled_nodes))
     builder.add_node("n4_decide_action", n4_decide_action)
     builder.add_node("n5_generate_decision", _make_generate_speech_node(decision_generator))
     builder.add_node("n6_validate_and_repair", n6_validate_and_repair)
@@ -207,6 +463,8 @@ def run_player_decision_graph(
     memory_context: MemoryContext,
     decision_kind: str,
     decision_generator: DecisionGenerator | None = None,
+    semantic_decider: RawDecisionModel | None = None,
+    semantic_nodes: set[str] | None = None,
 ) -> dict[str, Any]:
     logger.info(
         "启动玩家统一决策图 player_id=%s role=%s decision_kind=%s",
@@ -223,10 +481,16 @@ def run_player_decision_graph(
         "decision_kind": decision_kind,
         "memory_context": memory_context.model_dump(mode="json"),
         "alive_player_ids": _alive_player_ids(memory_context),
+        "semantic_node_errors": {},
+        "semantic_node_sources": {},
         "error": None,
     }
     try:
-        graph = build_player_speech_graph(decision_generator=decision_generator)
+        graph = build_player_speech_graph(
+            decision_generator=decision_generator,
+            semantic_decider=semantic_decider,
+            semantic_nodes=semantic_nodes,
+        )
         result = graph.invoke(initial)
         logger.info("玩家统一决策图完成 player_id=%s decision_kind=%s", player.player_id, decision_kind)
         return result
@@ -246,7 +510,9 @@ def run_player_speech_graph(
     agent: AgentProfile,
     player: PlayerState,
     memory_context: MemoryContext,
-    speech_generator: SpeechGenerator | None = None,
+    speech_generator: Callable[[dict[str, Any]], str] | None = None,
+    semantic_decider: RawDecisionModel | None = None,
+    semantic_nodes: set[str] | None = None,
 ) -> dict[str, Any]:
     decision_generator: DecisionGenerator | None = None
     if speech_generator is not None:
@@ -267,6 +533,8 @@ def run_player_speech_graph(
         memory_context=memory_context,
         decision_kind="day_speech",
         decision_generator=decision_generator,
+        semantic_decider=semantic_decider,
+        semantic_nodes=semantic_nodes,
     )
     if result.get("error") == "decision_generation_failed":
         result["error"] = "speech_generation_failed"
@@ -281,7 +549,11 @@ def _default_decision_from_state(state: PlayerDecisionGraphState) -> PlayerDecis
     action_draft = state.get("action_draft", {})
     expected_action = _expected_action_type(state)
     if expected_action == PlayerActionType.SPEAK:
-        speech = f"我这轮会重点看{target}。{fact}。这条线我会继续往下听。" if target else f"{fact}。我会先继续观察大家的站边和逻辑。"
+        speech = (
+            f"我这轮会重点看{target}。{fact}。这条线我会继续往下听。"
+            if target
+            else f"{fact}。我会先继续观察大家的站边和逻辑。"
+        )
         return PlayerDecision(
             speech=speech,
             action_type="speak",

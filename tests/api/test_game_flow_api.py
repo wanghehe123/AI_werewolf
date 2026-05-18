@@ -1,6 +1,26 @@
+import pytest
 from fastapi.testclient import TestClient
 
+from ai_werewolf.api import games
 from ai_werewolf.main import create_app
+from ai_werewolf.llm.model_config import default_provider_configs, default_role_model_bindings
+from ai_werewolf.llm.model_registry import ModelProviderRegistry, build_provider
+
+
+@pytest.fixture
+def client() -> TestClient:
+    test_client = TestClient(create_app())
+    registry = ModelProviderRegistry()
+    for config in default_provider_configs():
+        registry.register(build_provider(config))
+    games.configure_model_registry(registry, default_role_model_bindings())
+    try:
+        yield test_client
+    finally:
+        reset_registry = ModelProviderRegistry()
+        for config in default_provider_configs():
+            reset_registry.register(build_provider(config))
+        games.configure_model_registry(reset_registry, default_role_model_bindings())
 
 
 def create_beginner_game(client: TestClient) -> dict:
@@ -35,9 +55,7 @@ def first_alive_ai_player_id(game: dict) -> str:
     return next(player["player_id"] for player in game["players"] if player["alive"] and not player["is_human"])
 
 
-def test_create_game_returns_persisted_frontend_game_state():
-    client = TestClient(create_app())
-
+def test_create_game_returns_persisted_frontend_game_state(client: TestClient):
     created = create_beginner_game(client)
     fetched = client.get(f"/games/{created['game_id']}")
 
@@ -51,8 +69,7 @@ def test_create_game_returns_persisted_frontend_game_state():
     assert fetched_data["players"][0]["display_name"] == "你"
 
 
-def test_game_flow_advances_through_mvp_phases():
-    client = TestClient(create_app())
+def test_game_flow_advances_through_mvp_phases(client: TestClient):
     game = create_beginner_game(client)
     game_id = game["game_id"]
 
@@ -72,8 +89,7 @@ def test_game_flow_advances_through_mvp_phases():
     assert next_state["day_count"] >= 1
 
 
-def test_vote_exile_goes_to_last_words_before_next_night():
-    client = TestClient(create_app())
+def test_vote_exile_goes_to_last_words_before_next_night(client: TestClient):
     game = create_beginner_game(client)
     game_id = game["game_id"]
 
@@ -88,8 +104,7 @@ def test_vote_exile_goes_to_last_words_before_next_night():
         assert any(event["event_type"] == "last_words" for event in last_words["public_events"])
 
 
-def test_sheriff_election_is_not_entered_yet():
-    client = TestClient(create_app())
+def test_sheriff_election_is_not_entered_yet(client: TestClient):
     game = create_beginner_game(client)
     game_id = game["game_id"]
 
@@ -102,8 +117,7 @@ def test_sheriff_election_is_not_entered_yet():
     assert all(state["phase"] != "sheriff_election" for state in states)
 
 
-def test_ai_roles_are_hidden_until_game_over():
-    client = TestClient(create_app())
+def test_ai_roles_are_hidden_until_game_over(client: TestClient):
     game = create_beginner_game(client)
 
     ai_players = [player for player in game["players"] if player["is_human"] is False]

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from ai_werewolf.api.admin import dependencies as admin_dependencies
+from ai_werewolf.llm.model_config import load_llm_config_from_yaml
 from ai_werewolf.main import create_app
 from ai_werewolf.storage.database import create_engine_and_tables
 from ai_werewolf.storage.models import LLMProviderRecord, RoleModelBindingRecord
@@ -126,7 +127,7 @@ def test_admin_llm_provider_and_role_binding_are_persisted_to_database(monkeypat
     assert binding.provider_id == "db_deepseek"
 
 
-def test_game_engine_loads_persisted_llm_config_on_startup(monkeypatch, tmp_path: Path):
+def test_game_engine_prefers_yaml_llm_config_on_startup(monkeypatch, tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'startup-llm.db'}"
     monkeypatch.setenv("AI_WEREWOLF_DATABASE_ENABLED", "true")
     monkeypatch.setenv("AI_WEREWOLF_DATABASE_URL", database_url)
@@ -168,4 +169,8 @@ def test_game_engine_loads_persisted_llm_config_on_startup(monkeypatch, tmp_path
 
     assert response.status_code == 200
     human = next(player for player in response.json()["data"]["players"] if player["is_human"])
-    assert human["model_provider_id"] == "db_deepseek"
+    yaml_bindings = load_llm_config_from_yaml().role_bindings
+    expected_provider_id = next(
+        binding.provider_id for binding in yaml_bindings if binding.role_key == "villager"
+    )
+    assert human["model_provider_id"] == expected_provider_id

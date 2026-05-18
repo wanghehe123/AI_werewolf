@@ -203,5 +203,16 @@ def resolve_minimax_api_key() -> object | None:
     except Exception:
         return None
 
-    provider = next((item for item in config.providers if item.provider_id == "minimax-speak"), None)
-    return provider
+    providers_by_id = {item.provider_id: item for item in config.providers}
+    for provider_id in ("minimax-speak", "minimax", config.default_provider):
+        provider = providers_by_id.get(provider_id)
+        if provider is not None and provider.api_key:
+            return provider
+    return next(
+        (
+            item
+            for item in config.providers
+            if item.api_key and (item.base_url or "").startswith("https://api.minimaxi.com/")
+        ),
+        None,
+    )

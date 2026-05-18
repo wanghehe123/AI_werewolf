@@ -69,7 +69,9 @@ default_provider: minimax
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.setenv("LLM_CONFIG_PATH", str(config_path))
 
-    assert resolve_minimax_api_key() == "yaml-minimax-key"
+    provider = resolve_minimax_api_key()
+    assert provider is not None
+    assert provider.api_key == "yaml-minimax-key"
 
 
 @pytest.mark.asyncio

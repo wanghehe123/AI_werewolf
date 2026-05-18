@@ -21,6 +21,8 @@ class PlayerDecisionGraphState(TypedDict):
     speech: NotRequired[str]
     generated_decision: NotRequired[Any]
     decision: NotRequired[Any]
+    semantic_node_errors: NotRequired[dict[str, str]]
+    semantic_node_sources: NotRequired[dict[str, str]]
     error: NotRequired[str | None]
 
 

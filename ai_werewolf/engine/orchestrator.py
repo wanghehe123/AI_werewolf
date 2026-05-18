@@ -17,7 +17,7 @@ from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import VoteResolver
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
-from ai_werewolf.llm.graphs.player_decision_graph import run_player_speech_graph
+from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nodes, run_player_speech_graph
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
 from ai_werewolf.llm.memory.summary_builder import (
     build_day_summary,
@@ -30,6 +30,17 @@ from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import Winner, evaluate_winner
 
 logger = logging.getLogger(__name__)
+
+
+def _append_locked_decision_block(prompt: str, state: dict[str, Any]) -> str:
+    draft = state.get("action_draft", {})
+    return (
+        f"{prompt}\n\n"
+        "【结构化决策已锁定】\n"
+        f"- action_type: {draft.get('action_type')}\n"
+        f"- target_id: {draft.get('target_id')}\n"
+        "你只能生成自然发言和理由，不能改变 action_type 或 target_id。\n"
+    )
 
 
 class PhaseOrchestrator:
@@ -131,24 +142,26 @@ class PhaseOrchestrator:
             self._append_event_dict(session, public_event)
             time.sleep(0.3)
 
-        # Send private info to the human witch about who was killed
+        # Send private kill info to the human witch — only if save potion is
+        # still available.  After using the antidote, the witch should not
+        # know subsequent knife wound targets.
         kill_target_id = session.night_pending_kill_target_id
         if kill_target_id:
-            kill_label = player_label(kill_target_id, session)
-            from ai_werewolf.domain.game_state import PlayerPrivateInfo
             witch_info = session.private_infos.get(session.human_player_id, PlayerPrivateInfo())
-            can_save_self = session.state.day_count == 1
-            if kill_target_id == session.human_player_id and not can_save_self:
-                msg = f"今晚 {kill_label} 被狼人击杀（你不能自救）。"
-            else:
-                msg = f"今晚 {kill_label} 被狼人击杀。"
-            session.publish_stream_event(
-                "private_info",
-                {"message": msg, "kill_target_id": kill_target_id, "kill_target_label": kill_label},
-                actor_id=None,
-                target_id=session.human_player_id,
-                visibility="self",
-            )
+            if witch_info.witch_medicine.get("save", False):
+                kill_label = player_label(kill_target_id, session)
+                can_save_self = session.state.day_count == 1
+                if kill_target_id == session.human_player_id and not can_save_self:
+                    msg = f"今晚 {kill_label} 被狼人击杀（你不能自救）。"
+                else:
+                    msg = f"今晚 {kill_label} 被狼人击杀。"
+                session.publish_stream_event(
+                    "private_info",
+                    {"message": msg, "subtype": "witch_kill", "kill_target_id": kill_target_id, "kill_target_label": kill_label},
+                    actor_id=None,
+                    target_id=session.human_player_id,
+                    visibility="self",
+                )
 
     def _resolve_night_witch_step(self, session: GameSession, action: dict) -> None:
         """Second step of two-step witch night: apply witch action and resolve deaths."""
@@ -381,15 +394,16 @@ class PhaseOrchestrator:
             }
 
         memory_context = self.memory_context_builder.build_for_player(session, player_id)
+        provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
+        decider = PlayerDecider(provider)
 
-        def speech_generator(_state: dict) -> str:
+        def speech_generator(state: dict) -> str:
             task = self._find_day_speech_task(session, player_id, context)
             if task is None:
                 return "我暂时没有想说的。"
-            record_prompt_trace(session, player_id, "day_speech", task.prompt)
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            decider = PlayerDecider(provider)
-            decision = decider.decide(task.prompt)
+            locked_prompt = _append_locked_decision_block(task.prompt, state)
+            record_prompt_trace(session, player_id, "day_speech", locked_prompt)
+            decision = decider.decide(locked_prompt)
             return decision.speech
 
         result = run_player_speech_graph(
@@ -397,6 +411,8 @@ class PhaseOrchestrator:
             player=player,
             memory_context=memory_context,
             speech_generator=speech_generator,
+            semantic_decider=decider,
+            semantic_nodes=configured_semantic_nodes(),
         )
         self._persist_player_memories(session, player_id, result)
         self.memory_store.append_decision_trace(

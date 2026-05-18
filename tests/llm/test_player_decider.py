@@ -106,7 +106,8 @@ def test_decider_falls_back_for_empty_speech():
     decision = PlayerDecider(EmptySpeechModel()).decide("prompt")
 
     assert decision.speech == "我先观察一下局势。"
-    assert decision.action_type == PlayerActionType.SPEAK
+    assert decision.action_type == PlayerActionType.VOTE
+    assert decision.target_id == "p2"
 
 
 def test_decider_filters_unsafe_speech_without_losing_decision_fields():

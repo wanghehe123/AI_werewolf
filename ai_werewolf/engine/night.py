@@ -12,7 +12,7 @@ from ai_werewolf.engine.helpers import display_name, event, player_label, player
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
-from ai_werewolf.llm.graphs.player_decision_graph import run_player_decision_graph
+from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nodes, run_player_decision_graph
 from ai_werewolf.llm.graphs.werewolf_council import run_werewolf_council
 from ai_werewolf.llm.graphs.witch_council import run_witch_council
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
@@ -24,6 +24,17 @@ from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _append_locked_decision_block(prompt: str, state: dict[str, Any]) -> str:
+    draft = state.get("action_draft", {})
+    return (
+        f"{prompt}\n\n"
+        "【结构化决策已锁定】\n"
+        f"- action_type: {draft.get('action_type')}\n"
+        f"- target_id: {draft.get('target_id')}\n"
+        "你只能生成自然发言和理由，不能改变 action_type 或 target_id。\n"
+    )
 
 
 class NightResolver:
@@ -835,8 +846,10 @@ class NightResolver:
             return PlayerDecision(speech="无行动", action_type="no_action", target_id=None, public_reason=None, private_memory_update=None)
 
         memory_context = self.memory_context_builder.build_for_player(session, player_id)
+        provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
+        decider = PlayerDecider(provider)
 
-        def decision_generator(_state: dict[str, Any]) -> PlayerDecision:
+        def decision_generator(state: dict[str, Any]) -> PlayerDecision:
             tasks = self.scheduler.schedule(
                 state=session.state,
                 agents=session.agents,
@@ -846,7 +859,8 @@ class NightResolver:
             task = next((t for t in tasks if t.player_id == player_id), None)
             if task is None:
                 return PlayerDecision(speech="无行动", action_type="no_action", target_id=None, public_reason=None, private_memory_update=None)
-            return self._get_ai_decision_with_prompt(session, player_id, task.prompt)
+            locked_prompt = _append_locked_decision_block(task.prompt, state)
+            return self._get_ai_decision_with_prompt(session, player_id, locked_prompt, decider=decider)
 
         result = run_player_decision_graph(
             agent=agent,
@@ -854,24 +868,34 @@ class NightResolver:
             memory_context=memory_context,
             decision_kind="night_action",
             decision_generator=decision_generator,
+            semantic_decider=decider,
+            semantic_nodes=configured_semantic_nodes(),
         )
         self._persist_player_memories(session, player_id, result)
         return result["decision"]
 
-    def _get_ai_decision_with_prompt(self, session: GameSession, player_id: str, prompt: str) -> PlayerDecision:
+    def _get_ai_decision_with_prompt(
+        self,
+        session: GameSession,
+        player_id: str,
+        prompt: str,
+        decider: PlayerDecider | None = None,
+    ) -> PlayerDecision:
         """Call LLM with a specific prompt and return PlayerDecision."""
         player = session.state.player_by_id(player_id)
         try:
-            provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
-            decider = PlayerDecider(provider)
+            decision_decider = decider
+            if decision_decider is None:
+                provider = self.model_registry.provider_for_role(player.role_key, self.role_model_bindings)
+                decision_decider = PlayerDecider(provider)
             record_prompt_trace(session, player_id, "night_action", prompt)
-            decision = decider.decide(prompt)
+            decision = decision_decider.decide(prompt)
 
-            # ---- 全链路诊断：标记空发言决策 ----
+            # ---- 全链路诊断：夜晚私有行动不需要发言，空speech正常 ----
             if not decision.speech.strip():
                 logger.info(
                     "[NIGHT_DECISION_EMPTY_SPEECH] player=%s(%s) role=%s action=%s target=%s "
-                    "day=%s -- 上层日志 [DECIDER_EMPTY_SPEECH] 和 [PROVIDER_PARSE] 应已记录详情",
+                    "day=%s -- 夜晚私有行动，Decider层已保留原动作，视为正常",
                     player_label(player_id, session), player_id[:8],
                     player.role_key, decision.action_type, decision.target_id,
                     session.state.day_count,
