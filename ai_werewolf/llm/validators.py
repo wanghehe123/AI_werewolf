@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from ai_werewolf.llm.prompts.template_loader import render_template
+
 
 # Mapping of Chinese role names to their canonical role keys.
 _CHINESE_ROLE_MAP: dict[str, str] = {
@@ -154,4 +156,4 @@ def build_rejection_prompt(violations: list[str]) -> str:
         return ""
 
     bullet_list = "\n".join(f"- {v}" for v in violations)
-    return f"\u26a0\ufe0f 上一次发言违规：\n{bullet_list}\n请严格遵守板子约束。"
+    return render_template("validator/rejection_prompt.st", {"bullet_list": bullet_list})

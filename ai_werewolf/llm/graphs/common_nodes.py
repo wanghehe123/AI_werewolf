@@ -11,6 +11,7 @@ import random
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from ai_werewolf.llm.graphs.state import CouncilState
+from ai_werewolf.llm.prompts.template_loader import render_template
 
 if TYPE_CHECKING:
     pass
@@ -57,19 +58,17 @@ def make_isolated_prompt(
     other_str = ", ".join(other_wolves) if other_wolves else "无"
     wolf_label = labels.get(wolf_id, wolf_id)
 
-    parts = [
-        f"你是狼人 {wolf_label}，现在是夜晚狼队讨论时间（{round_id}）。",
-        f"你的狼队友：{other_str}",
-        f"可选击杀目标：{candidates_str}",
-    ]
-
-    if game_context:
-        parts.append(f"\n游戏历史摘要：\n{game_context}")
-
-    if extra_instructions:
-        parts.append(f"\n{extra_instructions}")
-
-    return "\n".join(parts)
+    return render_template(
+        "council/werewolf_isolated_base.st",
+        {
+            "wolf_label": wolf_label,
+            "round_id": round_id,
+            "other_wolves": other_str,
+            "candidate_labels": candidates_str,
+            "game_context_block": f"\n\n游戏历史摘要：\n{game_context}" if game_context else "",
+            "extra_instructions_block": f"\n\n{extra_instructions}" if extra_instructions else "",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -114,10 +113,9 @@ def call_llm_for_proposal(
     prompt = make_isolated_prompt(
         wolf_id,
         state,
-        extra_instructions=(
-            "请选择你要击杀的目标，并给出理由和风险评估（1=最安全，5=最危险）。\n"
-            '输出 JSON 格式：{"target_id": "xxx", "reason": "理由", "risk": 3}\n'
-            "target_id 必须是以下之一（需要填入原始ID，不是显示名称）：" + ", ".join(candidates)
+        extra_instructions=render_template(
+            "council/werewolf_proposal_extra.st",
+            {"candidate_ids": ", ".join(candidates)},
         ),
     )
 
@@ -174,15 +172,15 @@ def call_llm_for_vote(
     prompt = make_isolated_prompt(
         wolf_id,
         state,
-        extra_instructions=(
-            "以下是各狼队友的击杀提案：\n"
-            + "\n".join(
-                f"- 狼人 {labels.get(p['wolf_id'], p['wolf_id'])}：击杀 {labels.get(p['target_id'], p['target_id'])}（理由：{p.get('reason', '无')}，风险：{p.get('risk', '?')}）"
-                for p in proposals
-            )
-            + "\n\n请投票选择你认为最佳的击杀目标。\n"
-            '输出 JSON 格式：{"target_id": "xxx"}\n'
-            "target_id 必须是以下之一：" + ", ".join(proposed_targets)
+        extra_instructions=render_template(
+            "council/werewolf_vote_extra.st",
+            {
+                "proposal_lines": "\n".join(
+                    f"- 狼人 {labels.get(p['wolf_id'], p['wolf_id'])}：击杀 {labels.get(p['target_id'], p['target_id'])}（理由：{p.get('reason', '无')}，风险：{p.get('risk', '?')}）"
+                    for p in proposals
+                ),
+                "proposed_targets": ", ".join(proposed_targets),
+            },
         ),
     )
 

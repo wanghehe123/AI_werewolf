@@ -19,6 +19,7 @@ import re
 from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from ai_werewolf.llm.prompts.template_loader import render_template
 
 logger = logging.getLogger(__name__)
 
@@ -112,12 +113,13 @@ def _make_n1_assess_with_llm(decider_factory: Callable[[str], Any]) -> Callable:
             }
 
         # Ask the LLM whether to save
-        prompt = (
-            f"你是女巫，现在是第{night}个夜晚。\n"
-            f"今晚 {killed} 被狼人击杀。\n"
-            f"你还有解药（{('是' if has_save else '否')}）。\n"
-            f"请评估：这个被杀的人是否值得使用解药救？\n"
-            f'回复 JSON：{{"save": true/false, "reason": "简短理由"}}'
+        prompt = render_template(
+            "council/witch_brief.st",
+            {
+                "night": str(night),
+                "killed_player_id": str(killed),
+                "has_save_text": "是" if has_save else "否",
+            },
         )
 
         try:
@@ -177,13 +179,13 @@ def _make_n3_decide_poison(decider_factory: Callable[[str], Any]) -> Callable:
 
         # If we already saved, using poison in the same night is risky but
         # allowed.  We let the LLM decide whether to also poison.
-        prompt = (
-            f"你是女巫，现在是第{state.get('night_number', 1)}个夜晚。\n"
-            f"你还有毒药可用。\n"
-            f"你今晚{'已经使用了解药救人' if save_decision else '没有使用解药'}。\n"
-            f"可选毒杀目标：{', '.join(valid_targets)}\n"
-            f"请选择一个最可疑的目标使用毒药，或者选择不使用。\n"
-            f'回复 JSON：{{"poison_target": "目标ID或null", "reason": "简短理由"}}'
+        prompt = render_template(
+            "council/witch_vote_or_resolve.st",
+            {
+                "night": str(state.get("night_number", 1)),
+                "save_status": "已经使用了解药救人" if save_decision else "没有使用解药",
+                "valid_targets": ", ".join(valid_targets),
+            },
         )
 
         try:

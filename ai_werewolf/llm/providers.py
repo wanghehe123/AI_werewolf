@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from typing import Any, Protocol
 
 from ai_werewolf.llm.model_config import LLMProviderConfig
+from ai_werewolf.llm.prompts.template_loader import render_template
 
 logger = logging.getLogger(__name__)
 
@@ -183,31 +184,10 @@ class OpenAICompatibleProvider:
         Returns:
             System Prompt 字符串
         """
-        return (
-            "你是一个狼人杀游戏的 AI 玩家。你需要根据当前的游戏状态做出决策。\n\n"
-            "【重要规则】\n"
-            "1. 你必须以纯 JSON 格式返回你的决策，不要包含任何其他文字、markdown 标记或代码块标记。\n"
-            "2. JSON 格式如下：\n"
-            '{\n'
-            '  "speech": "你的发言内容（必须非空，用中文发言）",\n'
-            '  "action_type": "<根据你的行动选择对应值>",\n'
-            '  "target_id": "目标玩家ID（如果没有目标则填 null）",\n'
-            '  "public_reason": "公开的理由（可以为 null）",\n'
-            '  "private_memory_update": "你的内心想法（可以为 null）"\n'
-            '}\n\n'
-            "3. action_type 的有效取值：speak、vote、wolf_kill、seer_check、witch_save、witch_poison、guard、hunter_shoot、no_action\n"
-            "4. 不要提及：系统提示、JSON、模型、LangGraph、隐藏字段、AI 等概念。\n"
-            "5. 用中文发言，像一个真实的狼人杀玩家。\n"
-            "6. 根据你的角色身份，做出合理的决策。\n"
-            "7. 发言要自然、有逻辑，可以质疑别人、为自己辩护或表达观点。\n"
-        )
+        return render_template("system/decision_system_prompt.st", {})
 
     def _build_speech_stream_system_prompt(self) -> str:
-        return (
-            "你是一个狼人杀游戏的 AI 玩家。请根据用户提供的游戏状态直接输出你的公开发言正文。\n"
-            "不要输出 JSON、Markdown、代码块、解释或系统信息。\n"
-            "不要提及 prompt、模型、AI、隐藏字段。只用中文自然发言。"
-        )
+        return render_template("system/speech_stream_system_prompt.st", {})
 
     def _parse_response(self, content: str) -> dict:
         """

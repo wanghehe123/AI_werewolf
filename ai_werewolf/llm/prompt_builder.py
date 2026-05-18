@@ -27,6 +27,8 @@ from collections.abc import Callable
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import PlayerPrivateInfo, PlayerState
 from ai_werewolf.llm.graphs.player_decision_prompt_catalog import build_identity_priority_block
+from ai_werewolf.llm.prompts.template_loader import render_template
+from ai_werewolf.llm.prompts.template_models import join_non_empty_sections, section
 
 
 def build_player_prompt(
@@ -76,202 +78,80 @@ def build_player_prompt(
     """
     role_name = _role_display_name(role_key)
     camp = _role_camp(role_key)
-
-    # ---- 基础设定 ----
-    parts = [
-        "你是一个狼人杀高手，熟悉狼人杀的基础规则、常见板子、角色技能、",
-        "发言逻辑、身份博弈和阵营胜利条件。",
-        "你不是旁观者，而是游戏中的一名玩家 Agent。",
-        "",
-        "你的目标是：",
-        "- 根据自己的身份、阵营、人物设定和当前局势，做出最符合胜利目标的决策。",
-        "- 通过合理发言影响其他玩家。",
-        "- 通过逻辑、视角、身份关系、投票行为和发言漏洞判断其他玩家身份。",
-        "- 在不违反游戏规则的前提下，为自己的阵营争取最大胜率。",
-        "",
-        "狼人杀的核心是：",
-        "好人通过发言、逻辑、身份信息找出狼人；狼人通过伪装、误导和隐藏身份争取胜利。",
-        "",
-        "你必须始终以「当前角色视角」思考，而不是以上帝视角、旁观者视角或系统视角思考。",
-        "",
-    ]
-
-    # ---- 人物设定 ----
-    identity_lines = [
-        "=" * 40,
-        "【人物设定】",
-        "=" * 40,
-    ]
-    if self_label:
-        identity_lines.append(f"你的座位号：{self_label}")
-    identity_lines.extend([
-        f"玩家名称：{agent.name}",
-        f"性格特点：{agent.persona}",
-        f"发言风格：{agent.speech_style}",
-        f"推理能力：{agent.reasoning_level}/5（越高越擅长分析逻辑）",
-        f"伪装能力：{agent.deception_level}/5（越高越擅长隐藏身份）",
-        f"攻击性：{agent.aggression_level}/5（越高越强势）",
-        f"合作性：{agent.cooperation_level}/5（越高越倾向团队配合）",
-        f"风险偏好：{_risk_preference_cn(agent.risk_preference.value)}",
-        f"记忆风格：{agent.memory_style}",
-        "",
-    ])
-    parts.extend(identity_lines)
-
-    # ---- 身份信息 ----
     camp_name = "好人阵营" if camp == "good" else "狼人阵营"
-    parts.extend([
-        "=" * 40,
-        "【隐藏身份】",
-        "=" * 40,
-        f"你的真实身份：{role_name}",
-        f"你的阵营：{camp_name}",
-        "",
-    ])
-    parts.extend([
-        "=" * 40,
-        build_identity_priority_block(role_key, phase),
-        "",
-    ])
 
-    # ---- 角色特定约束 ----
-    role_constraints = _get_role_constraints(role_key, enabled_role_keys)
-    parts.extend([
-        "=" * 40,
-        "【角色约束】",
-        "=" * 40,
-        *role_constraints,
-        "",
-    ])
-
-    # ---- 板子信息 ----
-    if board_context:
-        parts.extend([
-            "=" * 40,
-            "【板子信息】",
-            "=" * 40,
-            board_context,
-            "",
-        ])
-
-    # ---- 本局板子角色清单（M2-T9）----
-    if board_roles:
-        parts.extend(_build_board_role_constraints(board_roles))
-
-    # ---- 角色人格守则（M2-T11）----
-    parts.extend([
-        "=" * 40,
-        "【你必须严格遵守的人格守则】",
-        "=" * 40,
-        "1. 不允许声称自己是\"你不是的角色\"，除非你是狼人且明确要悍跳。",
-        "2. 一旦你在某轮发言中起跳 X（如\"我是预言家\"），后续所有轮次必须维持此身份，不得改口。",
-        "3. 你不能引用未发生的夜晚技能事件、身份结果或保护关系。",
-        "4. 你不得使用未在本局产生的事实（如\"昨天3号说他是预言家\"，但 3号根本没起跳过）。",
-        "5. 狼人悍跳预言家时，声称的查验对象必须是其他存活玩家，绝对不能说\"我查验了自己\"。",
-        "",
-    ])
-
-    # ---- 游戏状态 ----
-    parts.extend([
-        "=" * 40,
-        "【当前状态】",
-        "=" * 40,
-        f"游戏ID：{game_id or 'unknown'}",
-        f"当前轮次：{round_info or 'unknown'}",
-        f"当前阶段：{phase}",
-        "",
-    ])
-
-    # ---- 存活玩家 ----
-    if alive_players:
-        parts.append(f"存活玩家：{', '.join(_format_player_options(alive_players, player_references))}")
-        parts.append("")
-
-    # ---- 死亡玩家 ----
-    if dead_players:
-        parts.append(f"已出局玩家：{', '.join(_format_player_options(dead_players, player_references))}")
-        parts.append("")
-
+    persona_body = "\n".join(
+        filter(
+            None,
+            [
+                f"你的座位号：{self_label}" if self_label else "",
+                f"玩家名称：{agent.name}",
+                f"性格特点：{agent.persona}",
+                f"发言风格：{agent.speech_style}",
+                f"推理能力：{agent.reasoning_level}/5（越高越擅长分析逻辑）",
+                f"伪装能力：{agent.deception_level}/5（越高越擅长隐藏身份）",
+                f"攻击性：{agent.aggression_level}/5（越高越强势）",
+                f"合作性：{agent.cooperation_level}/5（越高越倾向团队配合）",
+                f"风险偏好：{_risk_preference_cn(agent.risk_preference.value)}",
+                f"记忆风格：{agent.memory_style}",
+            ],
+        )
+    )
+    hidden_identity_body = "\n".join(
+        [
+            f"你的真实身份：{role_name}",
+            f"你的阵营：{camp_name}",
+        ]
+    )
+    role_constraints = "\n".join(_get_role_constraints(role_key, enabled_role_keys))
+    persona_guardrails = render_template("player/persona_guardrails.st", {})
+    current_state = "\n".join(
+        [
+            f"游戏ID：{game_id or 'unknown'}",
+            f"当前轮次：{round_info or 'unknown'}",
+            f"当前阶段：{phase}",
+        ]
+    )
+    output_format = render_template(
+        "player/output_format.st",
+        {
+            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys)),
+            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys)),
+        },
+    )
+    forbidden = render_template("player/forbidden_rules.st", {})
+    player_references_body = ""
     if player_references:
-        parts.extend([
-            "=" * 40,
-            "【玩家编号】",
-            "=" * 40,
-            "发言时称呼其他玩家必须使用座位编号和玩家名，不要直接念玩家ID。",
-            "行动选择的 target_id 字段仍必须填写括号前的真实玩家ID。",
-            *_format_player_reference_lines(player_references),
-            "",
-        ])
+        player_references_body = "\n".join(
+            [
+                "发言时称呼其他玩家必须使用座位编号和玩家名，不要直接念玩家ID。",
+                "行动选择的 target_id 字段仍必须填写括号前的真实玩家ID。",
+                *_format_player_reference_lines(player_references),
+            ]
+        )
 
-    # ---- 私有信息（如狼队友、查验结果）----
-    if private_info:
-        parts.extend([
-            "=" * 40,
-            "【私有信息】",
-            "=" * 40,
-            private_info,
-            "",
-        ])
-
-    # ---- 游戏上下文 ----
-    if game_context:
-        parts.extend([
-            "=" * 40,
-            "【游戏历史】",
-            "=" * 40,
-            game_context,
-            "",
-        ])
-
-    # ---- 行动要求 ----
-    if action_hint:
-        parts.extend([
-            "=" * 40,
-            "【行动要求】",
-            "=" * 40,
-            action_hint,
-            "",
-        ])
-
-    # ---- 输出格式 ----
-    parts.extend([
-        "=" * 40,
-        "【输出格式】",
-        "=" * 40,
-        "你必须输出一段合法 JSON 文本，不能输出 Markdown 或解释。",
-        "",
-        "JSON 字段说明：",
-        "- speech: 发言内容或行动描述（中文）。发言阶段必须非空，投票/夜晚阶段可为空字符串",
-        "- action_type: 行动类型，参见下方枚举",
-        "- target_id: 目标玩家ID，无目标时填 null",
-        "- public_reason: 公开可见的游戏内理由（中文，可为null）",
-        "- private_memory_update: 仅写给自己的记忆更新（中文，可为null）",
-        "",
-        "【action_type 枚举说明】：",
-        *_action_enum_lines(enabled_role_keys),
-        "",
-        "【输出示例（few-shot）】",
-        *_fewshot_example_lines(enabled_role_keys),
-        "",
-    ])
-
-    # ---- 禁止事项 ----
-    parts.extend([
-        "=" * 40,
-        "【禁止事项】",
-        "=" * 40,
-        "1. 不能说自己是 AI、Agent、模型、程序或系统。",
-        "2. 不能提到 prompt、规则配置、JSON格式、系统信息等游戏外内容。",
-        "3. 不能说「根据系统告诉我的身份」「我的输入里写着我是狼人」等。",
-        "4. 不能使用贴脸发言，如「我发誓我是好人」「拿命保证」等。",
-        "5. 不能进行场外发言，只能基于游戏内信息进行推理和行动。",
-        "6. 狼人不能说出「我们狼人」「我的狼队友」等暴露阵营的话。",
-        "7. 好人要基于逻辑和发言分析，不能无理由乱投票。",
-        "",
-        "你必须始终记住：你就是一个真实的狼人杀玩家，用中文自然发言和行动。",
-    ])
-
-    return "\n".join(parts)
+    return render_template(
+        "player/base_player_prompt.st",
+        {
+            "persona_section": section("【人物设定】", persona_body),
+            "hidden_identity_section": section("【隐藏身份】", hidden_identity_body),
+            "identity_priority_block": join_non_empty_sections("=" * 40, build_identity_priority_block(role_key, phase)),
+            "strategy_hint_block": "",
+            "role_constraints_section": section("【角色约束】", role_constraints),
+            "board_context_section": section("【板子信息】", board_context),
+            "board_role_constraints_block": "\n".join(_build_board_role_constraints(board_roles)) if board_roles else "",
+            "persona_guardrails_section": section("【你必须严格遵守的人格守则】", persona_guardrails),
+            "current_state_section": section("【当前状态】", current_state),
+            "alive_players_block": f"存活玩家：{', '.join(_format_player_options(alive_players, player_references))}" if alive_players else "",
+            "dead_players_block": f"已出局玩家：{', '.join(_format_player_options(dead_players, player_references))}" if dead_players else "",
+            "player_references_section": section("【玩家编号】", player_references_body),
+            "private_info_section": section("【私有信息】", private_info),
+            "game_history_section": section("【游戏历史】", game_context),
+            "action_requirements_section": section("【行动要求】", action_hint),
+            "output_format_section": section("【输出格式】", output_format),
+            "forbidden_section": section("【禁止事项】", forbidden),
+        },
+    )
 
 
 def build_speech_prompt(
@@ -312,26 +192,7 @@ def build_speech_prompt(
     Returns:
         白天发言的 Prompt 字符串
     """
-    action_hint = (
-        "现在是白天发言阶段。请发表你的观点和判断。\n"
-        "你的性格和发言风格已经在人物设定中指定，请务必按照你的性格说话。\n"
-        "\n"
-        "你可以：\n"
-        "1. 表明自己的立场和身份判断\n"
-        "2. 分析其他玩家的发言，指出谁像好人谁像狼人\n"
-        "3. 质疑或辩护特定玩家\n"
-        "4. 给出投票建议\n"
-        "5. 必要时说明自己是否要跳身份\n"
-        "\n"
-        "【重要：避免复读机式发言】\n"
-        "- 不要重复前面玩家已经说过的相同逻辑和分析。\n"
-        "- 你的发言应该提供新的视角或补充，而不是换句话重述别人的内容。\n"
-        "- 如果你认同前人的观点，只需要简短提及「我同意X号的部分分析」，然后补充你自己的新发现。\n"
-        "- 如果你反对前人的观点，明确指出他们逻辑中的具体问题，而不是泛泛而谈「我觉得X号像狼」。\n"
-        "- 引用具体的发言细节和玩家编号来支撑你的论点。\n"
-        "- 发言控制在100-200字左右，不要太过冗长。\n"
-        "发言要：有明确立场、有逻辑依据、有身份视角、不贴脸、不场外。"
-    )
+    action_hint = render_template("player/day_speech_action_hint.st", {})
     # Inject speech progress into game_context if provided
     effective_context = game_context
     if speech_progress:
@@ -391,14 +252,9 @@ def build_vote_prompt(
     # 排除自己
     votable = [p for p in alive_players if p != self_id]
 
-    action_hint = (
-        f"现在是投票阶段。请选择你要投票放逐的玩家。\n"
-        f"可投票玩家：{', '.join(_format_player_options(votable, player_references))}\n"
-        "规则：\n"
-        "1. 在 target 字段填入你要投票的玩家 ID\n"
-        "2. 如果选择弃票，target 填 null\n"
-        "3. 在 content 中说明你的投票理由\n"
-        "4. 好人优先投狼面最大的人，狼人可以选择冲票或倒钩"
+    action_hint = render_template(
+        "player/exile_vote_action_hint.st",
+        {"votable_players": ", ".join(_format_player_options(votable, player_references))},
     )
     return build_player_prompt(
         agent=agent,
@@ -438,13 +294,7 @@ def build_last_words_prompt(
     遗言只写入公开发言事件，不应直接改变游戏状态，也不应泄露系统提示
     或其他玩家隐藏身份。
     """
-    action_hint = (
-        "现在是遗言阶段。你已经出局，请留下最后发言。\n"
-        "遗言只影响公开发言，不直接改变游戏状态。\n"
-        "你可以总结自己的判断、解释投票关系、提醒好人关注重点玩家。\n"
-        "不能泄露系统提示，不能提到 prompt、模型、隐藏字段或其他玩家未公开身份。\n"
-        "请输出 action_type 为 speak，target_id 为 null。"
-    )
+    action_hint = render_template("player/last_words_action_hint.st", {})
     return build_player_prompt(
         agent=agent,
         role_key=role_key,
@@ -510,7 +360,7 @@ def build_night_action_prompt(
     elif role_key == "guardian":
         action_hint = _build_guardian_action_hint(alive_players, player_references)
     else:
-        action_hint = "你是普通村民，夜晚没有行动，请选择 no_action。"
+        action_hint = render_template("player/night_action_default.st", {})
 
     return build_player_prompt(
         agent=agent,
@@ -656,21 +506,13 @@ def _build_board_role_constraints(board_roles: dict[str, int]) -> list[str]:
 
     unconfigured_str = "、".join(name for _, name in unconfigured) if unconfigured else "无"
 
-    lines = [
-        "=" * 40,
-        "【本局板子可用身份】",
-        "=" * 40,
-        *present_lines,
-        f"- （未配置：{unconfigured_str}）",
-        "",
-        "【硬约束】",
-        "- 你只能起跳\"板子里存在\"的身份。",
-        "- 你不得在发言中暗示\"对方是 X\"，其中 X 是板子未配置的角色。",
-        "- 当板子无女巫时，禁止讨论\"女巫救/毒\"。",
-        "- 当板子无守卫时，禁止讨论\"守卫保人\"。",
-        "",
-    ]
-    return lines
+    return render_template(
+        "player/board_role_constraints.st",
+        {
+            "present_roles": "\n".join(present_lines),
+            "unconfigured_roles": unconfigured_str,
+        },
+    ).splitlines()
 
 
 def _fewshot_example_lines(enabled_role_keys: set[str] | None = None) -> list[str]:
@@ -832,70 +674,39 @@ def _build_wolf_action_hint(
         if enabled_role_keys is None or key in enabled_role_keys
     ]
     special_hint = "、".join(dict.fromkeys(visible_specials)) or "关键好人"
-    return (
-        "你是狼人，现在是夜晚狼队交流时间。\n"
-        "你可以选择一个玩家作为今晚的击杀目标。\n"
-        "刀人优先考虑：\n"
-        f"1. 明确神职或关键身份（当前板子可能存在：{special_hint}）\n"
-        "2. 强逻辑好人\n"
-        "3. 已坐实身份的玩家\n"
-        "4. 对狼队威胁最大的人\n"
-        "5. 能制造白天混乱的刀口\n"
-        f"可选择的目标：{', '.join(_format_player_options(alive_players, player_references))}\n"
-        "在 target 字段填入目标玩家 ID，action_type 填 wolf_kill。"
+    return render_template(
+        "player/night_action_werewolf.st",
+        {
+            "special_hint": special_hint,
+            "available_targets": ", ".join(_format_player_options(alive_players, player_references)),
+        },
     )
 
 
 def _build_seer_action_hint(alive_players: list[str], player_references: dict[str, str] | None = None) -> str:
     """构建预言家查验提示"""
-    return (
-        "你是预言家，现在是夜晚。\n"
-        "你可以查验一名玩家的身份。\n"
-        "查验优先考虑：\n"
-        "1. 发言强但身份不明的人\n"
-        "2. 白天焦点位\n"
-        "3. 站边关键位\n"
-        "4. 可能影响投票归票的人\n"
-        f"可查验的目标：{', '.join(_format_player_options(alive_players, player_references))}\n"
-        "在 target 字段填入要查验的玩家 ID，action_type 填 seer_check。"
+    return render_template(
+        "player/night_action_seer.st",
+        {"available_targets": ", ".join(_format_player_options(alive_players, player_references))},
     )
 
 
 def _build_witch_action_hint(private_info: str) -> str:
     """构建女巫用药提示"""
-    base = (
-        "你是女巫，现在是夜晚。\n"
-        "你拥有解药和毒药，可以选择：\n"
-        "1. 使用解药救活今晚被狼人击杀的玩家（save）\n"
-        "2. 使用毒药毒杀一名玩家（poison）\n"
-        "3. 什么都不做（no_action）\n"
-        "\n"
-        "用药原则：\n"
-        "解药一般优先救：明确好人、关键神职、强逻辑玩家\n"
-        "毒药一般用于：狼面极高的人、悍跳失败的人、发言明显聊爆的人\n"
-        "\n"
-        "如果选择救，action_type 填 witch_save，target 填被救玩家 ID；\n"
-        "如果选择毒，action_type 填 witch_poison，target 填被毒玩家 ID；\n"
-        "如果什么都不做，action_type 填 no_action，target 填 null。"
-    )
-    # 如果有死亡信息，追加到提示中
+    private_info_suffix = ""
     if private_info and "死亡" in private_info:
-        return f"{base}\n\n你得知了今晚的死亡信息：{private_info}"
-    return base
+        private_info_suffix = f"\n\n你得知了今晚的死亡信息：{private_info}"
+    return render_template(
+        "player/night_action_witch.st",
+        {"private_info_suffix": private_info_suffix},
+    )
 
 
 def _build_guardian_action_hint(alive_players: list[str], player_references: dict[str, str] | None = None) -> str:
     """构建守卫守护提示"""
-    return (
-        "你是守卫，现在是夜晚。\n"
-        "你可以守护一名玩家免受狼人袭击。\n"
-        "守护优先考虑：\n"
-        "1. 可能吃刀的神职\n"
-        "2. 明确好人\n"
-        "3. 强逻辑玩家\n"
-        "注意：不能连续两晚守护同一个人。\n"
-        f"可守护的目标：{', '.join(_format_player_options(alive_players, player_references))}\n"
-        "在 target 字段填入要守护的玩家 ID，action_type 填 guard。"
+    return render_template(
+        "player/night_action_guardian.st",
+        {"available_targets": ", ".join(_format_player_options(alive_players, player_references))},
     )
 
 
@@ -1002,91 +813,26 @@ def _get_role_constraints(role_key: str, enabled_role_keys: set[str] | None = No
     Returns:
         约束规则列表
     """
-    # 通用好人约束
-    good_constraints = [
-        "你属于好人阵营。",
-        "你的目标是找出狼人，帮助好人放逐所有狼人。",
-        "发言应该尽量体现好人视角，主动分析谁像狼人、谁像好人。",
-        "不要无理由带节奏，不要只说情绪化结论，要给出逻辑链。",
-        "在关键时刻可以亮明身份，但必须说明为什么此时跳身份对好人有收益。",
-    ]
-
-    # 通用狼人约束
-    wolf_constraints = [
-        "你属于狼人阵营。",
-        "你的目标是隐藏狼人身份，误导好人投错人，并通过夜晚击杀扩大优势。",
-        "白天发言要站在「好人视角」思考，不要暴露自己知道其他狼人是谁。",
-        "可以假装村民或神职，但不要随意跳身份导致逻辑崩盘。",
-        "不能说「我们狼人」「我的狼队友」等暴露阵营的话（夜晚交流除外）。",
-        "发言要尽量符合好人收益表象，避免「聊爆」。",
-    ]
-
-    # 角色特定约束
-    role_specific = {
-        "werewolf": [
-            "你是普通狼人，每晚可以和狼队共同选择击杀目标。",
-            "白天要伪装好人，夜晚选择最有收益的刀口。",
-            "根据局势选择悍跳、倒钩、冲票或深水。",
-            "如果选择悍跳预言家，必须遵守以下规则：",
-            "  - 只能声称查验了其他存活玩家，绝不能说查验了自己。",
-            "  - 给出的假查验结果要符合逻辑（例如：给好人发金水、给非狼队友发查杀）。",
-            "  - 假查验结果不能与已公开的真实信息矛盾。",
-            "  - 一旦起跳，后续轮次必须给出一致的假查验序列，不能自相矛盾。",
-            "  - 不要在第一晚就说自己查验了已经出局的玩家。",
-        ],
-        "seer": [
-            "你是预言家，每晚可以查验一名玩家身份。",
-            "在合适时机公布查验结果，争取好人信任。",
-            "给出警徽流或后续查验计划，解释为什么查验某人。",
-            "保护自己的可信度，不要跳太早被抗推。",
-        ],
-        "witch": [
-            "你是女巫，拥有解药和毒药两瓶药。",
-            "谨慎使用药，根据死亡信息、发言和身份局势判断是否救人或毒人。",
-            "不要随意暴露自己是女巫，关键时刻可以跳身份带队。",
-            "解药一般优先救明确好人或关键神职。",
-        ],
-        "hunter": [
-            "你是猎人，出局时可以开枪带走一名玩家。",
-            "被放逐或被杀时判断是否开枪，优先带走狼面最高的人。",
-            "如果局势不明，可以不开枪或谨慎开枪。",
-            "不要过早暴露身份，除非能帮助好人。",
-        ],
-        "villager": [
-            "你是普通村民，没有技能。",
-            "你需要通过发言帮助好人：认真听发言、盘身份关系、找发言漏洞。",
-            "在必要时为自己表水，表明自己是普通好人视角。",
-        ],
-        "guardian": [
-            "你是守卫，每晚可以守护一名玩家。",
-            "不能连续两晚守护同一人。",
-            "预测狼人刀口，保护关键好人，不要轻易暴露守护信息。",
-        ],
-        "idiot": [
-            "你是白痴，被投票出局可以翻牌免疫放逐，但失去投票权。",
-            "可以适当承压，在被错误放逐时通过技能证明身份。",
-            "发言继续帮助好人，但不能投票。",
-        ],
-        "wolf_king": [
-            "你是白狼王，属于狼人阵营，可以在白天自爆并带走一名玩家。",
-            "自爆目标优先选择：预言家、女巫、骑士、强神、对狼队威胁最大的人。",
-        ],
-        "knight": [
-            "你是骑士，可以在白天投票前翻牌决斗一名玩家。",
-            "选择狼面最高或悍跳嫌疑最大的人发动技能。",
-            "如果判断准确，可以直接带走狼人；如果判断错误，你会出局。",
-        ],
-        "wolf_beauty": [
-            "你是狼美人，属于狼人阵营，夜晚可以魅惑一名玩家。",
-            "如果你白天被放逐或被猎人射杀，被魅惑的玩家一起出局。",
-            "魅惑关键好人或强神，白天尽量隐藏身份。",
-        ],
+    common_template = (
+        "player/role_constraints_wolf_common.st"
+        if role_key in {"werewolf", "wolf_king", "wolf_beauty"}
+        else "player/role_constraints_good_common.st"
+    )
+    specific_template_map = {
+        "werewolf": "player/role_constraints_werewolf.st",
+        "seer": "player/role_constraints_seer.st",
+        "witch": "player/role_constraints_witch.st",
+        "hunter": "player/role_constraints_hunter.st",
+        "villager": "player/role_constraints_villager.st",
+        "guard": "player/role_constraints_guardian.st",
+        "guardian": "player/role_constraints_guardian.st",
+        "idiot": "player/role_constraints_idiot.st",
+        "wolf_king": "player/role_constraints_wolf_king.st",
+        "knight": "player/role_constraints_knight.st",
+        "wolf_beauty": "player/role_constraints_wolf_beauty.st",
     }
-
-    constraints = role_specific.get(role_key, [])
-
-    # 根据阵营添加通用约束
-    if role_key in {"werewolf", "wolf_king", "wolf_beauty"}:
-        return wolf_constraints + constraints
-    else:
-        return good_constraints + constraints
+    parts = [render_template(common_template, {})]
+    specific_template = specific_template_map.get(role_key)
+    if specific_template:
+        parts.append(render_template(specific_template, {}))
+    return "\n".join(parts).splitlines()
