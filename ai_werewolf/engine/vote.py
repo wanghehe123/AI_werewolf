@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from typing import Any
 
 from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
-from ai_werewolf.engine.helpers import display_name, event, resolve_player_id
+from ai_werewolf.engine.helpers import display_name, event, player_label, resolve_player_id
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
+from ai_werewolf.llm.graphs.player_decision_prompt_catalog import role_camp_goal, role_display_name
 from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nodes, run_player_decision_graph
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
 from ai_werewolf.llm.memory.summary_builder import build_player_suspicion_memory, build_private_role_memory
@@ -25,13 +27,49 @@ logger = logging.getLogger(__name__)
 
 def _append_locked_decision_block(prompt: str, state: dict[str, Any]) -> str:
     draft = state.get("action_draft", {})
+    strategy = state.get("strategy", {})
+    role_key = state.get("role_key", "unknown")
     return (
         f"{prompt}\n\n"
         "【结构化决策已锁定】\n"
+        f"- 你的真实身份: {role_display_name(role_key)}\n"
+        f"- 你的阵营目标: {role_camp_goal(role_key)}\n"
+        f"- strategy_type: {strategy.get('strategy_type')}\n"
+        f"- strategy_goal: {strategy.get('goal')}\n"
         f"- action_type: {draft.get('action_type')}\n"
         f"- target_id: {draft.get('target_id')}\n"
+        f"- public_reason: {draft.get('public_reason')}\n"
+        f"- private_memory_update: {draft.get('private_memory_update')}\n"
+        "你必须继续以真实身份进行内在推理，不能把自己真的当成另一个阵营。\n"
+        "你可以伪装，但不能用“我是普通好人”“我是平民”这种自我代入替代真实身份思考，除非当前策略明确要求你悍跳具体身份。\n"
+        "如果你的 speech 提到投票或行动对象，必须与 locked target_id 保持一致；如果做不到，就不要在 speech 里写具体座位号。\n"
         "你只能生成自然发言和理由，不能改变 action_type 或 target_id。\n"
     )
+
+
+def _repair_vote_speech(
+    session: GameSession,
+    voter: PlayerState,
+    decision: PlayerDecision,
+) -> str:
+    speech = (decision.speech or "").strip()
+    target_id = decision.target_id
+    if target_id is None:
+        return speech or "我这轮先弃票。"
+
+    target_seat = session.state.player_by_id(target_id).seat
+    generic_good_claim = (
+        voter.role_key in {"werewolf", "wolf_king", "wolf_beauty"}
+        and re.search(r"我是[^。，“”\n]{0,16}(普通好人|好人|平民|村民)", speech) is not None
+    )
+    explicit_vote_mentions = re.findall(r"我[^。！？\n]{0,40}投(?:票)?给?(\d+)号", speech)
+    vote_target_mismatch = any(int(seat) != target_seat for seat in explicit_vote_mentions)
+
+    if speech and not generic_good_claim and not vote_target_mismatch:
+        return speech
+
+    reason = decision.public_reason or "当前这条线最需要解释"
+    return f"我这一票会投给{player_label(target_id, session)}，因为{reason}。"
 
 
 class VoteResolver:
@@ -191,7 +229,7 @@ class VoteResolver:
                     else:
                         target = resolved
 
-            return target, decision.speech
+            return target, _repair_vote_speech(session, player, decision)
         except Exception:
             logger.exception("AI %s vote failed", player_id)
             return None, "弃票"
