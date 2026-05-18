@@ -19,16 +19,16 @@ providers:
   - id: deepseek
     type: openai_compatible
     model_name: deepseek-ai/DeepSeek-V3.2
-    base_url: https://api.siliconflow.cn/v1/chat/completions
+    base_url: https://api.siliconflow.cn/v1
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8                 # 生成温度，越高越随机（0.0-2.0）
     max_tokens: 4096                 # 单次回复最大 token 数（reasoning 模型需要更大预算）
     timeout: 30                      # 请求超时（秒）
 
-  - id: sf-glm
+  - id: sf-qw
     type: openai_compatible
-    model_name: Pro/zai-org/GLM-4.7
-    base_url: https://api.siliconflow.cn/v1/chat/completions
+    model_name: Qwen/Qwen3.6-27B
+    base_url: https://api.siliconflow.cn/v1
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
     max_tokens: 4096
@@ -36,8 +36,8 @@ providers:
 
   - id: sf-kimi
     type: openai_compatible
-    model_name: Pro/moonshotai/Kimi-K2.5
-    base_url: https://api.siliconflow.cn/v1/chat/completions
+    model_name: deepseek-ai/DeepSeek-R1
+    base_url: https://api.siliconflow.cn/v1
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
     max_tokens: 4096
@@ -46,7 +46,7 @@ providers:
   - id: sf-minimax
     type: openai_compatible
     model_name: Pro/MiniMaxAI/MiniMax-M2.5
-    base_url: https://api.siliconflow.cn/v1/chat/completions
+    base_url: https://api.siliconflow.cn/v1
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
     max_tokens: 4096
@@ -71,7 +71,7 @@ providers:
 # AI 玩家在扮演该角色时，会使用对应 Provider 的模型进行决策和发言
 role_bindings:
   werewolf: deepseek         # 狼人角色使用 MiniMax
-  seer: sf-glm           # 预言家角色使用 MiniMax
+  seer: sf-qw           # 预言家角色使用 MiniMax
   witch: sf-kimi            # 女巫角色使用 MiniMax
   hunter: deepseek           # 猎人角色使用 MiniMax
   villager: sf-minimax         # 平民角色使用 MiniMax
@@ -92,7 +92,7 @@ chains:
       max_retries: 1
       triggers_to_next: [timeout, 5xx, 429, json_parse_error]
     - tier: secondary
-      provider: sf-glm
+      provider: sf-qw
       timeout_ms: 4000
       max_retries: 1
       triggers_to_next: [timeout, 5xx]
