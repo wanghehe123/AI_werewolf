@@ -27,6 +27,7 @@ from ai_werewolf.llm.schemas import PlayerDecision
 logger = logging.getLogger(__name__)
 
 DecisionGenerator = Callable[[dict[str, Any]], PlayerDecision]
+StrategyHintProvider = Callable[[dict[str, Any]], list[dict[str, Any]]]
 
 
 class RawDecisionModel(Protocol):
@@ -591,6 +592,7 @@ def run_player_decision_graph(
     decision_generator: DecisionGenerator | None = None,
     semantic_decider: RawDecisionModel | None = None,
     semantic_nodes: set[str] | None = None,
+    strategy_hint_provider: StrategyHintProvider | None = None,
 ) -> dict[str, Any]:
     logger.info(
         "启动玩家统一决策图 player_id=%s role=%s decision_kind=%s",
@@ -607,10 +609,17 @@ def run_player_decision_graph(
         "decision_kind": decision_kind,
         "memory_context": memory_context.model_dump(mode="json"),
         "alive_player_ids": _alive_player_ids(memory_context),
+        "strategy_hints": [],
         "semantic_node_errors": {},
         "semantic_node_sources": {},
         "error": None,
     }
+    if strategy_hint_provider is not None:
+        try:
+            initial["strategy_hints"] = strategy_hint_provider(dict(initial))[:5]
+        except Exception as exc:
+            logger.warning("[PLAYER_GRAPH_STRATEGY_HINTS_FALLBACK] %s", exc)
+            initial["strategy_hints"] = []
     try:
         graph = build_player_speech_graph(
             decision_generator=decision_generator,
@@ -639,6 +648,7 @@ def run_player_speech_graph(
     speech_generator: Callable[[dict[str, Any]], str] | None = None,
     semantic_decider: RawDecisionModel | None = None,
     semantic_nodes: set[str] | None = None,
+    strategy_hint_provider: StrategyHintProvider | None = None,
 ) -> dict[str, Any]:
     decision_generator: DecisionGenerator | None = None
     if speech_generator is not None:
@@ -661,6 +671,7 @@ def run_player_speech_graph(
         decision_generator=decision_generator,
         semantic_decider=semantic_decider,
         semantic_nodes=semantic_nodes,
+        strategy_hint_provider=strategy_hint_provider,
     )
     if result.get("error") == "decision_generation_failed":
         result["error"] = "speech_generation_failed"

@@ -26,6 +26,7 @@ from collections.abc import Callable
 
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import PlayerPrivateInfo, PlayerState
+from ai_werewolf.llm.graphs.player_decision_prompt_catalog import build_identity_priority_block
 
 
 def build_player_prompt(
@@ -125,6 +126,11 @@ def build_player_prompt(
         "=" * 40,
         f"你的真实身份：{role_name}",
         f"你的阵营：{camp_name}",
+        "",
+    ])
+    parts.extend([
+        "=" * 40,
+        build_identity_priority_block(role_key, phase),
         "",
     ])
 

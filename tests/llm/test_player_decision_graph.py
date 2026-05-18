@@ -173,6 +173,69 @@ def test_prompt_builders_include_expected_constraints():
     assert "strategy_type" in build_strategy_prompt(state)
 
 
+def test_semantic_prompts_are_phase_and_role_aware():
+    state = {
+        "game_id": "game_1",
+        "player_id": "ai_3",
+        "role_key": "werewolf",
+        "agent_name": "小明",
+        "speech_style": "冷静、压迫",
+        "decision_kind": "day_speech",
+        "alive_player_ids": ["human", "ai_2", "ai_3"],
+        "memory_context": _memory_context().model_dump(mode="json"),
+        "analysis": {"key_facts": ["1号被多人攻击"]},
+        "suspicion_update": {"primary_target": "human"},
+        "strategy_hints": [
+            {
+                "source": "rag:werewolf_day_speech_v1",
+                "title": "狼人白天悍跳预言家",
+                "content": "局势需要抢轮次时，可以悍跳预言家，但必须维护连续查验链。",
+                "weight": 0.86,
+            }
+        ],
+    }
+
+    n1_prompt = build_situation_analysis_prompt(state)
+    n2_prompt = build_suspicion_update_prompt(state)
+    n3_prompt = build_strategy_prompt(state)
+
+    for prompt in (n1_prompt, n2_prompt, n3_prompt):
+        assert "【身份优先级】" in prompt
+        assert "你的真实身份：狼人" in prompt
+        assert "你的阵营目标：狼人阵营获胜" in prompt
+        assert "【阶段目标】" in prompt
+        assert "白天发言阶段" in prompt
+        assert "【可选策略参考】" in prompt
+        assert "狼人白天悍跳预言家" in prompt
+
+    assert "节点职责：只做局势提炼" in n1_prompt
+    assert "节点职责：只做怀疑与信任更新" in n2_prompt
+    assert "节点职责：只做战术选择" in n3_prompt
+
+
+def test_semantic_prompts_change_phase_focus_for_night_action():
+    state = {
+        "game_id": "game_1",
+        "player_id": "ai_2",
+        "role_key": "seer",
+        "agent_name": "林野",
+        "speech_style": "短句、克制",
+        "decision_kind": "night_action",
+        "alive_player_ids": ["human", "ai_2", "p5"],
+        "memory_context": _memory_context().model_dump(mode="json"),
+        "analysis": {"key_facts": ["5号持续攻击1号"]},
+        "suspicion_update": {"primary_target": "p5"},
+        "strategy_hints": [],
+    }
+
+    prompt = build_strategy_prompt(state)
+
+    assert "你的真实身份：预言家" in prompt
+    assert "查验信息是你的核心资产" in prompt
+    assert "夜晚行动阶段" in prompt
+    assert "白天发言阶段" not in prompt
+
+
 def test_n1_llm_analysis_is_used_when_enabled():
     decider = FakeRawDecider(
         [
@@ -384,6 +447,92 @@ def test_n3_llm_strategy_flows_into_action_draft():
     assert result["strategy"]["strategy_type"] == "pressure_test"
     assert result["action_draft"]["target_id"] == "p5"
     assert result["semantic_node_sources"]["n3"] == "llm"
+
+
+def test_strategy_hint_provider_injects_hints_into_semantic_prompts():
+    decider = FakeRawDecider(
+        [
+            {
+                "key_facts": ["狼人需要抢轮次"],
+                "contradictions": [],
+                "relationship_edges": [],
+                "turning_points": [],
+            }
+        ]
+    )
+
+    def strategy_hint_provider(state: dict):
+        assert state["role_key"] == "werewolf"
+        assert state["decision_kind"] == "day_speech"
+        return [
+            {
+                "source": "rag:werewolf_day_speech_v1",
+                "title": "狼人白天悍跳预言家",
+                "content": "可以悍跳预言家，但必须维护连续查验链。",
+                "weight": 0.86,
+            }
+        ]
+
+    wolf = _player().model_copy(update={"role_key": "werewolf", "player_id": "ai_3"})
+    context = _memory_context().model_copy(update={"player_id": "ai_3"})
+
+    result = run_player_decision_graph(
+        agent=_agent(),
+        player=wolf,
+        memory_context=context,
+        decision_kind="day_speech",
+        semantic_decider=decider,
+        semantic_nodes={"n1"},
+        strategy_hint_provider=strategy_hint_provider,
+    )
+
+    assert result["semantic_node_sources"]["n1"] == "llm"
+    assert "狼人白天悍跳预言家" in decider.prompts[0]
+
+
+def test_suspicion_prompt_for_vote_phase_emphasizes_exile_target():
+    state = {
+        "game_id": "game_1",
+        "player_id": "ai_2",
+        "role_key": "villager",
+        "agent_name": "林野",
+        "speech_style": "短句、克制",
+        "decision_kind": "exile_vote",
+        "alive_player_ids": ["human", "ai_2", "p5"],
+        "memory_context": _memory_context().model_dump(mode="json"),
+        "analysis": {"key_facts": ["5号发言和投票不一致"]},
+        "strategy_hints": [],
+    }
+
+    prompt = build_suspicion_update_prompt(state)
+
+    assert "投票放逐阶段" in prompt
+    assert "你的真实身份：平民" in prompt
+    assert "没有夜晚技能信息" in prompt
+    assert "primary_target 和 secondary_target 只能是存活玩家" in prompt
+
+
+def test_strategy_prompt_for_wolf_night_emphasizes_private_night_action():
+    state = {
+        "game_id": "game_1",
+        "player_id": "ai_3",
+        "role_key": "werewolf",
+        "agent_name": "小明",
+        "speech_style": "冷静、压迫",
+        "decision_kind": "night_action",
+        "alive_player_ids": ["human", "ai_2", "ai_3"],
+        "memory_context": _memory_context().model_dump(mode="json"),
+        "analysis": {"key_facts": ["2号像预言家"]},
+        "suspicion_update": {"primary_target": "ai_2"},
+        "strategy_hints": [],
+    }
+
+    prompt = build_strategy_prompt(state)
+
+    assert "夜晚行动阶段" in prompt
+    assert "你的真实身份：狼人" in prompt
+    assert "狼人阵营获胜" in prompt
+    assert "不能泄露夜晚私有视角到公开发言" in prompt
 
 
 def test_generated_decision_cannot_override_locked_target():

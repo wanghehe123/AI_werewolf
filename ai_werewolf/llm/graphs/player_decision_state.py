@@ -14,6 +14,7 @@ class PlayerDecisionGraphState(TypedDict):
     decision_kind: str
     memory_context: dict[str, Any]
     alive_player_ids: list[str]
+    strategy_hints: NotRequired[list[dict[str, Any]]]
     analysis: NotRequired[dict[str, Any]]
     suspicion_update: NotRequired[dict[str, Any]]
     strategy: NotRequired[dict[str, Any]]
