@@ -1,4 +1,4 @@
-<img width="1024" height="1536" alt="image" src="https://github.com/user-attachments/assets/2c3af7e7-87e3-4a32-b0c9-80c1f9dabc47" /># 🐺 AI 狼人杀
+# 🐺 AI 狼人杀
 
 > **基于 LangChain / LangGraph 的多智能体 AI 对战平台**
 >
