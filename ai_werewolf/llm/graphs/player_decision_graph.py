@@ -65,6 +65,111 @@ def _with_semantic_metadata(
     return result
 
 
+def _preview(value: Any, *, max_length: int = 120) -> str:
+    text = str(value)
+    if len(text) > max_length:
+        return f"{text[:max_length]}..."
+    return text
+
+
+def _preview_list(values: list[Any], *, limit: int = 3, max_length: int = 120) -> list[str]:
+    return [_preview(value, max_length=max_length) for value in values[:limit]]
+
+
+def _action_value(action_type: Any) -> str:
+    return getattr(action_type, "value", str(action_type))
+
+
+def _log_analysis_node(state: PlayerDecisionGraphState, source: str, analysis: dict[str, Any]) -> None:
+    logger.info(
+        "[PLAYER_GRAPH_N1_ANALYSIS] player_id=%s decision_kind=%s source=%s facts=%s contradictions=%s edges=%s turning_points=%s key_facts=%s relationship_edges=%s",
+        state["player_id"],
+        state["decision_kind"],
+        source,
+        len(analysis.get("key_facts", [])),
+        len(analysis.get("contradictions", [])),
+        len(analysis.get("relationship_edges", [])),
+        len(analysis.get("turning_points", [])),
+        _preview_list(analysis.get("key_facts", [])),
+        _preview_list(analysis.get("relationship_edges", [])),
+    )
+
+
+def _log_suspicion_node(state: PlayerDecisionGraphState, source: str, suspicion_update: dict[str, Any]) -> None:
+    records = suspicion_update.get("records", [])
+    logger.info(
+        "[PLAYER_GRAPH_N2_SUSPICION] player_id=%s decision_kind=%s source=%s primary=%s secondary=%s records=%s top_records=%s trusted=%s",
+        state["player_id"],
+        state["decision_kind"],
+        source,
+        suspicion_update.get("primary_target"),
+        suspicion_update.get("secondary_target"),
+        len(records),
+        _preview_list(records),
+        _preview_list(suspicion_update.get("trusted_players", [])),
+    )
+
+
+def _log_strategy_node(state: PlayerDecisionGraphState, source: str, strategy: dict[str, Any]) -> None:
+    logger.info(
+        "[PLAYER_GRAPH_N3_STRATEGY] player_id=%s decision_kind=%s source=%s type=%s primary=%s secondary=%s goal=%s tone=%s risk=%s",
+        state["player_id"],
+        state["decision_kind"],
+        source,
+        strategy.get("strategy_type"),
+        strategy.get("primary_target"),
+        strategy.get("secondary_target"),
+        _preview(strategy.get("goal")),
+        _preview(strategy.get("tone")),
+        _preview(strategy.get("risk")),
+    )
+
+
+def _log_action_node(state: PlayerDecisionGraphState, action_draft: dict[str, Any]) -> None:
+    logger.info(
+        "[PLAYER_GRAPH_N4_ACTION] player_id=%s decision_kind=%s action_type=%s target=%s reason=%s memory_update=%s",
+        state["player_id"],
+        state["decision_kind"],
+        action_draft.get("action_type"),
+        action_draft.get("target_id"),
+        _preview(action_draft.get("public_reason")),
+        _preview(action_draft.get("private_memory_update")),
+    )
+
+
+def _log_generation_node(state: PlayerDecisionGraphState, generated: Any) -> None:
+    if isinstance(generated, PlayerDecision):
+        logger.info(
+            "[PLAYER_GRAPH_N5_GENERATION] player_id=%s decision_kind=%s generated_type=PlayerDecision action_type=%s target=%s speech=%s",
+            state["player_id"],
+            state["decision_kind"],
+            _action_value(generated.action_type),
+            generated.target_id,
+            _preview(generated.speech),
+        )
+        return
+    logger.info(
+        "[PLAYER_GRAPH_N5_GENERATION] player_id=%s decision_kind=%s generated_type=%s value=%s",
+        state["player_id"],
+        state["decision_kind"],
+        type(generated).__name__,
+        _preview(generated),
+    )
+
+
+def _log_decision_node(state: PlayerDecisionGraphState, decision: PlayerDecision) -> None:
+    logger.info(
+        "[PLAYER_GRAPH_N6_DECISION] player_id=%s decision_kind=%s action_type=%s target=%s public_reason=%s private_memory_update=%s speech=%s",
+        state["player_id"],
+        state["decision_kind"],
+        _action_value(decision.action_type),
+        decision.target_id,
+        _preview(decision.public_reason),
+        _preview(decision.private_memory_update),
+        _preview(decision.speech),
+    )
+
+
 def _fallback_analyze_situation(state: PlayerDecisionGraphState) -> dict[str, Any]:
     memory_context = state["memory_context"]
     recent_messages = [event["message"] for event in memory_context.get("recent_events", [])]
@@ -232,6 +337,7 @@ def _make_analyze_situation_node(
     def n1_analyze_situation(state: PlayerDecisionGraphState) -> dict[str, Any]:
         fallback = _fallback_analyze_situation(state)
         if semantic_decider is None or "n1" not in semantic_nodes:
+            _log_analysis_node(state, "fallback", fallback["analysis"])
             return _with_semantic_metadata(state=state, payload=fallback, node_name="n1", source="fallback")
         prompt = build_situation_analysis_prompt(state)
         try:
@@ -253,14 +359,17 @@ def _make_analyze_situation_node(
                 low_signal_players=fallback["analysis"].get("low_signal_players", []),
                 checked_players=fallback["analysis"].get("checked_players", []),
             )
+            normalized = _normalize_analysis_for_state(merged)
+            _log_analysis_node(state, "llm", normalized)
             return _with_semantic_metadata(
                 state=state,
-                payload={"analysis": _normalize_analysis_for_state(merged)},
+                payload={"analysis": normalized},
                 node_name="n1",
                 source="llm",
             )
         except Exception as exc:
             logger.warning("[PLAYER_GRAPH_N1_LLM_FALLBACK] %s", exc)
+            _log_analysis_node(state, "fallback", fallback["analysis"])
             return _with_semantic_metadata(state=state, payload=fallback, node_name="n1", source="fallback", error=str(exc))
 
     return n1_analyze_situation
@@ -275,6 +384,7 @@ def _make_update_suspicion_node(
         memory_context = state["memory_context"]
         previous_records = list((memory_context.get("suspicion_memory") or {}).get("records", []))
         if semantic_decider is None or "n2" not in semantic_nodes:
+            _log_suspicion_node(state, "fallback", fallback["suspicion_update"])
             return _with_semantic_metadata(state=state, payload=fallback, node_name="n2", source="fallback")
         prompt = build_suspicion_update_prompt(state)
         try:
@@ -288,6 +398,7 @@ def _make_update_suspicion_node(
             )
             if not merged.get("records"):
                 raise ValueError("no legal suspicion records after merge")
+            _log_suspicion_node(state, "llm", merged)
             return _with_semantic_metadata(
                 state=state,
                 payload={"suspicion_update": merged},
@@ -296,6 +407,7 @@ def _make_update_suspicion_node(
             )
         except Exception as exc:
             logger.warning("[PLAYER_GRAPH_N2_LLM_FALLBACK] %s", exc)
+            _log_suspicion_node(state, "fallback", fallback["suspicion_update"])
             return _with_semantic_metadata(state=state, payload=fallback, node_name="n2", source="fallback", error=str(exc))
 
     return n2_update_suspicion
@@ -308,6 +420,7 @@ def _make_decide_strategy_node(
     def n3_decide_strategy(state: PlayerDecisionGraphState) -> dict[str, Any]:
         fallback = _fallback_decide_strategy(state)
         if semantic_decider is None or "n3" not in semantic_nodes:
+            _log_strategy_node(state, "fallback", fallback["strategy"])
             return _with_semantic_metadata(state=state, payload=fallback, node_name="n3", source="fallback")
         prompt = build_strategy_prompt(state)
         try:
@@ -320,14 +433,17 @@ def _make_decide_strategy_node(
                     strategy = strategy.model_copy(update={"primary_target": primary_target})
                 else:
                     strategy = strategy.model_copy(update={"strategy_type": "observe", "primary_target": None})
+            normalized = _normalize_strategy_for_state(strategy)
+            _log_strategy_node(state, "llm", normalized)
             return _with_semantic_metadata(
                 state=state,
-                payload={"strategy": _normalize_strategy_for_state(strategy)},
+                payload={"strategy": normalized},
                 node_name="n3",
                 source="llm",
             )
         except Exception as exc:
             logger.warning("[PLAYER_GRAPH_N3_LLM_FALLBACK] %s", exc)
+            _log_strategy_node(state, "fallback", fallback["strategy"])
             return _with_semantic_metadata(state=state, payload=fallback, node_name="n3", source="fallback", error=str(exc))
 
     return n3_decide_strategy
@@ -342,7 +458,7 @@ def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
     checked_players = set(state.get("analysis", {}).get("checked_players", []))
     if decision_kind == "exile_vote":
         target_id = primary_target or (alive_targets[0] if alive_targets else None)
-        return {
+        result = {
             "action_draft": {
                 "action_type": "vote",
                 "target_id": target_id,
@@ -352,6 +468,8 @@ def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
                 ),
             }
         }
+        _log_action_node(state, result["action_draft"])
+        return result
     if decision_kind == "night_action":
         action_type = _night_action_type_for_role(role_key)
         target_id = primary_target
@@ -362,7 +480,7 @@ def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
             target_id = primary_target or next((player_id for player_id in alive_targets if player_id != state["player_id"]), None)
         elif action_type == "guard":
             target_id = primary_target or (alive_targets[0] if alive_targets else None)
-        return {
+        result = {
             "action_draft": {
                 "action_type": action_type,
                 "target_id": target_id,
@@ -372,7 +490,9 @@ def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
                 ),
             }
         }
-    return {
+        _log_action_node(state, result["action_draft"])
+        return result
+    result = {
         "action_draft": {
             "action_type": "speak",
             "target_id": primary_target,
@@ -382,6 +502,8 @@ def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
             ),
         }
     }
+    _log_action_node(state, result["action_draft"])
+    return result
 
 
 def _make_generate_speech_node(
@@ -389,8 +511,11 @@ def _make_generate_speech_node(
 ) -> Callable[[PlayerDecisionGraphState], dict[str, Any]]:
     def n5_generate_decision(state: PlayerDecisionGraphState) -> dict[str, Any]:
         if decision_generator is not None:
-            return {"generated_decision": decision_generator(state)}
-        return {"generated_decision": _default_decision_from_state(state)}
+            generated = decision_generator(state)
+        else:
+            generated = _default_decision_from_state(state)
+        _log_generation_node(state, generated)
+        return {"generated_decision": generated}
 
     return n5_generate_decision
 
@@ -430,6 +555,7 @@ def n6_validate_and_repair(state: PlayerDecisionGraphState) -> dict[str, Any]:
         public_reason=decision.public_reason or action_draft.get("public_reason"),
         private_memory_update=decision.private_memory_update or action_draft.get("private_memory_update"),
     )
+    _log_decision_node(state, decision)
     return {"decision": decision, "error": state.get("error")}
 
 

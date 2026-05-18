@@ -40,6 +40,33 @@ class RelationshipEdge(BaseModel):
     relation: Literal["support", "attack", "protect", "follow", "distance", "conflict", "unknown"]
     confidence: float = Field(ge=0.0, le=1.0)
 
+    @field_validator("relation", mode="before")
+    @classmethod
+    def _normalize_relation(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        text = value.strip().lower()
+        relation_aliases = {
+            "支持": "support",
+            "站边": "support",
+            "保": "protect",
+            "保护": "protect",
+            "攻击": "attack",
+            "踩": "attack",
+            "打": "attack",
+            "对抗": "conflict",
+            "冲突": "conflict",
+            "矛盾": "conflict",
+            "跟票": "follow",
+            "跟随": "follow",
+            "切割": "distance",
+            "拉开距离": "distance",
+            "远离": "distance",
+            "未知": "unknown",
+            "不明": "unknown",
+        }
+        return relation_aliases.get(text, text)
+
     @field_validator("from_player_id", "to_player_id")
     @classmethod
     def _strip_player_ids(cls, value: str) -> str:

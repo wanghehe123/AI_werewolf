@@ -29,6 +29,7 @@ def build_situation_analysis_prompt(state: dict[str, Any]) -> str:
     return (
         "你在帮助狼人杀 AI 做局势提炼。请从当前玩家视角提取最关键、最矛盾、最影响身份判断的信息。\n"
         "不要总结流水账，不要平均分配注意力，优先提取立场反复、发言与投票冲突、异常保护、异常跟票、查杀/金水后的反应。\n"
+        "relationship_edges[].relation 必须使用英文枚举：support, attack, protect, follow, distance, conflict, unknown。\n"
         "只输出 JSON，不要输出 Markdown，不要解释。\n"
         "JSON 格式如下：\n"
         "{\n"

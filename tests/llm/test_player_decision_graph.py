@@ -1,3 +1,5 @@
+import logging
+
 from ai_werewolf.domain.agents import AgentProfile, RiskPreference
 from ai_werewolf.domain.game_state import PlayerState
 from ai_werewolf.llm.graphs.player_decision_graph import run_player_decision_graph, run_player_speech_graph
@@ -197,6 +199,40 @@ def test_n1_llm_analysis_is_used_when_enabled():
     assert result["semantic_node_sources"]["n1"] == "llm"
 
 
+def test_n1_accepts_chinese_relationship_relation_labels():
+    decider = FakeRawDecider(
+        [
+            {
+                "key_facts": ["5号和1号出现对抗，2号继续支持5号"],
+                "contradictions": [],
+                "relationship_edges": [
+                    {"from": "p5", "to": "human", "relation": "对抗", "confidence": 0.8},
+                    {"from": "p2", "to": "p5", "relation": "支持", "confidence": 0.7},
+                    {"from": "p3", "to": "p5", "relation": "支持", "confidence": 0.6},
+                ],
+                "turning_points": ["5号改口后，1-5关系转为对抗"],
+            }
+        ]
+    )
+
+    result = run_player_decision_graph(
+        agent=_agent(),
+        player=_player(),
+        memory_context=_memory_context(),
+        decision_kind="day_speech",
+        semantic_decider=decider,
+        semantic_nodes={"n1"},
+    )
+
+    assert result["semantic_node_sources"]["n1"] == "llm"
+    assert [edge["relation"] for edge in result["analysis"]["relationship_edges"]] == [
+        "conflict",
+        "support",
+        "support",
+    ]
+    assert "n1" not in result["semantic_node_errors"]
+
+
 def test_n1_malformed_output_falls_back_to_rule_analysis():
     decider = FakeRawDecider([{"not_key_facts": []}])
 
@@ -212,6 +248,55 @@ def test_n1_malformed_output_falls_back_to_rule_analysis():
     assert result["analysis"]["key_facts"]
     assert result["semantic_node_sources"]["n1"] == "fallback"
     assert "n1" in result["semantic_node_errors"]
+
+
+def test_player_decision_graph_logs_decision_chain_details(caplog):
+    caplog.set_level(logging.INFO, logger="ai_werewolf.llm.graphs.player_decision_graph")
+    decider = FakeRawDecider(
+        [
+            {
+                "key_facts": ["5号发言和投票不一致"],
+                "contradictions": [],
+                "relationship_edges": [{"from": "p2", "to": "p5", "relation": "support", "confidence": 0.7}],
+                "turning_points": [],
+            },
+            {
+                "suspicion_records": [
+                    {"target_player_id": "p5", "suspicion_score": 0.82, "delta": 0.25, "reasons": ["投票行为和发言不一致"], "relationship_tags": []},
+                ],
+                "primary_target": "p5",
+                "secondary_target": None,
+                "trusted_players": [],
+            },
+            {
+                "strategy_type": "pressure_test",
+                "primary_target": "p5",
+                "secondary_target": None,
+                "goal": "要求5号解释票型矛盾",
+                "tone": "冷静",
+                "risk": None,
+                "speech_intent": "先施压但不直接归票",
+                "vote_intent": None,
+                "supporting_fact": "5号发言和投票不一致",
+            },
+        ]
+    )
+
+    run_player_decision_graph(
+        agent=_agent(),
+        player=_player(),
+        memory_context=_memory_context(),
+        decision_kind="day_speech",
+        semantic_decider=decider,
+        semantic_nodes={"n1", "n2", "n3"},
+    )
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "[PLAYER_GRAPH_N1_ANALYSIS]" in messages
+    assert "[PLAYER_GRAPH_N2_SUSPICION]" in messages
+    assert "[PLAYER_GRAPH_N3_STRATEGY]" in messages
+    assert "[PLAYER_GRAPH_N4_ACTION]" in messages
+    assert "[PLAYER_GRAPH_N6_DECISION]" in messages
 
 
 def test_n2_llm_update_repairs_and_sorts_records():
