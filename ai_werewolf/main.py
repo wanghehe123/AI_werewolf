@@ -167,10 +167,15 @@ def create_app() -> FastAPI:
         logger.exception("LLM 配置加载失败，将使用默认配置")
 
     # ---- CORS 中间件 ----
-    # 允许前端开发服务器（Vite 默认端口 5173）跨域访问后端 API
+    # 允许前端开发服务器（Vite 默认端口 5173，可能变更为 5174）跨域访问后端 API
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

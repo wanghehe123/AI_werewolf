@@ -27,11 +27,11 @@ providers:
 
   - id: sf-glm
     type: openai_compatible
-    model_name: Pro/zai-org/GLM-4.7        # 智谱 GLM-4 模型
+    model_name: Pro/zai-org/GLM-4.7
     base_url: https://api.siliconflow.cn/v1/chat/completions
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
-    max_tokens: 1024
+    max_tokens: 4096
     timeout: 30
 
   - id: sf-kimi
@@ -40,7 +40,7 @@ providers:
     base_url: https://api.siliconflow.cn/v1/chat/completions
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
-    max_tokens: 1024
+    max_tokens: 4096
     timeout: 30
 
   - id: sf-minimax
@@ -49,7 +49,7 @@ providers:
     base_url: https://api.siliconflow.cn/v1/chat/completions
     api_key: sk-ckjiqtczrettaszzzmplnuypemhsbwlkzvnuubxzeykmirxm
     temperature: 0.8
-    max_tokens: 1024
+    max_tokens: 4096
     timeout: 30
   # ---- MiniMax TTS（语音合成）----
   - id: minimax-speak
@@ -58,7 +58,7 @@ providers:
     base_url: https://api.minimaxi.com/v1/t2a_v2
     api_key: sk-cp-GxDO-5KN1E_TIj6SIsZe5DT07R4V_zpKfI7EVXe8I1eY5y5M4suB8AG4knkzjKaIdP7rh9VJkDJNmhYY7tdEb5e4cuV79w--Kn8fKnix_JgGK1ylwEH-tPs
     temperature: 0.8
-    max_tokens: 1024
+    max_tokens: 4096
     timeout: 30
   # ---- 假模型（测试用，不调用真实 API）----
   - id: fake
@@ -79,7 +79,7 @@ role_bindings:
 
 # ==================== 全局默认 ====================
 # 当角色未在 role_bindings 中配置时，使用此默认 Provider
-default_provider: fake
+default_provider: deepseek
 
 
 # ==================== 降级链 ====================

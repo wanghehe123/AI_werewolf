@@ -220,7 +220,8 @@ def _extract_target_id(raw: Any, valid_ids: list[str]) -> str | None:
 
 def _extract_reason(raw: Any) -> str:
     if isinstance(raw, dict):
-        return raw.get("reason", raw.get("public_reason", ""))
+        # Use or-fallback chain to handle None values (key exists but value is None)
+        return raw.get("reason") or raw.get("public_reason") or ""
     if hasattr(raw, "public_reason"):
         return raw.public_reason or ""
     return ""

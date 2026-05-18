@@ -67,10 +67,11 @@ export function selectablePlayerIds(game: GameStateDto): string[] {
   );
   if (fromOptions.length > 0) return fromOptions;
 
-  // Fallback: actions with requires_target but no target_options
-  // e.g. vote phase sends { action_type: "vote", requires_target: true } without target_options
+  // Fallback: actions that need a target but lack target_options
+  // - explicit requires_target (night actions like seer_check)
+  // - implicit: vote action has no requires_target but needs a target
   const needsTarget = game.allowed_actions.some(
-    (a) => a.requires_target && !a.target_options?.length
+    (a) => (a.requires_target && !a.target_options?.length) || a.action_type === "vote"
   );
   if (needsTarget) {
     return game.players

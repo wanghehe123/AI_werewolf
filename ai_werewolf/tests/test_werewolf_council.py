@@ -21,6 +21,7 @@ from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerPrivateInf
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.graphs.state import CouncilState, empty_council_state
 from ai_werewolf.llm.graphs.common_nodes import (
+    _extract_reason,
     call_llm_for_proposal,
     call_llm_for_vote,
     fallback_target,
@@ -289,6 +290,19 @@ class TestCommonNodes:
 
         result = call_llm_for_vote("w1", state, failing_factory)
         assert result["target_id"] == "v1"  # fallback to first proposed target
+
+    def test_extract_reason_handles_none_values(self):
+        """Regression test for bug where LLM returns reason: None."""
+        # When key exists but value is None, should fall back to empty string
+        assert _extract_reason({"reason": None, "target_id": "v1"}) == ""
+        # When key doesn't exist, should return empty string
+        assert _extract_reason({"target_id": "v1"}) == ""
+        # When key exists with value, should return that value
+        assert _extract_reason({"reason": "test", "target_id": "v1"}) == "test"
+        # Fallback to public_reason when reason is None
+        assert _extract_reason({"reason": None, "public_reason": "fallback"}) == "fallback"
+        # Fallback chain: reason None, public_reason None → empty string
+        assert _extract_reason({"reason": None, "public_reason": None}) == ""
 
 
 # =====================================================================

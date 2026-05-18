@@ -410,10 +410,12 @@ class OpenAICompatibleProvider:
 
             # 创建 OpenAI 客户端
             # base_url 支持自定义端点（DeepSeek、Ollama 等）
+            # max_retries=0: 禁用 SDK 内置重试，由上层 ProviderChain 控制降级逻辑
             client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
                 timeout=self.config.timeout,
+                max_retries=0,  # 避免 SDK 与 ProviderChain 双重重试
             )
 
             response = self._chat_completion(client, prompt, self.config.max_tokens)
@@ -497,10 +499,12 @@ class OpenAICompatibleProvider:
         try:
             from openai import OpenAI
 
+            # max_retries=0: 禁用 SDK 内置重试，由上层控制降级逻辑
             client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
                 timeout=self.config.timeout,
+                max_retries=0,  # 避免 SDK 与 ProviderChain 双重重试
             )
             stream = client.chat.completions.create(
                 model=self.config.model_name,

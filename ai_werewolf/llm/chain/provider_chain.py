@@ -19,6 +19,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ai_werewolf.llm.rate_limiter import RateLimit
+
 if TYPE_CHECKING:
     from ai_werewolf.llm.providers import ModelProvider
 
@@ -208,12 +210,17 @@ class ProviderChain:
                     "attempt": attempt,
                 }
                 try:
-                    # Run the synchronous decide() inside a thread so we can
-                    # honour timeout_ms without blocking the event loop.
-                    result = await asyncio.wait_for(
-                        asyncio.to_thread(provider.decide, prompt),
-                        timeout=tier.timeout_ms / 1000.0,
-                    )
+                    # Rate limiting: limit concurrent LLM API calls to avoid
+                    # triggering provider rate limits (429 errors).
+                    # The RateLimit context manager uses a global Semaphore
+                    # with default max_concurrent=3.
+                    async with RateLimit():
+                        # Run the synchronous decide() inside a thread so we can
+                        # honour timeout_ms without blocking the event loop.
+                        result = await asyncio.wait_for(
+                            asyncio.to_thread(provider.decide, prompt),
+                            timeout=tier.timeout_ms / 1000.0,
+                        )
                     if not isinstance(result, dict):
                         raise ValueError("Provider did not return a dict")
                     attempt_log["status"] = "ok"
