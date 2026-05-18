@@ -17,7 +17,7 @@ from ai_werewolf.llm.graphs.werewolf_council import run_werewolf_council
 from ai_werewolf.llm.graphs.witch_council import run_witch_council
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
 from ai_werewolf.llm.memory.summary_builder import build_player_suspicion_memory, build_private_role_memory
-from ai_werewolf.llm.memory.store import RedisMemoryStore
+from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_store
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_night_action_prompt, format_private_info
 from ai_werewolf.llm.schemas import PlayerDecision
@@ -40,12 +40,19 @@ def _append_locked_decision_block(prompt: str, state: dict[str, Any]) -> str:
 class NightResolver:
     """Resolves the night phase by collecting LLM decisions and computing deaths."""
 
-    def __init__(self, model_registry: Any, role_model_bindings: list, role_registry: BuiltInRoleRegistry) -> None:
+    def __init__(
+        self,
+        model_registry: Any,
+        role_model_bindings: list,
+        role_registry: BuiltInRoleRegistry,
+        *,
+        memory_store: MemoryStore | None = None,
+    ) -> None:
         self.model_registry = model_registry
         self.role_model_bindings = role_model_bindings
         self.role_registry = role_registry
         self.scheduler = AIActionScheduler(role_registry)
-        self.memory_store = RedisMemoryStore()
+        self.memory_store = memory_store or get_shared_redis_memory_store()
         self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
 
     def resolve(self, session: GameSession, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:

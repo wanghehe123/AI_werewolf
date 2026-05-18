@@ -18,6 +18,8 @@ from ai_werewolf.llm.memory.models import (
 
 logger = logging.getLogger(__name__)
 
+_shared_redis_memory_store: RedisMemoryStore | None = None
+
 
 class MemoryStore(Protocol):
     def get_day_summaries(self, game_id: str) -> list[DaySummary]: ...
@@ -183,6 +185,15 @@ class RedisMemoryStore:
 
     def _trace_key(self, game_id: str, player_id: str, phase: str, seq: int) -> str:
         return f"{self.key_prefix}:{game_id}:player:{player_id}:decision_trace:{phase}:{seq}"
+
+
+def get_shared_redis_memory_store() -> RedisMemoryStore:
+    """Return the process-wide shared Redis memory store."""
+    global _shared_redis_memory_store  # noqa: PLW0603
+    if _shared_redis_memory_store is None:
+        _shared_redis_memory_store = RedisMemoryStore(client=get_sync_client())
+        logger.info("Created shared RedisMemoryStore backed by pooled sync Redis client.")
+    return _shared_redis_memory_store
 
 
 class PostgresMemoryStore:

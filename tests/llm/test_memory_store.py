@@ -7,7 +7,7 @@ from ai_werewolf.llm.memory.models import (
     PrivateRoleMemory,
     RedisMemoryEnvelope,
 )
-from ai_werewolf.llm.memory.store import PostgresMemoryStore, RedisMemoryStore
+from ai_werewolf.llm.memory.store import PostgresMemoryStore, RedisMemoryStore, get_shared_redis_memory_store
 
 
 def _sample_summary() -> DaySummary:
@@ -122,3 +122,11 @@ def test_postgres_store_is_noop_stub():
     assert store.get_day_summaries("game_1") == []
     assert store.get_player_suspicion("game_1", "ai_2") is None
     assert store.get_private_role_memory("game_1", "ai_2") is None
+
+
+def test_shared_redis_memory_store_is_singleton():
+    shared_a = get_shared_redis_memory_store()
+    shared_b = get_shared_redis_memory_store()
+
+    assert shared_a is shared_b
+    assert isinstance(shared_a, RedisMemoryStore)

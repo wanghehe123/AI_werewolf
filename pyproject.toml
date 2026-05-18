@@ -10,9 +10,11 @@ dependencies = [
   "psycopg[binary]",
   "langgraph",
   "openai>=1.0",
+  "orjson",
   "pyyaml>=6.0",
   "pytest",
   "pytest-asyncio",
+  "redis>=5",
   "httpx",
   "websockets"
 ]

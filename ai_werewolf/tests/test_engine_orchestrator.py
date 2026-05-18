@@ -125,6 +125,16 @@ def test_start_game_logs_all_player_roles(caplog):
     ]
 
 
+def test_orchestrator_shares_one_memory_store_with_resolvers():
+    orch, _session = _mock_orchestrator()
+
+    assert orch.memory_store is orch.night.memory_store
+    assert orch.memory_store is orch.vote.memory_store
+    assert orch.memory_context_builder.store is orch.memory_store
+    assert orch.night.memory_context_builder.store is orch.memory_store
+    assert orch.vote.memory_context_builder.store is orch.memory_store
+
+
 def test_game_over_wolves_win():
     """After killing human and s1, wolves (w1) >= non-wolves -> GAME_OVER."""
     players = _make_players()
