@@ -116,7 +116,17 @@ export function subscribeGameStream(
     "ai_thinking",
     "private_info",
     "game_created",
-    "night_result"
+    "night_result",
+    "sheriff_election",
+    "sheriff_election_speech",
+    "sheriff_vote",
+    "sheriff_elected",
+    "sheriff_tie",
+    "vote",
+    "exile",
+    "last_words",
+    "game_end",
+    "role_reveal"
   ];
 
   for (const eventType of eventTypes) {

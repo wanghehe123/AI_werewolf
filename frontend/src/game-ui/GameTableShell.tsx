@@ -34,7 +34,7 @@ function getSeatLayout(players: PlayerVisualState[]) {
   if (n <= 4) {
     const top = players.slice(0, 2);
     const bottom = players.slice(2);
-    return { top, middleLeft: [], middleRight: [], bottom };
+    return { top, middleLeft: [], middleRight: [], bottom, bottomExtra: [] };
   }
   if (n <= 6) {
     return {
@@ -42,14 +42,17 @@ function getSeatLayout(players: PlayerVisualState[]) {
       middleLeft: [players[5]],
       middleRight: [players[3]],
       bottom: [players[4]],
+      bottomExtra: [],
     };
   }
-  // 7-8 players
+  // 7+ players: top=3, middle=2, rest in bottom row(s)
+  const bottomAll = players.slice(4, n - 1);
   return {
     top: [players[0], players[1], players[2]],
     middleLeft: [players[n - 1]],
     middleRight: [players[3]],
-    bottom: [players[n - 2], players[4], players[n - 3]],
+    bottom: bottomAll.slice(0, 3),
+    bottomExtra: bottomAll.slice(3),
   };
 }
 
@@ -138,9 +141,19 @@ export function GameTableShell({
                 <PlayerSeatCard player={player} onClick={() => handleSelectTarget(player.playerId)} />
               </SeatWrapper>
             ))}
-            {/* Center bottom if needed */}
+            {/* Fill empty slots in bottom row */}
             {layout.bottom.length === 1 && <div />}
-            {layout.bottom.length <= 2 && <div />}
+            {layout.bottom.length === 2 && <div />}
+
+            {/* Extra bottom row for 9+ players */}
+            {layout.bottomExtra.map((player) => (
+              <SeatWrapper key={player.playerId}>
+                <PlayerSeatCard player={player} onClick={() => handleSelectTarget(player.playerId)} />
+              </SeatWrapper>
+            ))}
+            {/* Fill empty slots in extra bottom row */}
+            {layout.bottomExtra.length === 1 && <><div /><div /></>}
+            {layout.bottomExtra.length === 2 && <div />}
           </div>
 
           <SpeechBubbleLayer players={playerStates} streamingSpeeches={streamingSpeeches} />

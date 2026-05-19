@@ -475,8 +475,11 @@ def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
         action_type = _night_action_type_for_role(role_key)
         target_id = primary_target
         if action_type == "seer_check":
-            if target_id in checked_players:
-                target_id = next((player_id for player_id in alive_targets if player_id not in checked_players), target_id)
+            if not target_id or target_id in checked_players:
+                target_id = next(
+                    (player_id for player_id in alive_targets if player_id not in checked_players),
+                    alive_targets[0] if alive_targets else None,
+                )
         elif action_type == "wolf_kill":
             target_id = primary_target or next((player_id for player_id in alive_targets if player_id != state["player_id"]), None)
         elif action_type == "guard":
@@ -593,6 +596,7 @@ def run_player_decision_graph(
     semantic_decider: RawDecisionModel | None = None,
     semantic_nodes: set[str] | None = None,
     strategy_hint_provider: StrategyHintProvider | None = None,
+    alive_player_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     logger.info(
         "启动玩家统一决策图 player_id=%s role=%s decision_kind=%s",
@@ -608,7 +612,7 @@ def run_player_decision_graph(
         "speech_style": agent.speech_style,
         "decision_kind": decision_kind,
         "memory_context": memory_context.model_dump(mode="json"),
-        "alive_player_ids": _alive_player_ids(memory_context),
+        "alive_player_ids": alive_player_ids or _alive_player_ids(memory_context),
         "strategy_hints": [],
         "semantic_node_errors": {},
         "semantic_node_sources": {},

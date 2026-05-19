@@ -1,20 +1,24 @@
 import { FormEvent, useState } from "react";
 
+import type { AdminAgentDto } from "../types";
+
 interface ProviderOption {
   provider_id: string;
   name: string;
 }
 
-interface AgentFormValues {
+export interface AgentFormValues {
   agent_id?: string;
   name: string;
+  avatar_url?: string | null;
+  avatar_prompt?: string | null;
   persona: string;
   speech_style: string;
   reasoning_level: number;
   deception_level: number;
   aggression_level: number;
   cooperation_level: number;
-  risk_preference: string;
+  risk_preference: AdminAgentDto["risk_preference"];
   memory_style: string;
   default_model_provider_id?: string | null;
   enabled: boolean;
@@ -30,6 +34,8 @@ interface AgentFormModalProps {
 
 const DEFAULT_VALUES: AgentFormValues = {
   name: "",
+  avatar_url: null,
+  avatar_prompt: null,
   persona: "",
   speech_style: "",
   reasoning_level: 3,
@@ -46,7 +52,7 @@ const RISK_OPTIONS = [
   { value: "conservative", label: "保守" },
   { value: "balanced", label: "均衡" },
   { value: "aggressive", label: "激进" },
-];
+] satisfies Array<{ value: AgentFormValues["risk_preference"]; label: string }>;
 
 const MEMORY_OPTIONS = [
   { value: "focus_on_votes", label: "关注投票" },
@@ -176,7 +182,7 @@ export function AgentFormModal({ isOpen, onClose, onSubmit, initialValues, provi
             <select
               id="agent-risk"
               value={values.risk_preference}
-              onChange={(e) => update("risk_preference", e.target.value)}
+              onChange={(e) => update("risk_preference", e.target.value as AgentFormValues["risk_preference"])}
             >
               {RISK_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>

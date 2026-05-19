@@ -47,6 +47,11 @@ describe("api client", () => {
     expect(eventSourceMock).toHaveBeenCalledWith("http://api.local/games/game_1/stream?player_id=human");
     expect(addEventListener).toHaveBeenCalledWith("state_snapshot", expect.any(Function));
     expect(addEventListener).toHaveBeenCalledWith("speech_delta", expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith("sheriff_election", expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith("sheriff_election_speech", expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith("sheriff_vote", expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith("vote", expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith("exile", expect.any(Function));
     subscription.close();
     expect(close).toHaveBeenCalled();
   });

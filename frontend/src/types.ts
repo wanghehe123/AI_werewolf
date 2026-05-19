@@ -258,6 +258,11 @@ export interface AdminLlmProviderDto {
   timeout: number;
 }
 
+export interface AdminRoleModelBindingDto {
+  role_key: string;
+  provider_id: string;
+}
+
 export interface CreateCompleteBoardRequest {
   name: string;
   description?: string | null;

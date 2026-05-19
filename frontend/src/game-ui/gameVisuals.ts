@@ -116,6 +116,18 @@ export function derivePlayerVisualStates(
 ): PlayerVisualState[] {
   const selectableIds = selectablePlayerIds(game);
 
+  // Detect sheriff candidates from public events
+  const candidateIds = new Set<string>();
+  for (const event of game.public_events) {
+    if (event.event_type === "sheriff_election" && event.actor_id) {
+      // Only count players who ARE running (not skipping/不参加)
+      const msg = event.payload.message ?? "";
+      if (msg.includes("参加警长竞选") && !msg.includes("不参加")) {
+        candidateIds.add(event.actor_id);
+      }
+    }
+  }
+
   return game.players.map((player) => {
     const isSelf = player.player_id === game.human_player_id;
     const selectable = selectableIds.includes(player.player_id);
@@ -140,6 +152,7 @@ export function derivePlayerVisualStates(
       alive,
       isSelf,
       isSheriff: player.sheriff,
+      isSheriffCandidate: candidateIds.has(player.player_id) && alive,
       speaking,
       voted: player.voted,
       selectable,

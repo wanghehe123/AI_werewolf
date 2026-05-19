@@ -100,11 +100,77 @@ describe("GameTable", () => {
     );
 
     expect(screen.getByRole("heading", { name: "竞选发言", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("警长投票")).toBeInTheDocument();
+    expect(screen.getAllByText("警长投票").length).toBeGreaterThanOrEqual(1);
     await userEvent.click(screen.getByText("2号"));
     await userEvent.click(screen.getByRole("button", { name: "投给他" }));
 
     expect(submitAction).toHaveBeenCalledWith({ action_type: "vote", target_player_id: "candidate_1" });
+  });
+
+  it("renders a new exile vote tally even when an older exile event exists", () => {
+    render(
+      <GameTable
+        game={mockGame({
+          phase: "exile_vote",
+          players: [
+            mockPlayer({ player_id: "human", seat: 1, display_name: "你", is_human: true }),
+            mockPlayer({ player_id: "candidate_1", seat: 2, display_name: "小明" }),
+            mockPlayer({ player_id: "candidate_2", seat: 3, display_name: "小红" }),
+          ],
+          public_events: [
+            { event_type: "exile", actor_id: null, target_id: "candidate_2", payload: { message: "上一轮小红被放逐。" }, public: true },
+            { event_type: "phase_changed", actor_id: null, target_id: null, payload: { message: "发言结束，进入放逐投票。" }, public: true },
+            { event_type: "vote", actor_id: "candidate_1", target_id: "candidate_2", payload: { message: "2号 小明 投票给 3号 小红。" }, public: true },
+          ],
+          allowed_actions: [],
+        })}
+        onSubmitAction={vi.fn()}
+        pending={false}
+      />
+    );
+
+    expect(screen.getAllByText("放逐投票").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("已投 1 票")).toBeInTheDocument();
+    expect(screen.getByText("3号 小红")).toBeInTheDocument();
+  });
+
+  it("counts abstentions as voted in the sheriff tally pending list", () => {
+    render(
+      <GameTable
+        game={mockGame({
+          phase: "sheriff_speech",
+          players: [
+            mockPlayer({ player_id: "human", seat: 1, display_name: "你", is_human: true }),
+            mockPlayer({ player_id: "candidate_1", seat: 2, display_name: "小明" }),
+            mockPlayer({ player_id: "candidate_2", seat: 3, display_name: "小红" }),
+            mockPlayer({ player_id: "bystander", seat: 4, display_name: "小刚" }),
+          ],
+          public_events: [
+            { event_type: "sheriff_election", actor_id: "candidate_1", target_id: null, payload: { message: "2号 小明 参加警长竞选。" }, public: true },
+            { event_type: "sheriff_election", actor_id: "candidate_2", target_id: null, payload: { message: "3号 小红 参加警长竞选。" }, public: true },
+            { event_type: "phase_changed", actor_id: null, target_id: null, payload: { message: "竞选发言结束，请非候选玩家投票选出警长。" }, public: true },
+            { event_type: "sheriff_vote", actor_id: "bystander", target_id: null, payload: { message: "4号 小刚 弃票。" }, public: true },
+          ],
+          allowed_actions: [
+            {
+              action_type: "vote",
+              label: "投票选警长",
+              requires_target: true,
+              target_options: [
+                { player_id: "candidate_1", label: "2号 小明" },
+                { player_id: "candidate_2", label: "3号 小红" },
+              ],
+            },
+          ],
+        })}
+        onSubmitAction={vi.fn()}
+        pending={false}
+      />
+    );
+
+    expect(screen.getAllByText("警长投票").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("已投 1 票")).toBeInTheDocument();
+    expect(screen.queryByText(/待投票：.*小刚/)).not.toBeInTheDocument();
   });
 });
 

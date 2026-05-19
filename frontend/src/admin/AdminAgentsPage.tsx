@@ -1,14 +1,14 @@
 import { useState } from "react";
 
 import type { AdminAgentDto, AdminLlmProviderDto } from "../types";
-import { AgentFormModal } from "./AgentFormModal";
+import { AgentFormModal, type AgentFormValues } from "./AgentFormModal";
 
 interface AdminAgentsPageProps {
   agents: AdminAgentDto[];
   onRefresh: () => void;
   onShowCreate: () => void;
-  onCreateSubmit: (values: Parameters<typeof AgentFormModal>[0]["onSubmit"]) => void;
-  onUpdateSubmit: (agentId: string, values: Parameters<typeof AgentFormModal>[0]["onSubmit"]) => void;
+  onCreateSubmit: (values: AgentFormValues) => Promise<void> | void;
+  onUpdateSubmit: (agentId: string, values: AgentFormValues) => Promise<void> | void;
   onToggleEnabled?: (agent: AdminAgentDto) => Promise<void>;
   onDelete?: (agentId: string) => Promise<void>;
   providers?: AdminLlmProviderDto[];
@@ -121,6 +121,8 @@ export function AdminAgentsPage({
           initialValues={{
             agent_id: editingAgent.agent_id,
             name: editingAgent.name,
+            avatar_url: editingAgent.avatar_url,
+            avatar_prompt: editingAgent.avatar_prompt,
             persona: editingAgent.persona,
             speech_style: editingAgent.speech_style,
             reasoning_level: editingAgent.reasoning_level,

@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { phaseLabel } from "./gameVisuals";
+import { VoteTally } from "./VoteTally";
 import type { GameStateDto } from "../types";
 
 interface TableCenterProps {
@@ -69,6 +70,9 @@ export function TableCenter({ game, latestEventMessage }: TableCenterProps) {
           {latestEventMessage}
         </motion.p>
       )}
+
+      {/* Vote tally during voting phases */}
+      <VoteTally game={game} />
 
       {/* Game over winner display */}
       {isGameOver && game.winner && (

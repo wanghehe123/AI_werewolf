@@ -3,8 +3,10 @@ from unittest.mock import MagicMock, patch
 
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerPrivateInfo, PlayerState
-from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.night import NightResolver
+from ai_werewolf.engine.session import GameSession
+from ai_werewolf.llm.graphs.player_decision_graph import run_player_decision_graph
+from ai_werewolf.llm.memory.context_builder import MemoryContext
 
 
 def _make_session(players, agents=None, private_infos=None):
@@ -94,6 +96,46 @@ def test_seer_check_records_result():
     assert len(seer_info.seer_results) == 1
     assert seer_info.seer_results[0]["target"] == "w1"
     assert seer_info.seer_results[0]["result"] == "werewolf"
+
+
+def test_seer_graph_uses_real_alive_players_when_first_night_memory_is_empty():
+    players = _default_players()
+    seer = next(player for player in players if player.player_id == "seer1")
+    memory_context = MemoryContext(
+        game_id="test",
+        player_id="seer1",
+        phase="night",
+        day=1,
+    )
+
+    result = run_player_decision_graph(
+        agent=_default_agents()["seer1"],
+        player=seer,
+        memory_context=memory_context,
+        decision_kind="night_action",
+        alive_player_ids=[player.player_id for player in players if player.alive],
+        semantic_nodes=set(),
+    )
+
+    decision = result["decision"]
+    assert decision.action_type == "seer_check"
+    assert decision.target_id in {"human", "w1", "w2", "witch1"}
+    assert decision.target_id != "seer1"
+
+
+def test_ai_seer_check_writes_latest_private_role_memory():
+    players = _default_players()
+    session = _make_session(players, _default_agents())
+    resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    resolver.memory_store = MagicMock()
+
+    with patch.object(resolver, "_get_ai_decision", return_value=_mock_decision(action_type="seer_check", target_id="w1")):
+        resolver._collect_seer_check(session, "公开历史")
+
+    resolver.memory_store.save_private_role_memory.assert_called_once()
+    saved = resolver.memory_store.save_private_role_memory.call_args.args[0]
+    assert saved.player_id == "seer1"
+    assert saved.payload["seer_results"] == [{"round": "night1", "target": "w1", "result": "werewolf"}]
 
 
 def test_human_seer_action_records_private_result():

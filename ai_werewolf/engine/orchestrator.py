@@ -186,7 +186,15 @@ class PhaseOrchestrator:
             raise HTTPException(status_code=400, detail="only sheriff candidates can speak now")
         content = (action.get("content") or "").strip() or "我会认真带队。"
         session.sheriff_election_speeches[actor_id] = content
-        session.append_public_event("sheriff_election_speech", f"{player_label(actor_id, session)}：{content}", actor_id=actor_id)
+        label = player_label(actor_id, session)
+        session.append_public_event(
+            "sheriff_election_speech",
+            f"{label}：{content}",
+            actor_id=actor_id,
+            player_id=actor_id,
+            label=label,
+            speech=content,
+        )
         self._maybe_open_sheriff_vote(session)
 
     def _handle_sheriff_vote(self, session: GameSession, action: dict) -> None:
@@ -195,13 +203,31 @@ class PhaseOrchestrator:
             raise HTTPException(status_code=400, detail="you are not eligible to vote for sheriff now")
         if action["action_type"] == "abstain":
             session.sheriff_election_votes[actor_id] = ""
-            session.append_public_event("sheriff_vote", f"{player_label(actor_id, session)} 弃票。", actor_id=actor_id)
+            label = player_label(actor_id, session)
+            session.append_public_event(
+                "sheriff_vote",
+                f"{label} 弃票。",
+                actor_id=actor_id,
+                voter_id=actor_id,
+                voter_label=label,
+                target_label=None,
+            )
         else:
             target_id = action.get("target_player_id")
             if target_id not in session.sheriff_candidates:
                 raise HTTPException(status_code=400, detail="invalid sheriff candidate")
             session.sheriff_election_votes[actor_id] = target_id
-            session.append_public_event("sheriff_vote", f"{player_label(actor_id, session)} 投票给 {player_label(target_id, session)}。", actor_id=actor_id, target_id=target_id)
+            label = player_label(actor_id, session)
+            target_label = player_label(target_id, session)
+            session.append_public_event(
+                "sheriff_vote",
+                f"{label} 投票给 {target_label}。",
+                actor_id=actor_id,
+                target_id=target_id,
+                voter_id=actor_id,
+                voter_label=label,
+                target_label=target_label,
+            )
         if all(voter_id in session.sheriff_election_votes for voter_id in session.sheriff_voters):
             self._finalize_sheriff_election(session)
 
@@ -218,6 +244,45 @@ class PhaseOrchestrator:
                 session.append_public_event("sheriff_election", f"{player_label(player.player_id, session)} 不参加警长竞选。", actor_id=player.player_id)
 
     def _generate_ai_sheriff_campaign_speeches(self, session: GameSession) -> None:
+        # Build shared context for all candidates
+        game_context = build_game_context(session)
+        all_players = session.state.players
+        alive_ids = [p.player_id for p in all_players if p.alive]
+
+        # Player references: player_id -> "X号 Name"
+        references: dict[str, str] = {}
+        for p in all_players:
+            agent = session.agents.get(p.player_id)
+            display = agent.name if agent else p.player_id
+            references[p.player_id] = f"{p.seat}号 {display}"
+
+        # Board context
+        board_name = getattr(session.board_config, "name", "") or session.state.board_id
+        role_counts: dict[str, int] = {}
+        for p in all_players:
+            role_counts[p.role_key] = role_counts.get(p.role_key, 0) + 1
+        board_roles_lines = [f"板子名称：{board_name}", "角色构成："]
+        for rk, count in sorted(role_counts.items()):
+            board_roles_lines.append(f"- {role_display_name(rk)}：{count} 名")
+        board_context = "\n".join(board_roles_lines)
+
+        enabled_role_keys = {p.role_key for p in all_players}
+        board_roles = role_counts
+
+        # Election progress
+        candidates_list: list[str] = []
+        voters_list: list[str] = []
+        for pid in session.sheriff_candidates:
+            candidates_list.append(references.get(pid, pid))
+        for pid in session.sheriff_voters:
+            voters_list.append(references.get(pid, pid))
+        election_progress_parts = [
+            f"参加竞选的玩家：{', '.join(candidates_list)}",
+            f"未参选（投票人）：{', '.join(voters_list)}",
+        ]
+
+        election_progress = "\n".join(election_progress_parts)
+
         for candidate_id in list(session.sheriff_candidates):
             candidate = session.state.player_by_id(candidate_id)
             if candidate.is_human or candidate_id in session.sheriff_election_speeches:
@@ -225,11 +290,34 @@ class PhaseOrchestrator:
             agent = session.agents.get(candidate_id)
             if agent is None:
                 continue
+            label = player_label(candidate_id, session)
+
+            # Announce this candidate is about to speak so the frontend can show it
+            session.publish_stream_event(
+                "current_speaker_changed",
+                {"player_id": candidate_id, "label": label},
+                actor_id=candidate_id,
+            )
+            session.publish_stream_event(
+                "ai_thinking",
+                {"message": f"{label} 正在准备竞选发言。", "player_id": candidate_id, "label": label},
+                actor_id=candidate_id,
+            )
+
+            private_info = session.private_infos.get(candidate_id)
+            tactic_hint = private_info.wolf_tactic_hint if private_info else ""
             prompt = build_sheriff_campaign_prompt(
                 agent=agent,
                 role_key=candidate.role_key,
-                player_label_text=player_label(candidate_id, session),
-                tactic_hint=(session.private_infos.get(candidate_id).wolf_tactic_hint if session.private_infos.get(candidate_id) else "") or "",
+                player_label_text=label,
+                tactic_hint=(tactic_hint or ""),
+                game_context=game_context,
+                alive_players=alive_ids,
+                board_context=board_context,
+                player_references=references,
+                enabled_role_keys=enabled_role_keys,
+                board_roles=board_roles,
+                election_progress=election_progress,
             )
             decider = build_decider_for_role(
                 candidate.role_key,
@@ -240,7 +328,23 @@ class PhaseOrchestrator:
             record_prompt_trace(session, candidate_id, "sheriff_campaign", prompt)
             speech = decider.decide(prompt).speech.strip() or "我会认真带队，尽量把信息梳理清楚。"
             session.sheriff_election_speeches[candidate_id] = speech
-            session.append_public_event("sheriff_election_speech", f"{player_label(candidate_id, session)}：{speech}", actor_id=candidate_id)
+            session.append_public_event(
+                "sheriff_election_speech",
+                f"{label}：{speech}",
+                actor_id=candidate_id,
+                player_id=candidate_id,
+                label=label,
+                speech=speech,
+            )
+
+            # Update election progress for subsequent candidates
+            spoken = [references.get(pid, pid) for pid in session.sheriff_election_speeches]
+            election_progress = "\n".join(
+                election_progress_parts + [f"已发言候选人：{', '.join(spoken)}"]
+            )
+
+            # Brief pause lets the SSE loop deliver this speech before the next one starts
+            time.sleep(0.3)
 
     def _maybe_open_sheriff_vote(self, session: GameSession) -> None:
         if session.sheriff_vote_open:
@@ -258,6 +362,41 @@ class PhaseOrchestrator:
             f"{player_label(candidate_id, session)}：{session.sheriff_election_speeches.get(candidate_id, '（未发言）')}"
             for candidate_id in session.sheriff_candidates
         )
+
+        # Build shared context (same as _generate_ai_sheriff_campaign_speeches)
+        game_context = build_game_context(session)
+        all_players = session.state.players
+        alive_ids = [p.player_id for p in all_players if p.alive]
+
+        references: dict[str, str] = {}
+        for p in all_players:
+            agent_ref = session.agents.get(p.player_id)
+            display = agent_ref.name if agent_ref else p.player_id
+            references[p.player_id] = f"{p.seat}号 {display}"
+
+        board_name = getattr(session.board_config, "name", "") or session.state.board_id
+        role_counts: dict[str, int] = {}
+        for p in all_players:
+            role_counts[p.role_key] = role_counts.get(p.role_key, 0) + 1
+        board_roles_lines = [f"板子名称：{board_name}", "角色构成："]
+        for rk, count in sorted(role_counts.items()):
+            board_roles_lines.append(f"- {role_display_name(rk)}：{count} 名")
+        board_context = "\n".join(board_roles_lines)
+
+        enabled_role_keys = {p.role_key for p in all_players}
+        board_roles = role_counts
+
+        candidates_list = [references.get(pid, pid) for pid in session.sheriff_candidates]
+        voters_list = [references.get(pid, pid) for pid in session.sheriff_voters]
+        already_voted = [references.get(pid, pid) for pid in session.sheriff_election_votes]
+        election_progress_parts = [
+            f"参加竞选的玩家：{', '.join(candidates_list)}",
+            f"投票人：{', '.join(voters_list)}",
+        ]
+        if already_voted:
+            election_progress_parts.append(f"已投票：{', '.join(already_voted)}")
+        election_progress = "\n".join(election_progress_parts)
+
         for voter_id in session.sheriff_voters:
             voter = session.state.player_by_id(voter_id)
             if voter.is_human or voter_id in session.sheriff_election_votes:
@@ -265,12 +404,22 @@ class PhaseOrchestrator:
             agent = session.agents.get(voter_id)
             if agent is None:
                 continue
+            private_info = session.private_infos.get(voter_id)
+            tactic_hint = private_info.wolf_tactic_hint if private_info else ""
             prompt = build_sheriff_vote_prompt(
                 agent=agent,
                 role_key=voter.role_key,
                 player_label_text=player_label(voter_id, session),
                 candidate_speeches=candidate_speeches,
                 candidate_ids=session.sheriff_candidates,
+                tactic_hint=(tactic_hint or ""),
+                game_context=game_context,
+                alive_players=alive_ids,
+                board_context=board_context,
+                player_references=references,
+                enabled_role_keys=enabled_role_keys,
+                board_roles=board_roles,
+                election_progress=election_progress,
             )
             decider = build_decider_for_role(
                 voter.role_key,
@@ -279,12 +428,31 @@ class PhaseOrchestrator:
                 chain_config=self.chain_config,
             )
             record_prompt_trace(session, voter_id, "sheriff_vote", prompt)
-            raw = decider.decide_raw(prompt)
-            target_id = raw.get("target_id") if isinstance(raw, dict) else None
+            decision = decider.decide(prompt)
+            target_id = decision.target_id
             if target_id not in session.sheriff_candidates:
                 target_id = session.sheriff_candidates[0]
             session.sheriff_election_votes[voter_id] = target_id
-            session.append_public_event("sheriff_vote", f"{player_label(voter_id, session)} 投票给 {player_label(target_id, session)}。", actor_id=voter_id, target_id=target_id)
+            voter_label = player_label(voter_id, session)
+            target_label = player_label(target_id, session)
+            session.append_public_event(
+                "sheriff_vote",
+                f"{voter_label} 投票给 {target_label}。",
+                actor_id=voter_id,
+                target_id=target_id,
+                voter_id=voter_id,
+                voter_label=voter_label,
+                target_label=target_label,
+            )
+
+            # Update election progress for next iteration
+            already_voted = [references.get(pid, pid) for pid in session.sheriff_election_votes]
+            election_progress = "\n".join(
+                election_progress_parts + [f"已投票：{', '.join(already_voted)}"]
+            )
+
+            # Brief pause lets the SSE loop deliver this vote before the next one
+            time.sleep(0.3)
 
     def _finalize_sheriff_election(self, session: GameSession) -> None:
         vote_counts: dict[str, int] = {}

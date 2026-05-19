@@ -9,6 +9,7 @@ export interface PlayerVisualState {
   alive: boolean;
   isSelf: boolean;
   isSheriff: boolean;
+  isSheriffCandidate: boolean;
   speaking: boolean;
   voted: boolean;
   selectable: boolean;

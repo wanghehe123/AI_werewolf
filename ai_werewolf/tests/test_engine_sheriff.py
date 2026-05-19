@@ -1,10 +1,12 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.boards import BoardConfig, BoardRoleCount, SpeechRule, VoteRule, WinCondition
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
 from ai_werewolf.engine.orchestrator import PhaseOrchestrator
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import VoteResolver
+from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
 
@@ -46,6 +48,21 @@ def _orchestrator() -> PhaseOrchestrator:
         role_registry=BuiltInRoleRegistry(),
         role_model_bindings=[],
         memory_store=MagicMock(),
+    )
+
+
+def _agent(player_id: str, name: str) -> AgentProfile:
+    return AgentProfile(
+        agent_id=player_id,
+        name=name,
+        persona="wise",
+        speech_style="normal",
+        reasoning_level=3,
+        deception_level=3,
+        aggression_level=3,
+        cooperation_level=3,
+        risk_preference="balanced",
+        memory_style="short",
     )
 
 
@@ -219,6 +236,55 @@ def test_finalize_sheriff_election_leaves_no_sheriff_on_tie():
 
     assert not any(player.sheriff for player in session.state.players)
     assert session.state.phase == GamePhase.NIGHT
+
+
+def test_ai_sheriff_speech_publishes_one_structured_stream_event():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_SPEECH
+    session.sheriff_candidates = ["s1"]
+    session.sheriff_voters = ["human", "w1", "v1"]
+    session.agents = {"s1": _agent("s1", "预言家")}
+    decider = MagicMock()
+    decider.decide.return_value = PlayerDecision(
+        speech="我会竞选警长，明天给大家清晰视角。",
+        action_type="speak",
+        target_id=None,
+        public_reason=None,
+        private_memory_update=None,
+    )
+
+    with patch("ai_werewolf.engine.orchestrator.build_decider_for_role", return_value=decider):
+        orch._generate_ai_sheriff_campaign_speeches(session)
+
+    speech_events = [event for event in session.stream_events if event["event_type"] == "sheriff_election_speech"]
+    assert len(speech_events) == 1
+    assert speech_events[0]["payload"]["player_id"] == "s1"
+    assert speech_events[0]["payload"]["speech"] == "我会竞选警长，明天给大家清晰视角。"
+
+
+def test_vote_resolver_streams_vote_events_before_exile_result():
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.EXILE_VOTE
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    resolver._get_ai_vote = MagicMock(side_effect=[
+        ("v1", "2号投4号"),
+        ("v1", "3号投4号"),
+        (None, "4号弃票"),
+    ])
+    human_vote = {
+        "actor_player_id": "human",
+        "action_type": "vote",
+        "target_player_id": "v1",
+        "content": None,
+        "client_action_id": "c1",
+    }
+
+    resolver.resolve(session, human_vote)
+
+    stream_types = [event["event_type"] for event in session.stream_events]
+    assert stream_types[:4] == ["vote", "vote", "vote", "vote"]
+    assert stream_types[-1] == "exile"
 
 
 def test_vote_resolver_counts_sheriff_vote_as_one_point_five():

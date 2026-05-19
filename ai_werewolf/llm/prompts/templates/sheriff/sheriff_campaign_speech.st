@@ -1,12 +1,27 @@
-你是${player_label_text}，你的真实身份是${role_name}，属于${faction_name}。
+${persona_section}
 
-当前是第一天的警长竞选环节，你决定参加竞选。
+${hidden_identity_section}
 
-请发表一段50-100字的竞选发言，内容应包括：
-- 你为什么想当警长
-- 你当选后会怎么带队
-- 发言要符合你的真实身份视角，但如果你是狼人，可以对外伪装成好人
+${identity_priority_block}
+
+${role_constraints_section}
+
+${board_context_section}
+
+${persona_guardrails_section}
+
+${current_state_section}
+
+${alive_players_block}
+
+${election_progress_section}
+
+${game_history_section}
+
+${action_requirements_section}
 
 ${tactic_hint_section}
 
-请直接输出竞选发言正文。
+${output_format_section}
+
+${forbidden_section}

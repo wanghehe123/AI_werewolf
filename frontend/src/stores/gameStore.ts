@@ -105,13 +105,38 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const playerId = event.actor_id;
       if (playerId) {
         set((state) => {
-          if (!(playerId in state.streamingSpeeches)) return {};
+          const game = state.game
+            ? {
+                ...state.game,
+                players: state.game.players.map((player) => (
+                  player.player_id === playerId ? { ...player, speaking: false } : player
+                ))
+              }
+            : state.game;
+          if (!(playerId in state.streamingSpeeches)) return { game };
           const next = { ...state.streamingSpeeches };
           delete next[playerId];
-          return { streamingSpeeches: next };
+          return { game, streamingSpeeches: next };
         });
       }
       get().appendStreamEvent(event);
+      return;
+    }
+
+    if (event.event_type === "current_speaker_changed") {
+      const playerId = stringPayload(event.payload.player_id) ?? event.actor_id;
+      if (!currentGame || !playerId) return;
+      set({
+        game: {
+          ...currentGame,
+          phase: event.phase,
+          day_count: event.day_count,
+          players: currentGame.players.map((player) => ({
+            ...player,
+            speaking: player.player_id === playerId
+          }))
+        }
+      });
       return;
     }
 
@@ -155,18 +180,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
+    const speakingFinished = new Set(["sheriff_election_speech", "speech_completed", "last_words"]);
+    const players = speakingFinished.has(event.event_type) && event.actor_id
+      ? currentGame.players.map((player) => (
+          player.player_id === event.actor_id ? { ...player, speaking: false } : player
+        ))
+      : currentGame.players;
+
     set({
       game: {
         ...currentGame,
         phase: event.phase,
         day_count: event.day_count,
+        players,
         public_events: [
           ...currentGame.public_events,
           {
             event_type: event.event_type,
             actor_id: event.actor_id,
             target_id: event.target_id,
-            payload: { message: event.payload.message },
+            payload: { ...event.payload, message: event.payload.message },
             public: event.visibility === "public"
           }
         ]

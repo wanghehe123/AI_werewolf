@@ -196,11 +196,80 @@ describe("gameStore", () => {
       });
 
       const event = useGameStore.getState().game?.public_events.at(-1);
-      expect(event).toEqual({
+      expect(event).toMatchObject({
         event_type: "speech_completed",
         actor_id: "w1",
         target_id: null,
         payload: { message: "2号 小明：我觉得今天要听逻辑。" },
+        public: true
+      });
+    });
+
+    it("marks the current speaker from current_speaker_changed events", () => {
+      useGameStore.getState().setGame(mockGame("sheriff_speech"));
+
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("current_speaker_changed", {
+          player_id: "w1",
+          label: "2号 小明"
+        }),
+        actor_id: "w1",
+        phase: "sheriff_speech"
+      });
+
+      const game = useGameStore.getState().game!;
+      expect(game.players.find((p) => p.player_id === "w1")?.speaking).toBe(true);
+    });
+
+    it("adds sheriff election and vote stream events to the timeline immediately", () => {
+      useGameStore.getState().setGame(mockGame("sheriff_election"));
+
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("sheriff_election", { message: "2号 小明 参加警长竞选。" }),
+        actor_id: "w1",
+        phase: "sheriff_election"
+      });
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("sheriff_election_speech", {
+          message: "2号 小明：我竞选警长。",
+          player_id: "w1",
+          label: "2号 小明",
+          speech: "我竞选警长。"
+        }),
+        actor_id: "w1",
+        phase: "sheriff_speech"
+      });
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("sheriff_vote", { message: "1号 你 投票给 2号 小明。" }),
+        actor_id: "human",
+        target_id: "w1",
+        phase: "sheriff_speech"
+      });
+
+      const events = useGameStore.getState().game!.public_events;
+      expect(events.map((event) => event.event_type).slice(-3)).toEqual([
+        "sheriff_election",
+        "sheriff_election_speech",
+        "sheriff_vote"
+      ]);
+      expect(events.at(-1)?.target_id).toBe("w1");
+    });
+
+    it("adds exile vote stream events to the timeline immediately", () => {
+      useGameStore.getState().setGame(mockGame("exile_vote"));
+
+      useGameStore.getState().applySseEvent({
+        ...mockSseEvent("vote", { message: "2号 小明 选择弃票。" }),
+        actor_id: "w1",
+        phase: "exile_vote"
+      });
+
+      const event = useGameStore.getState().game!.public_events.at(-1);
+      expect(event).toMatchObject({
+        event_type: "vote",
+        actor_id: "w1",
+        target_id: null,
+        payload: { message: "2号 小明 选择弃票。" },
         public: true
       });
     });

@@ -120,8 +120,11 @@ class VoteResolver:
                     source="human",
                     decision=human_vote,
                 )
-                events.append(event("vote", f"你投票给了 {display_name(human_vote['target_player_id'], session)}。",
-                                   actor_id=human_vote["actor_player_id"], target_id=human_vote["target_player_id"]))
+                events.append(self._append_vote_event(
+                    session,
+                    event("vote", f"你投票给了 {display_name(human_vote['target_player_id'], session)}。",
+                          actor_id=human_vote["actor_player_id"], target_id=human_vote["target_player_id"]),
+                ))
             else:
                 log_player_action(
                     session,
@@ -130,7 +133,10 @@ class VoteResolver:
                     source="human",
                     decision=human_vote,
                 )
-                events.append(event("vote", "你选择弃票。", actor_id=human_vote["actor_player_id"]))
+                events.append(self._append_vote_event(
+                    session,
+                    event("vote", "你选择弃票。", actor_id=human_vote["actor_player_id"]),
+                ))
 
         # 2. AI votes via LLM
         context = build_game_context(session)
@@ -148,8 +154,11 @@ class VoteResolver:
                     source="ai",
                     decision={"speech": speech, "action_type": "vote", "target_id": target_id},
                 )
-                events.append(event("vote", f"{display_name(player.player_id, session)} 投票给了 {display_name(target_id, session)}。",
-                                   actor_id=player.player_id, target_id=target_id))
+                events.append(self._append_vote_event(
+                    session,
+                    event("vote", f"{display_name(player.player_id, session)} 投票给了 {display_name(target_id, session)}。",
+                          actor_id=player.player_id, target_id=target_id),
+                ))
             else:
                 log_player_action(
                     session,
@@ -158,7 +167,10 @@ class VoteResolver:
                     source="ai",
                     decision={"speech": speech, "action_type": "abstain", "target_id": None},
                 )
-                events.append(event("vote", f"{display_name(player.player_id, session)} 选择弃票。", actor_id=player.player_id))
+                events.append(self._append_vote_event(
+                    session,
+                    event("vote", f"{display_name(player.player_id, session)} 选择弃票。", actor_id=player.player_id),
+                ))
 
         # 3. Tally and resolve
         exiled_player_id: str | None = None
@@ -173,14 +185,29 @@ class VoteResolver:
                 exiled = state.player_by_id(tied[0])
                 exiled.alive = False
                 exiled_player_id = exiled.player_id
-                events.append(event("exile", f"{display_name(exiled.player_id, session)} 被投票放逐。", target_id=exiled.player_id))
+                events.append(self._append_vote_event(
+                    session,
+                    event("exile", f"{display_name(exiled.player_id, session)} 被投票放逐。", target_id=exiled.player_id),
+                ))
             else:
-                events.append(event("exile", "投票平局，无人被放逐。"))
+                events.append(self._append_vote_event(session, event("exile", "投票平局，无人被放逐。")))
         else:
-            events.append(event("exile", "所有人都弃票，无人被放逐。"))
+            events.append(self._append_vote_event(session, event("exile", "所有人都弃票，无人被放逐。")))
 
-        session.public_events.extend(events)
         return {"exiled_player_id": exiled_player_id, "events": events}
+
+    def _append_vote_event(self, session: GameSession, public_event: dict[str, Any]) -> dict[str, Any]:
+        payload = public_event.get("payload", {})
+        message = payload.get("message", "")
+        extra_payload = {key: value for key, value in payload.items() if key != "message"}
+        return session.append_public_event(
+            public_event.get("event_type", ""),
+            message,
+            actor_id=public_event.get("actor_id"),
+            target_id=public_event.get("target_id"),
+            visibility=public_event.get("visibility", "public" if public_event.get("public", True) else "self"),
+            **extra_payload,
+        )
 
     def _get_ai_vote(self, session: GameSession, player_id: str, context: str) -> tuple[str | None, str]:
         """Get AI vote decision via LLM. Returns (target_id, speech)."""
@@ -197,6 +224,10 @@ class VoteResolver:
                 self.role_model_bindings,
                 chain_config=self.chain_config,
             )
+            if getattr(self._get_ai_vote_decision, "__func__", None) is not VoteResolver._get_ai_vote_decision:
+                decision = self._get_ai_vote_decision(player_id, context)
+                target = self._resolve_vote_target(session, player_id, decision.target_id)
+                return target, _repair_vote_speech(session, player, decision)
 
             def decision_generator(state: dict[str, Any]) -> PlayerDecision:
                 tasks = self.scheduler.schedule(
@@ -220,29 +251,31 @@ class VoteResolver:
                 decision_generator=decision_generator,
                 semantic_decider=decider,
                 semantic_nodes=configured_semantic_nodes(),
+                alive_player_ids=session.state.alive_player_ids(),
             )
             self._persist_player_memories(session, player_id, result)
             decision = result["decision"]
 
             target = decision.target_id
-            if target is not None:
-                # Resolve seat-number patterns like "2号" → real player ID
-                resolved = resolve_player_id(target, session)
-                if resolved is None:
-                    logger.warning("AI %s vote target %s unresolvable, abstain", player_id, target)
-                    target = None
-                else:
-                    alive_ids = {p.player_id for p in session.state.players if p.alive}
-                    if resolved not in alive_ids or resolved == player_id:
-                        logger.warning("AI %s vote target %s invalid, abstain", player_id, resolved)
-                        target = None
-                    else:
-                        target = resolved
+            target = self._resolve_vote_target(session, player_id, target)
 
             return target, _repair_vote_speech(session, player, decision)
         except Exception:
             logger.exception("AI %s vote failed", player_id)
             return None, "弃票"
+
+    def _resolve_vote_target(self, session: GameSession, player_id: str, target: str | None) -> str | None:
+        if target is None:
+            return None
+        resolved = resolve_player_id(target, session)
+        if resolved is None:
+            logger.warning("AI %s vote target %s unresolvable, abstain", player_id, target)
+            return None
+        alive_ids = {p.player_id for p in session.state.players if p.alive}
+        if resolved not in alive_ids or resolved == player_id:
+            logger.warning("AI %s vote target %s invalid, abstain", player_id, resolved)
+            return None
+        return resolved
 
     def _persist_player_memories(self, session: GameSession, player_id: str, result: dict[str, Any]) -> None:
         previous = self.memory_store.get_player_suspicion(session.state.game_id, player_id)

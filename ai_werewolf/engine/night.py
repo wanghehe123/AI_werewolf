@@ -679,6 +679,7 @@ class NightResolver:
             target_id = self._validate_target(human_target, session, exclude_player_id=alive_seer.player_id)
             if target_id:
                 self._record_seer_result(session, alive_seer.player_id, target_id)
+                self._persist_private_role_memory(session, alive_seer.player_id)
                 target_player = session.state.player_by_id(target_id)
                 camp = "狼人阵营" if target_player.role_key == "werewolf" else "好人阵营"
                 log_player_action(
@@ -704,8 +705,16 @@ class NightResolver:
         target_id = self._validate_target(decision.target_id, session, exclude_player_id=alive_seer.player_id)
         if target_id:
             self._record_seer_result(session, alive_seer.player_id, target_id)
+            self._persist_private_role_memory(session, alive_seer.player_id)
             target_player = session.state.player_by_id(target_id)
             camp = "werewolf" if target_player.role_key == "werewolf" else "good"
+            logger.info(
+                "[AI_JUDGE_FEEDBACK] action_type=seer_check actor=%s target=%s result=%s isGood=%s",
+                alive_seer.player_id,
+                target_id,
+                camp,
+                camp == "good",
+            )
             log_player_action(
                 session,
                 actor_id=alive_seer.player_id,
@@ -943,7 +952,7 @@ class NightResolver:
         })
         session.night_actions.append({
             "actor_player_id": seer_id,
-            "action_type": "check",
+            "action_type": "seer_check",
             "target_player_id": target_id,
             "round": f"night{session.state.day_count}",
         })
@@ -1061,6 +1070,7 @@ class NightResolver:
             decision_generator=decision_generator,
             semantic_decider=decider,
             semantic_nodes=configured_semantic_nodes(),
+            alive_player_ids=session.state.alive_player_ids(),
         )
         self._persist_player_memories(session, player_id, result)
         return result["decision"]
@@ -1131,6 +1141,15 @@ class NightResolver:
         if suspicion_memory is not None:
             logger.info("夜晚决策后写回怀疑链 player_id=%s records=%d", player_id, len(suspicion_memory.records))
             self.memory_store.save_player_suspicion(suspicion_memory)
+        private_role_memory = build_private_role_memory(
+            game_id=session.state.game_id,
+            player_id=player_id,
+            private_info=session.private_infos.get(player_id),
+        )
+        if private_role_memory is not None:
+            self.memory_store.save_private_role_memory(private_role_memory)
+
+    def _persist_private_role_memory(self, session: GameSession, player_id: str) -> None:
         private_role_memory = build_private_role_memory(
             game_id=session.state.game_id,
             player_id=player_id,
