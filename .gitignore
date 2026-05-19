@@ -9,6 +9,19 @@ coverage/
 .worktrees/
 *.tsbuildinfo
 
+# IDE and editor files
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
 # Ignore everything except frontend and ai_werewolf
 /*
 !/.gitignore
