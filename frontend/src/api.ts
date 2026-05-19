@@ -9,6 +9,7 @@ import type {
   AdminSessionDto,
   AgentProfile,
   BoardConfig,
+  CreateCompleteBoardRequest,
   CreateGameRequest,
   GameStateDto,
   GameStreamEventDto,
@@ -197,6 +198,14 @@ export function fetchAdminBoards(baseUrl?: string): Promise<AdminBoardDto[]> {
 export function createAdminBoard(payload: Omit<AdminBoardDto, "board_id" | "roles" | "created_at">, baseUrl?: string): Promise<AdminBoardDto> {
   return requestJson<AdminBoardDto>(
     "/admin/boards",
+    adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    baseUrl
+  );
+}
+
+export function createAdminBoardComplete(payload: CreateCompleteBoardRequest, baseUrl?: string): Promise<AdminBoardDto> {
+  return requestJson<AdminBoardDto>(
+    "/admin/boards/complete",
     adminInit({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
     baseUrl
   );

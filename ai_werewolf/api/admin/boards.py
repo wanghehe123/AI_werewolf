@@ -105,6 +105,34 @@ def replace_board_roles(
     return success_response(data=[board_role_to_dict(role) for role in roles])
 
 
+class CreateCompleteBoardRequest(BaseModel):
+    name: str
+    description: str | None = None
+    min_players: int = Field(default=6, ge=1)
+    max_players: int = Field(default=12, ge=1)
+    sheriff_enabled: bool = True
+    enabled: bool = True
+    roles: list[BoardRoleInput]
+
+
+@router.post("/complete", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_session)])
+def create_board_complete(request: CreateCompleteBoardRequest, session: Session = Depends(get_admin_session)) -> dict:
+    if request.min_players > request.max_players:
+        raise HTTPException(status_code=400, detail="min_players must be <= max_players")
+    _validate_roles(request.min_players, request.max_players, request.roles)
+    repo = BoardRepository(session)
+    board = repo.create(
+        name=request.name,
+        description=request.description,
+        min_players=request.min_players,
+        max_players=request.max_players,
+        sheriff_enabled=request.sheriff_enabled,
+        enabled=request.enabled,
+    )
+    roles = repo.replace_roles(board.board_id, [role.model_dump() for role in request.roles])
+    return success_response(data=board_to_dict(board, roles))
+
+
 @router.delete("/{board_id}", dependencies=[Depends(require_admin_session)])
 def delete_board(board_id: str, session: Session = Depends(get_admin_session)) -> dict:
     deleted = BoardRepository(session).delete(board_id)

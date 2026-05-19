@@ -1,59 +1,35 @@
-import { FormEvent, useState } from "react";
+import { useState } from "react";
 
-import type { AdminAgentDto } from "../types";
+import type { AdminAgentDto, AdminLlmProviderDto } from "../types";
+import { AgentFormModal } from "./AgentFormModal";
 
 interface AdminAgentsPageProps {
   agents: AdminAgentDto[];
   onRefresh: () => void;
-  onCreate?: (payload: Partial<AdminAgentDto> & { name: string; persona: string; speech_style: string }) => Promise<void>;
+  onShowCreate: () => void;
+  onCreateSubmit: (values: Parameters<typeof AgentFormModal>[0]["onSubmit"]) => void;
+  onUpdateSubmit: (agentId: string, values: Parameters<typeof AgentFormModal>[0]["onSubmit"]) => void;
   onToggleEnabled?: (agent: AdminAgentDto) => Promise<void>;
   onDelete?: (agentId: string) => Promise<void>;
+  providers?: AdminLlmProviderDto[];
 }
 
-export function AdminAgentsPage({ agents, onRefresh, onCreate, onToggleEnabled, onDelete }: AdminAgentsPageProps) {
-  const [name, setName] = useState("");
-  const [persona, setPersona] = useState("");
-  const [speechStyle, setSpeechStyle] = useState("");
-  const [formMessage, setFormMessage] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+export function AdminAgentsPage({
+  agents,
+  onRefresh,
+  onShowCreate,
+  onCreateSubmit,
+  onUpdateSubmit,
+  onToggleEnabled,
+  onDelete,
+  providers = [],
+}: AdminAgentsPageProps) {
+  const [editingAgent, setEditingAgent] = useState<AdminAgentDto | null>(null);
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    const trimmedName = name.trim();
-    const trimmedPersona = persona.trim();
-    const trimmedSpeechStyle = speechStyle.trim();
-    if (!trimmedName || !trimmedPersona || !trimmedSpeechStyle) {
-      setFormMessage("请填写 AI 名称、人格和发言风格");
-      return;
-    }
-    if (!onCreate) {
-      return;
-    }
-    setSubmitting(true);
-    setFormMessage(null);
-    try {
-      await onCreate({
-        name: trimmedName,
-        persona: trimmedPersona,
-        speech_style: trimmedSpeechStyle,
-        reasoning_level: 3,
-        deception_level: 3,
-        aggression_level: 3,
-        cooperation_level: 3,
-        risk_preference: "balanced",
-        memory_style: "focus_on_votes",
-        enabled: true
-      });
-      setName("");
-      setPersona("");
-      setSpeechStyle("");
-      onRefresh();
-    } catch (err) {
-      setFormMessage(err instanceof Error ? err.message : "新增 AI 失败");
-    } finally {
-      setSubmitting(false);
-    }
-  }
+  const providerOptions = providers.map((p) => ({
+    provider_id: p.provider_id,
+    name: p.model_name ? `${p.provider_id} (${p.model_name})` : p.provider_id,
+  }));
 
   return (
     <section className="admin-page">
@@ -62,53 +38,109 @@ export function AdminAgentsPage({ agents, onRefresh, onCreate, onToggleEnabled, 
           <p className="scene-kicker">AGENTS</p>
           <h2>AI 人设管理</h2>
         </div>
-        <button className="ghost-action" type="button" onClick={onRefresh}>
-          刷新
-        </button>
+        <div className="admin-actions">
+          <button className="primary-action" type="button" onClick={onShowCreate}>
+            + 新建 AI
+          </button>
+          <button className="ghost-action" type="button" onClick={onRefresh}>
+            刷新
+          </button>
+        </div>
       </header>
-      <form className="admin-inline-form" onSubmit={handleSubmit}>
-        <input aria-label="AI 名称" placeholder="AI 名称" value={name} onChange={(event) => setName(event.target.value)} />
-        <input aria-label="人格" placeholder="人格" value={persona} onChange={(event) => setPersona(event.target.value)} />
-        <input aria-label="发言风格" placeholder="发言风格" value={speechStyle} onChange={(event) => setSpeechStyle(event.target.value)} />
-        <button className="primary-action" type="submit" disabled={!onCreate || submitting}>
-          {submitting ? "保存中..." : "新增 AI"}
-        </button>
-        {formMessage ? <p className="admin-form-message" role="alert">{formMessage}</p> : null}
-      </form>
-      <table className="admin-table">
-        <thead>
-          <tr>
-            <th>名称</th>
-            <th>人格</th>
-            <th>风格</th>
-            <th>模型</th>
-            <th>状态</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {agents.map((agent) => (
-            <tr key={agent.agent_id}>
-              <td>{agent.name}</td>
-              <td>{agent.persona}</td>
-              <td>{agent.speech_style}</td>
-              <td>{agent.default_model_provider_id ?? "-"}</td>
-              <td>{agent.enabled ? "启用" : "停用"}</td>
-              <td>
-                <span className="admin-row-actions">
-                  <button className="ghost-action compact" type="button" onClick={() => void onToggleEnabled?.(agent)}>
-                    {agent.enabled ? "停用" : "启用"}
-                  </button>
-                  <button className="danger-action compact" type="button" onClick={() => void onDelete?.(agent.agent_id)}>
-                    删除
-                  </button>
-                </span>
-              </td>
+
+      {agents.length === 0 ? (
+        <div className="admin-empty-state">
+          <p>暂无 AI 人设</p>
+          <button className="primary-action" type="button" onClick={onShowCreate}>
+            创建第一个 AI
+          </button>
+        </div>
+      ) : (
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>人格</th>
+              <th>风格</th>
+              <th>风险</th>
+              <th>模型</th>
+              <th>状态</th>
+              <th>操作</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {agents.length === 0 ? <p className="admin-empty">暂无 AI 人设</p> : null}
+          </thead>
+          <tbody>
+            {agents.map((agent) => (
+              <tr key={agent.agent_id}>
+                <td>{agent.name}</td>
+                <td>{agent.persona}</td>
+                <td>{agent.speech_style}</td>
+                <td>{RISK_LABELS[agent.risk_preference] ?? agent.risk_preference}</td>
+                <td>{agent.default_model_provider_id ?? "-"}</td>
+                <td>{agent.enabled ? "启用" : "停用"}</td>
+                <td>
+                  <span className="admin-row-actions">
+                    <button
+                      className="ghost-action compact"
+                      type="button"
+                      onClick={() => setEditingAgent(agent)}
+                    >
+                      编辑
+                    </button>
+                    <button className="ghost-action compact" type="button" onClick={() => void onToggleEnabled?.(agent)}>
+                      {agent.enabled ? "停用" : "启用"}
+                    </button>
+                    <button
+                      className="danger-action compact"
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`确定删除 AI「${agent.name}」？`)) {
+                          void onDelete?.(agent.agent_id);
+                        }
+                      }}
+                    >
+                      删除
+                    </button>
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Edit modal */}
+      {editingAgent ? (
+        <AgentFormModal
+          isOpen={true}
+          onClose={() => setEditingAgent(null)}
+          onSubmit={async (values) => {
+            await onUpdateSubmit(editingAgent.agent_id, values);
+            await onRefresh();
+            return {};
+          }}
+          initialValues={{
+            agent_id: editingAgent.agent_id,
+            name: editingAgent.name,
+            persona: editingAgent.persona,
+            speech_style: editingAgent.speech_style,
+            reasoning_level: editingAgent.reasoning_level,
+            deception_level: editingAgent.deception_level,
+            aggression_level: editingAgent.aggression_level,
+            cooperation_level: editingAgent.cooperation_level,
+            risk_preference: editingAgent.risk_preference,
+            memory_style: editingAgent.memory_style,
+            default_model_provider_id: editingAgent.default_model_provider_id ?? null,
+            enabled: editingAgent.enabled,
+          }}
+          providers={providerOptions}
+        />
+      ) : null}
     </section>
   );
 }
+
+const RISK_LABELS: Record<string, string> = {
+  conservative: "保守",
+  balanced: "均衡",
+  aggressive: "激进",
+};

@@ -8,103 +8,109 @@ import { AdminLlmPage } from "./AdminLlmPage";
 import { AdminPlayersPage } from "./AdminPlayersPage";
 
 describe("admin pages", () => {
-  it("submits player creation only after required fields are present", async () => {
-    const onCreate = vi.fn().mockResolvedValue(undefined);
-    const onRefresh = vi.fn();
-    render(<AdminPlayersPage players={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+  it("opens create modal when clicking new player button", async () => {
+    const onShowCreate = vi.fn();
+    render(
+      <AdminPlayersPage
+        players={[]}
+        onRefresh={vi.fn()}
+        onShowCreate={onShowCreate}
+        onCreateSubmit={vi.fn()}
+      />
+    );
 
-    await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
-    expect(screen.getByText("请先填写玩家名称")).toBeInTheDocument();
-    expect(onCreate).not.toHaveBeenCalled();
-
-    await userEvent.type(screen.getByLabelText("玩家名称"), "浏览器测试玩家");
-    await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
-
-    expect(onCreate).toHaveBeenCalledWith({ name: "浏览器测试玩家", is_ai: false });
-    expect(onRefresh).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole("button", { name: "+ 新建玩家" }));
+    expect(onShowCreate).toHaveBeenCalled();
   });
 
-  it("shows player creation errors without refreshing", async () => {
-    const onCreate = vi.fn().mockRejectedValue(new Error("玩家名称已存在"));
-    const onRefresh = vi.fn();
-    render(<AdminPlayersPage players={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+  it("shows empty state with create button", () => {
+    const onShowCreate = vi.fn();
+    render(
+      <AdminPlayersPage
+        players={[]}
+        onRefresh={vi.fn()}
+        onShowCreate={onShowCreate}
+        onCreateSubmit={vi.fn()}
+      />
+    );
 
-    await userEvent.type(screen.getByLabelText("玩家名称"), "重复玩家");
-    await userEvent.click(screen.getByRole("button", { name: "新增玩家" }));
-
-    expect(await screen.findByText("玩家名称已存在")).toBeInTheDocument();
-    expect(onRefresh).not.toHaveBeenCalled();
+    expect(screen.getByText("暂无玩家")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建第一个玩家" })).toBeInTheDocument();
   });
 
-  it("submits board creation only after required fields are present", async () => {
-    const onCreate = vi.fn().mockResolvedValue(undefined);
+  it("opens create modal when clicking new board button", async () => {
+    const onShowCreate = vi.fn();
     const onRefresh = vi.fn();
-    render(<AdminBoardsPage boards={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+    render(<AdminBoardsPage boards={[]} onRefresh={onRefresh} onShowCreate={onShowCreate} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "新增板子" }));
-    expect(screen.getByText("请先填写板子名称")).toBeInTheDocument();
-    expect(onCreate).not.toHaveBeenCalled();
-
-    await userEvent.type(screen.getByLabelText("板子名称"), "浏览器测试板子");
-    await userEvent.click(screen.getByRole("button", { name: "新增板子" }));
-
-    expect(onCreate).toHaveBeenCalledWith({
-      name: "浏览器测试板子",
-      description: null,
-      min_players: 6,
-      max_players: 6,
-      sheriff_enabled: false,
-      enabled: true
-    });
-    expect(onRefresh).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole("button", { name: "+ 新建板子" }));
+    expect(onShowCreate).toHaveBeenCalled();
   });
 
-  it("shows board creation errors without refreshing", async () => {
-    const onCreate = vi.fn().mockRejectedValue(new Error("板子名称已存在"));
-    const onRefresh = vi.fn();
-    render(<AdminBoardsPage boards={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+  it("shows create button in empty state", () => {
+    const onShowCreate = vi.fn();
+    render(<AdminBoardsPage boards={[]} onRefresh={vi.fn()} onShowCreate={onShowCreate} />);
 
-    await userEvent.type(screen.getByLabelText("板子名称"), "重复板子");
-    await userEvent.click(screen.getByRole("button", { name: "新增板子" }));
-
-    expect(await screen.findByText("板子名称已存在")).toBeInTheDocument();
-    expect(onRefresh).not.toHaveBeenCalled();
+    expect(screen.getByText("暂无板子")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建第一个板子" })).toBeInTheDocument();
   });
 
-  it("submits agent creation only after all required fields are present", async () => {
-    const onCreate = vi.fn().mockResolvedValue(undefined);
-    const onRefresh = vi.fn();
-    render(<AdminAgentsPage agents={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+  it("renders board role summary", () => {
+    const boards = [
+      {
+        board_id: "board_1",
+        name: "6人新手局",
+        description: "2狼1预3民",
+        min_players: 6,
+        max_players: 6,
+        sheriff_enabled: false,
+        enabled: true,
+        roles: [{ board_id: "board_1", role_key: "werewolf", count: 2 }]
+      }
+    ];
 
-    await userEvent.click(screen.getByRole("button", { name: "新增 AI" }));
-    expect(screen.getByText("请填写 AI 名称、人格和发言风格")).toBeInTheDocument();
-    expect(onCreate).not.toHaveBeenCalled();
+    render(<AdminBoardsPage boards={boards} onRefresh={vi.fn()} onShowCreate={vi.fn()} />);
 
-    await userEvent.type(screen.getByLabelText("AI 名称"), "浏览器测试AI");
-    await userEvent.type(screen.getByLabelText("人格"), "谨慎");
-    await userEvent.type(screen.getByLabelText("发言风格"), "短句");
-    await userEvent.click(screen.getByRole("button", { name: "新增 AI" }));
-
-    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
-      name: "浏览器测试AI",
-      persona: "谨慎",
-      speech_style: "短句"
-    }));
-    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(screen.getByText("6人新手局")).toBeInTheDocument();
+    expect(screen.getByText(/werewolf x2/)).toBeInTheDocument();
   });
 
-  it("shows agent creation errors without refreshing", async () => {
-    const onCreate = vi.fn().mockRejectedValue(new Error("AI 名称已存在"));
-    const onRefresh = vi.fn();
-    render(<AdminAgentsPage agents={[]} onRefresh={onRefresh} onCreate={onCreate} />);
+  it("expands board card to show role editor and actions", async () => {
+    const boards = [
+      {
+        board_id: "board_1",
+        name: "6人新手局",
+        description: "2狼1预3民",
+        min_players: 6,
+        max_players: 6,
+        sheriff_enabled: false,
+        enabled: true,
+        roles: [{ board_id: "board_1", role_key: "werewolf", count: 2 }]
+      }
+    ];
 
-    await userEvent.type(screen.getByLabelText("AI 名称"), "重复AI");
-    await userEvent.type(screen.getByLabelText("人格"), "谨慎");
-    await userEvent.type(screen.getByLabelText("发言风格"), "短句");
-    await userEvent.click(screen.getByRole("button", { name: "新增 AI" }));
+    render(<AdminBoardsPage boards={boards} onRefresh={vi.fn()} onShowCreate={vi.fn()} />);
 
-    expect(await screen.findByText("AI 名称已存在")).toBeInTheDocument();
-    expect(onRefresh).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByText("6人新手局"));
+
+    expect(screen.getByRole("button", { name: "停用" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
+  });
+
+  it("opens create modal when clicking new agent button", async () => {
+    const onShowCreate = vi.fn();
+    render(
+      <AdminAgentsPage
+        agents={[]}
+        onRefresh={vi.fn()}
+        onShowCreate={onShowCreate}
+        onCreateSubmit={vi.fn()}
+        onUpdateSubmit={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "+ 新建 AI" }));
+    expect(onShowCreate).toHaveBeenCalled();
   });
 
   it("renders agent management table", () => {
@@ -129,34 +135,15 @@ describe("admin pages", () => {
           }
         ]}
         onRefresh={vi.fn()}
+        onShowCreate={vi.fn()}
+        onCreateSubmit={vi.fn()}
+        onUpdateSubmit={vi.fn()}
       />
     );
 
     expect(screen.getByText("林野")).toBeInTheDocument();
     expect(screen.getByText("理性")).toBeInTheDocument();
-  });
-
-  it("renders board role summary", () => {
-    render(
-      <AdminBoardsPage
-        boards={[
-          {
-            board_id: "board_1",
-            name: "6人新手局",
-            description: "2狼1预3民",
-            min_players: 6,
-            max_players: 6,
-            sheriff_enabled: false,
-            enabled: true,
-            roles: [{ board_id: "board_1", role_key: "werewolf", count: 2 }]
-          }
-        ]}
-        onRefresh={vi.fn()}
-      />
-    );
-
-    expect(screen.getByText("6人新手局")).toBeInTheDocument();
-    expect(screen.getByText("werewolf x2")).toBeInTheDocument();
+    expect(screen.getByText("均衡")).toBeInTheDocument();
   });
 
   it("renders editable LLM provider and role binding controls", () => {
