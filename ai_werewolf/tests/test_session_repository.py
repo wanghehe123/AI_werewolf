@@ -13,6 +13,7 @@ import pytest
 import redis
 
 from ai_werewolf.domain.agents import AgentProfile, RiskPreference
+from ai_werewolf.domain.boards import BoardConfig, BoardRoleCount, SpeechRule, VoteRule, WinCondition
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerPrivateInfo, PlayerState
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.session_repository import GameSessionRepository
@@ -97,6 +98,29 @@ def _make_session(**overrides: Any) -> GameSession:
             "ai_2": PlayerPrivateInfo(seer_results=[{"target": "human", "is_wolf": False}]),
         },
         "pending_last_words_player_id": "ai_1",
+        "pending_first_night_result": True,
+        "pending_first_night_deaths": [{"player_id": "ai_2", "cause": "night_kill"}],
+        "board_config": BoardConfig(
+            board_id="board_8",
+            name="测试警长局",
+            roles=[
+                BoardRoleCount(role_key="werewolf", count=1),
+                BoardRoleCount(role_key="seer", count=1),
+                BoardRoleCount(role_key="villager", count=1),
+            ],
+            sheriff_enabled=True,
+            speech_rule=SpeechRule.SHERIFF_SELECT_DIRECTION,
+            vote_rule=VoteRule.SINGLE_VOTE_WITH_PK,
+            win_condition=WinCondition.WOLVES_ELIMINATED_OR_PARITY,
+        ),
+        "sheriff_candidates": ["ai_2"],
+        "sheriff_voters": ["human", "ai_1"],
+        "sheriff_election_speeches": {"ai_2": "我来竞选警长。"},
+        "sheriff_election_votes": {"human": "ai_2"},
+        "sheriff_vote_open": True,
+        "night_pending_kill_target_id": "human",
+        "night_pending_guard_target_id": "ai_2",
+        "night_pre_witch_resolved": True,
         "stream_events": [{"event_type": "speech", "seq": 1}],
         "stream_event_seq": 5,
     }
@@ -183,6 +207,17 @@ class TestSave:
         assert "stream_events" in mapping
         assert "stream_event_seq" in mapping
         assert "pending_last_words_player_id" in mapping
+        assert "pending_first_night_result" in mapping
+        assert "pending_first_night_deaths" in mapping
+        assert "board_config" in mapping
+        assert "sheriff_candidates" in mapping
+        assert "sheriff_voters" in mapping
+        assert "sheriff_election_speeches" in mapping
+        assert "sheriff_election_votes" in mapping
+        assert "sheriff_vote_open" in mapping
+        assert "night_pending_kill_target_id" in mapping
+        assert "night_pending_guard_target_id" in mapping
+        assert "night_pre_witch_resolved" in mapping
 
     @pytest.mark.asyncio()
     async def test_save_serializes_state_as_pydantic_json(self, repo, _patch_get_async_client) -> None:
@@ -306,6 +341,17 @@ class TestLoad:
         assert result.witch_has_save_potion == session.witch_has_save_potion
         assert result.witch_has_poison == session.witch_has_poison
         assert result.pending_last_words_player_id == session.pending_last_words_player_id
+        assert result.pending_first_night_result == session.pending_first_night_result
+        assert result.pending_first_night_deaths == session.pending_first_night_deaths
+        assert result.board_config == session.board_config
+        assert result.sheriff_candidates == session.sheriff_candidates
+        assert result.sheriff_voters == session.sheriff_voters
+        assert result.sheriff_election_speeches == session.sheriff_election_speeches
+        assert result.sheriff_election_votes == session.sheriff_election_votes
+        assert result.sheriff_vote_open == session.sheriff_vote_open
+        assert result.night_pending_kill_target_id == session.night_pending_kill_target_id
+        assert result.night_pending_guard_target_id == session.night_pending_guard_target_id
+        assert result.night_pre_witch_resolved == session.night_pre_witch_resolved
         assert result.stream_event_seq == session.stream_event_seq
         assert result.voted_player_ids == session.voted_player_ids
         assert len(result.public_events) == len(session.public_events)
@@ -388,6 +434,17 @@ class TestRoundTrip:
         assert loaded.witch_has_save_potion == original.witch_has_save_potion
         assert loaded.witch_has_poison == original.witch_has_poison
         assert loaded.pending_last_words_player_id == original.pending_last_words_player_id
+        assert loaded.pending_first_night_result == original.pending_first_night_result
+        assert loaded.pending_first_night_deaths == original.pending_first_night_deaths
+        assert loaded.board_config == original.board_config
+        assert loaded.sheriff_candidates == original.sheriff_candidates
+        assert loaded.sheriff_voters == original.sheriff_voters
+        assert loaded.sheriff_election_speeches == original.sheriff_election_speeches
+        assert loaded.sheriff_election_votes == original.sheriff_election_votes
+        assert loaded.sheriff_vote_open == original.sheriff_vote_open
+        assert loaded.night_pending_kill_target_id == original.night_pending_kill_target_id
+        assert loaded.night_pending_guard_target_id == original.night_pending_guard_target_id
+        assert loaded.night_pre_witch_resolved == original.night_pre_witch_resolved
         assert loaded.stream_event_seq == original.stream_event_seq
         # Collections
         assert loaded.voted_player_ids == original.voted_player_ids
@@ -642,6 +699,17 @@ def _build_hash_from_session(session: GameSession) -> dict[str, str]:
         "witch_has_save_potion": "1" if session.witch_has_save_potion else "0",
         "witch_has_poison": "1" if session.witch_has_poison else "0",
         "stream_event_seq": str(session.stream_event_seq),
+        "pending_first_night_result": "1" if session.pending_first_night_result else "0",
+        "pending_first_night_deaths": json_dumps(session.pending_first_night_deaths),
+        "board_config": session.board_config.model_dump_json() if session.board_config is not None else "",
+        "sheriff_candidates": json_dumps(session.sheriff_candidates),
+        "sheriff_voters": json_dumps(session.sheriff_voters),
+        "sheriff_election_speeches": json_dumps(session.sheriff_election_speeches),
+        "sheriff_election_votes": json_dumps(session.sheriff_election_votes),
+        "sheriff_vote_open": "1" if session.sheriff_vote_open else "0",
+        "night_pending_kill_target_id": session.night_pending_kill_target_id or "",
+        "night_pending_guard_target_id": session.night_pending_guard_target_id or "",
+        "night_pre_witch_resolved": "1" if session.night_pre_witch_resolved else "0",
     }
     if session.pending_last_words_player_id is not None:
         fields["pending_last_words_player_id"] = session.pending_last_words_player_id

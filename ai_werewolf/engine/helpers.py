@@ -131,9 +131,9 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
             return [_target_action("guard", "守护玩家", targets, session)]
         if human.role_key == "witch":
             # Two-step night: if wolf kill target is cached, show witch-specific actions
-            if session is not None and session.night_pending_kill_target_id is not None:
+            if session is not None and session.night_pre_witch_resolved:
                 kill_target_id = session.night_pending_kill_target_id
-                kill_label = player_label(kill_target_id, session)
+                kill_label = player_label(kill_target_id, session) if kill_target_id else ""
                 poison_targets = [player for player in state.players if player.alive]
                 actions: list[dict[str, Any]] = []
 
@@ -177,7 +177,7 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
                 # Attach kill info to all actions for frontend display — only
                 # while the witch still has save potion.  After the antidote
                 # is used, the witch should not know the knife wound target.
-                if has_save:
+                if has_save and kill_target_id:
                     for a in actions:
                         if "night_kill_info" not in a:
                             a["night_kill_info"] = {
@@ -189,7 +189,7 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
                 return actions
 
             # Step 1: wolf kill target not yet known — show "start night" trigger
-            if session is not None and session.night_pending_kill_target_id is None:
+            if session is not None and not session.night_pre_witch_resolved:
                 return [{"action_type": "night_start", "label": "开始夜晚"}]
 
             targets = [player for player in state.players if player.alive]

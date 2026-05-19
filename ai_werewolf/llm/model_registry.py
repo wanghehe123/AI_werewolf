@@ -227,32 +227,23 @@ def build_chain_from_config(
         provider_id = entry.get("provider", entry.get("tier", "unknown"))
         configured_timeout_ms = entry.get("timeout_ms", 6000)
         max_retries = entry.get("max_retries", 1)
-        triggers = entry.get("triggers_to_next", ["timeout", "5xx", "429", "json_parse_error"])
-        provider_timeout_ms = 0
+        triggers = list(entry.get("triggers_to_next", ["timeout", "5xx", "429", "json_parse_error"]))
+        if provider_id != "rule_engine" and "provider_fallback" not in triggers:
+            triggers.append("provider_fallback")
+        effective_timeout_ms = configured_timeout_ms if provider_id == "rule_engine" else max(configured_timeout_ms, 1000)
 
         if provider_id == "rule_engine":
             providers[provider_id] = RuleEngineProvider()
         else:
             existing = registry.get(provider_id)
             if existing is not None:
-                provider_timeout_ms = max(existing.config.timeout, 1) * 1000
-                effective_timeout_ms = max(configured_timeout_ms, provider_timeout_ms)
                 providers[provider_id] = _clone_provider_for_tier(existing, effective_timeout_ms)
-                if effective_timeout_ms != configured_timeout_ms:
-                    logger.info(
-                        "Chain tier '%s': timeout_ms=%s 小于 provider timeout=%s，已提升为 %s",
-                        provider_id,
-                        configured_timeout_ms,
-                        provider_timeout_ms,
-                        effective_timeout_ms,
-                    )
             else:
                 logger.warning(
                     "Chain tier '%s': provider not found in registry, "
                     "tier will be skipped at runtime.",
                     provider_id,
                 )
-        effective_timeout_ms = configured_timeout_ms if provider_id == "rule_engine" else max(configured_timeout_ms, provider_timeout_ms)
         tier = ProviderTier(
             provider_id=provider_id,
             model_name=entry.get("model_name", provider_id),
@@ -315,5 +306,5 @@ def _normalize_chain_entries(
 
 def _clone_provider_for_tier(provider: ModelProvider, timeout_ms: int) -> ModelProvider:
     timeout_seconds = max(1, math.ceil(timeout_ms / 1000))
-    cloned_config = provider.config.model_copy(update={"timeout": timeout_seconds})
+    cloned_config = provider.config.model_copy(update={"timeout": timeout_seconds, "raise_on_error": True})
     return build_provider(cloned_config)

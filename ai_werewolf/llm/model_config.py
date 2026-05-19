@@ -41,7 +41,9 @@ class LLMProviderConfig(BaseModel):
                        生产环境建议使用 api_key_env 配合环境变量
         temperature:   生成温度 (0.0-2.0)，越高输出越随机
         max_tokens:    单次回复的最大 token 数
-        timeout:       请求超时时间（秒）
+    timeout:       请求超时时间（秒）
+        raise_on_error: ProviderChain 使用的内部开关。为 True 时 API 错误向上抛出，
+                       由链路统一降级；普通单 provider 路径仍保持本地兜底。
     """
 
     provider_id: str
@@ -53,6 +55,7 @@ class LLMProviderConfig(BaseModel):
     temperature: float = 0.8
     max_tokens: int = 1024
     timeout: int = 30
+    raise_on_error: bool = False
 
 
 class RoleModelBinding(BaseModel):

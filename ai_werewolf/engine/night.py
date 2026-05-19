@@ -72,7 +72,13 @@ class NightResolver:
         self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
         self.chain_config = chain_config
 
-    def resolve(self, session: GameSession, human_action: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def resolve(
+        self,
+        session: GameSession,
+        human_action: dict[str, Any] | None = None,
+        *,
+        defer_death_reveal: bool = False,
+    ) -> list[dict[str, Any]]:
         """Collect all night actions via LLM and resolve deaths.
 
         Returns a list of new public events.
@@ -112,7 +118,19 @@ class NightResolver:
             events.append(event("night_step_finished", "女巫行动完成。", step="witch"))
 
         # 5. Resolve deaths
-        deaths = self._resolve_deaths(session, wolf_target_id, guard_target_id, witch_poison_target)
+        death_records = self._resolve_death_records(
+            session,
+            wolf_target_id,
+            guard_target_id,
+            witch_poison_target,
+            apply_deaths=not defer_death_reveal,
+        )
+        deaths = [record["player_id"] for record in death_records]
+
+        if defer_death_reveal:
+            session.pending_first_night_result = True
+            session.pending_first_night_deaths = list(death_records)
+            return events
 
         # 6. Record deaths and set phase
         state.phase = GamePhase.DAY_ANNOUNCEMENT
@@ -159,10 +177,17 @@ class NightResolver:
         # Cache wolf kill target and guard target for the witch step
         session.night_pending_kill_target_id = wolf_target_id
         session.night_pending_guard_target_id = guard_target_id
+        session.night_pre_witch_resolved = True
 
         return events
 
-    def resolve_witch_step(self, session: GameSession, human_action: dict[str, Any]) -> list[dict[str, Any]]:
+    def resolve_witch_step(
+        self,
+        session: GameSession,
+        human_action: dict[str, Any],
+        *,
+        defer_death_reveal: bool = False,
+    ) -> list[dict[str, Any]]:
         """Run witch step and resolve deaths.  Uses cached wolf kill target.
 
         Called after resolve_pre_witch() when the human witch submits their action.
@@ -180,7 +205,22 @@ class NightResolver:
             events.append(event("night_step_finished", "女巫行动完成。", step="witch"))
 
         # 5. Resolve deaths
-        deaths = self._resolve_deaths(session, wolf_target_id, guard_target_id, witch_poison_target)
+        death_records = self._resolve_death_records(
+            session,
+            wolf_target_id,
+            guard_target_id,
+            witch_poison_target,
+            apply_deaths=not defer_death_reveal,
+        )
+        deaths = [record["player_id"] for record in death_records]
+
+        if defer_death_reveal:
+            session.pending_first_night_result = True
+            session.pending_first_night_deaths = list(death_records)
+            session.night_pending_kill_target_id = None
+            session.night_pending_guard_target_id = None
+            session.night_pre_witch_resolved = False
+            return events
 
         # 6. Record deaths and set phase
         session.state.phase = GamePhase.DAY_ANNOUNCEMENT
@@ -194,6 +234,7 @@ class NightResolver:
         # Clean up
         session.night_pending_kill_target_id = None
         session.night_pending_guard_target_id = None
+        session.night_pre_witch_resolved = False
 
         return events
 
@@ -930,10 +971,32 @@ class NightResolver:
         wolf_target_id: str | None,
         guard_target_id: str | None,
         poison_target: str | None,
+        *,
+        apply_deaths: bool = True,
     ) -> list[str]:
+        return [
+            record["player_id"]
+            for record in self._resolve_death_records(
+                session,
+                wolf_target_id,
+                guard_target_id,
+                poison_target,
+                apply_deaths=apply_deaths,
+            )
+        ]
+
+    def _resolve_death_records(
+        self,
+        session: GameSession,
+        wolf_target_id: str | None,
+        guard_target_id: str | None,
+        poison_target: str | None,
+        *,
+        apply_deaths: bool = True,
+    ) -> list[dict[str, str]]:
         """Compute final death list based on all night actions."""
         state = session.state
-        deaths: list[str] = []
+        death_records: list[dict[str, str]] = []
 
         # Wolf kill resolution
         if wolf_target_id is not None:
@@ -945,18 +1008,22 @@ class NightResolver:
                     for a in session.night_actions
                 )
                 if not saved:
-                    deaths.append(wolf_target_id)
+                    death_records.append({"player_id": wolf_target_id, "cause": "night_kill"})
 
         # Witch poison
         if poison_target is not None:
-            if poison_target not in deaths:
-                deaths.append(poison_target)
+            existing = next((record for record in death_records if record["player_id"] == poison_target), None)
+            if existing is None:
+                death_records.append({"player_id": poison_target, "cause": "poison"})
+            else:
+                existing["cause"] = "poison"
 
         # Mark deaths
-        for pid in deaths:
-            state.player_by_id(pid).alive = False
+        if apply_deaths:
+            for record in death_records:
+                state.player_by_id(record["player_id"]).alive = False
 
-        return deaths
+        return death_records
 
     def _get_ai_decision(self, session: GameSession, player_id: str, context: str) -> PlayerDecision:
         """Get LLM decision for a player using the unified night decision graph."""

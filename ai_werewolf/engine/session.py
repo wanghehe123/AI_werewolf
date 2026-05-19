@@ -44,8 +44,11 @@ class GameSession:
     sheriff_election_speeches: dict[str, str] = field(default_factory=dict)
     sheriff_election_votes: dict[str, str] = field(default_factory=dict)
     sheriff_vote_open: bool = False
+    pending_first_night_result: bool = False
+    pending_first_night_deaths: list[dict[str, str]] = field(default_factory=list)
     night_pending_kill_target_id: str | None = None
     night_pending_guard_target_id: str | None = None
+    night_pre_witch_resolved: bool = False
     stream_events: list[dict[str, Any]] = field(default_factory=list)
     stream_event_seq: int = 0
 

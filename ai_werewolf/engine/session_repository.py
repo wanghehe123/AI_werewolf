@@ -20,6 +20,7 @@ from typing import Any
 import redis
 
 from ai_werewolf.domain.agents import AgentProfile
+from ai_werewolf.domain.boards import BoardConfig
 from ai_werewolf.domain.game_state import GameState, PlayerPrivateInfo
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.infra.keys import (
@@ -83,12 +84,22 @@ class GameSessionRepository:
             witch_has_poison: bool = raw.get("witch_has_poison", "1") in ("1", "true", "True")
             pending_lw_id: str | None = raw.get("pending_last_words_player_id") or None
             stream_event_seq: int = int(raw.get("stream_event_seq", "0"))
+            pending_first_night_result: bool = raw.get("pending_first_night_result", "0") in ("1", "true", "True")
+            board_config_raw: str | None = raw.get("board_config") or None
+            board_config = BoardConfig.model_validate_json(board_config_raw) if board_config_raw else None
+            sheriff_vote_open: bool = raw.get("sheriff_vote_open", "0") in ("1", "true", "True")
+            night_pre_witch_resolved: bool = raw.get("night_pre_witch_resolved", "0") in ("1", "true", "True")
 
             # -- list / set fields (orjson) --
             public_events: list[dict[str, Any]] = json_loads(raw.get("public_events", "[]"))
             stream_events: list[dict[str, Any]] = json_loads(raw.get("stream_events", "[]"))
             night_actions: list[dict[str, Any]] = json_loads(raw.get("night_actions", "[]"))
             voted_list: list[str] = json_loads(raw.get("voted_player_ids", "[]"))
+            pending_first_night_deaths: list[str] = json_loads(raw.get("pending_first_night_deaths", "[]"))
+            sheriff_candidates: list[str] = json_loads(raw.get("sheriff_candidates", "[]"))
+            sheriff_voters: list[str] = json_loads(raw.get("sheriff_voters", "[]"))
+            sheriff_election_speeches: dict[str, str] = json_loads(raw.get("sheriff_election_speeches", "{}"))
+            sheriff_election_votes: dict[str, str] = json_loads(raw.get("sheriff_election_votes", "{}"))
 
             # -- private_infos (per-player keys) --
             private_infos: dict[str, PlayerPrivateInfo] = {}
@@ -108,7 +119,18 @@ class GameSessionRepository:
                 witch_has_save_potion=witch_has_save_potion,
                 witch_has_poison=witch_has_poison,
                 private_infos=private_infos,
+                board_config=board_config,
                 pending_last_words_player_id=pending_lw_id,
+                sheriff_candidates=sheriff_candidates,
+                sheriff_voters=sheriff_voters,
+                sheriff_election_speeches=sheriff_election_speeches,
+                sheriff_election_votes=sheriff_election_votes,
+                sheriff_vote_open=sheriff_vote_open,
+                pending_first_night_result=pending_first_night_result,
+                pending_first_night_deaths=pending_first_night_deaths,
+                night_pending_kill_target_id=raw.get("night_pending_kill_target_id") or None,
+                night_pending_guard_target_id=raw.get("night_pending_guard_target_id") or None,
+                night_pre_witch_resolved=night_pre_witch_resolved,
                 stream_events=stream_events,
                 stream_event_seq=stream_event_seq,
             )
@@ -150,6 +172,17 @@ class GameSessionRepository:
                 "witch_has_save_potion": "1" if session.witch_has_save_potion else "0",
                 "witch_has_poison": "1" if session.witch_has_poison else "0",
                 "stream_event_seq": str(session.stream_event_seq),
+                "pending_first_night_result": "1" if session.pending_first_night_result else "0",
+                "pending_first_night_deaths": json_dumps(session.pending_first_night_deaths),
+                "board_config": session.board_config.model_dump_json() if session.board_config is not None else "",
+                "sheriff_candidates": json_dumps(session.sheriff_candidates),
+                "sheriff_voters": json_dumps(session.sheriff_voters),
+                "sheriff_election_speeches": json_dumps(session.sheriff_election_speeches),
+                "sheriff_election_votes": json_dumps(session.sheriff_election_votes),
+                "sheriff_vote_open": "1" if session.sheriff_vote_open else "0",
+                "night_pending_kill_target_id": session.night_pending_kill_target_id or "",
+                "night_pending_guard_target_id": session.night_pending_guard_target_id or "",
+                "night_pre_witch_resolved": "1" if session.night_pre_witch_resolved else "0",
             }
             if session.pending_last_words_player_id is not None:
                 fields["pending_last_words_player_id"] = session.pending_last_words_player_id

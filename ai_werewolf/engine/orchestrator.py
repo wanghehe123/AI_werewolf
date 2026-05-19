@@ -144,9 +144,6 @@ class PhaseOrchestrator:
     def _start_game(self, session: GameSession) -> None:
         session.state.day_count = 1
         log_game_start_roles(session)
-        if self._board_has_sheriff(session) and session.state.day_count == 1:
-            self._enter_sheriff_election(session)
-            return
         session.state.phase = GamePhase.NIGHT
         session.append_public_event("phase_changed", "夜幕降临，所有玩家闭眼。")
 
@@ -175,8 +172,8 @@ class PhaseOrchestrator:
         if decided != alive_ids:
             return
         if not session.sheriff_candidates:
-            session.state.phase = GamePhase.NIGHT
-            session.append_public_event("phase_changed", "无人参加警长竞选，本局无警长，直接进入夜晚。")
+            session.append_public_event("phase_changed", "无人参加警长竞选，本局无警长。")
+            self._reveal_pending_first_night_result(session)
             return
         session.state.phase = GamePhase.SHERIFF_SPEECH
         session.append_public_event("phase_changed", f"共有 {len(session.sheriff_candidates)} 位玩家竞选警长，请候选人依次发言。")
@@ -310,17 +307,17 @@ class PhaseOrchestrator:
         else:
             session.append_public_event("sheriff_tie", "警长竞选无人投票，本局无警长。")
         session.sheriff_vote_open = False
-        session.state.phase = GamePhase.NIGHT
-        session.append_public_event("phase_changed", "警长竞选结束，进入夜晚阶段。")
+        self._reveal_pending_first_night_result(session)
 
     def _resolve_night(self, session: GameSession, action: dict | None = None) -> None:
         # Two-step witch night: if human is witch and kill target is cached, run witch step only
         human = self._human_player(session)
-        if human and human.alive and human.role_key == "witch" and session.night_pending_kill_target_id is not None:
+        if human and human.alive and human.role_key == "witch" and session.night_pre_witch_resolved:
             self._resolve_night_witch_step(session, action)
             return
 
-        events = self.night.resolve(session, human_action=action)
+        defer_first_night_result = self._should_defer_first_night_result(session)
+        events = self.night.resolve(session, human_action=action, defer_death_reveal=defer_first_night_result)
         for public_event in events:
             self._append_event_dict(session, public_event)
             # Brief pause so the SSE stream delivers this event to the
@@ -328,6 +325,10 @@ class PhaseOrchestrator:
             # night-step announcements play sequentially as each action
             # completes rather than all at once when day breaks.
             time.sleep(0.5)
+
+        if defer_first_night_result:
+            self._enter_sheriff_election(session)
+            return
 
         # Check if any dead player is a hunter (can shoot on night kill)
         for player in session.state.players:
@@ -373,10 +374,19 @@ class PhaseOrchestrator:
 
     def _resolve_night_witch_step(self, session: GameSession, action: dict) -> None:
         """Second step of two-step witch night: apply witch action and resolve deaths."""
-        events = self.night.resolve_witch_step(session, human_action=action)
+        defer_first_night_result = self._should_defer_first_night_result(session)
+        events = self.night.resolve_witch_step(
+            session,
+            human_action=action,
+            defer_death_reveal=defer_first_night_result,
+        )
         for public_event in events:
             self._append_event_dict(session, public_event)
             time.sleep(0.3)
+
+        if defer_first_night_result:
+            self._enter_sheriff_election(session)
+            return
 
         # Check if any dead player is a hunter (can shoot on night kill)
         for player in session.state.players:
@@ -391,6 +401,60 @@ class PhaseOrchestrator:
         winner = evaluate_winner(session.state, self.role_registry)
         if winner is not None:
             self._end_game(session, winner)
+
+    def _should_defer_first_night_result(self, session: GameSession) -> bool:
+        return (
+            session.state.day_count == 1
+            and self._board_has_sheriff(session)
+            and not session.pending_first_night_result
+        )
+
+    def _reveal_pending_first_night_result(self, session: GameSession) -> None:
+        if not session.pending_first_night_result:
+            session.state.phase = GamePhase.NIGHT
+            session.append_public_event("phase_changed", "警长竞选结束，进入夜晚阶段。")
+            return
+
+        death_records = self._normalize_pending_death_records(session.pending_first_night_deaths)
+        death_causes = {record["player_id"]: record.get("cause", "night_kill") for record in death_records}
+        deaths = [record["player_id"] for record in death_records]
+        for player_id in deaths:
+            session.state.player_by_id(player_id).alive = False
+
+        session.pending_first_night_result = False
+        session.pending_first_night_deaths = []
+        session.state.phase = GamePhase.DAY_ANNOUNCEMENT
+        session.append_public_event("phase_changed", "警长竞选结束，公布昨夜死讯。")
+        if deaths:
+            death_names = [player_label(pid, session) for pid in deaths]
+            session.append_public_event("night_result", f"昨夜，玩家{', '.join(death_names)} 出局。")
+        else:
+            session.append_public_event("night_result", "昨夜平安夜，没有玩家出局。")
+
+        for player in session.state.players:
+            if not player.alive and player.role_key == "hunter":
+                info = session.private_infos.get(player.player_id, PlayerPrivateInfo())
+                cause = death_causes.get(player.player_id, "night_kill")
+                if info.hunter_can_shoot and cause != "poison":
+                    shoot_events = self.hunter.try_shoot(session, player.player_id, death_cause=cause)
+                    for public_event in shoot_events:
+                        self._append_event_dict(session, public_event)
+                elif cause == "poison":
+                    info.hunter_can_shoot = False
+
+        winner = evaluate_winner(session.state, self.role_registry)
+        if winner is not None:
+            self._end_game(session, winner)
+
+    def _normalize_pending_death_records(self, raw_records: list) -> list[dict[str, str]]:
+        records: list[dict[str, str]] = []
+        for item in raw_records:
+            if isinstance(item, str):
+                records.append({"player_id": item, "cause": "night_kill"})
+            elif isinstance(item, dict) and isinstance(item.get("player_id"), str):
+                cause = item.get("cause") if isinstance(item.get("cause"), str) else "night_kill"
+                records.append({"player_id": item["player_id"], "cause": cause})
+        return records
 
     def _enter_speech(self, session: GameSession) -> None:
         session.state.phase = GamePhase.DAY_SPEECH

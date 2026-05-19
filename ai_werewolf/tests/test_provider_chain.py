@@ -17,6 +17,7 @@ from ai_werewolf.llm.chain.provider_chain import (
     _should_fallback,
 )
 from ai_werewolf.llm.model_config import LLMProviderConfig
+from ai_werewolf.llm.providers import OpenAICompatibleProvider
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,46 @@ class JSONErrorProvider:
 
     def stream_speech(self, prompt: str) -> Iterator[str]:
         yield "bad"
+
+
+class ProviderFallbackProvider:
+    """Mimics OpenAICompatibleProvider returning a local fallback response."""
+
+    def __init__(self, provider_id: str = "fallback") -> None:
+        self.config = _config(provider_id)
+
+    def decide(self, prompt: str) -> dict:
+        return {
+            "speech": "local fallback",
+            "action_type": "speak",
+            "target_id": None,
+            "public_reason": "LLM call failed",
+            "private_memory_update": None,
+        }
+
+    def stream_speech(self, prompt: str) -> Iterator[str]:
+        yield "local fallback"
+
+
+class _TextResponse:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class InvalidJSONOpenAIProvider(OpenAICompatibleProvider):
+    def _get_api_key(self) -> str:
+        return "test-key"
+
+    def _get_llm_client(self):
+        return object()
+
+    def _chat_completion(self, *args, **kwargs):
+        return _TextResponse("这不是 JSON")
+
+
+class EmptyContentOpenAIProvider(InvalidJSONOpenAIProvider):
+    def _chat_completion(self, *args, **kwargs):
+        return _TextResponse("")
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +300,71 @@ class TestProviderChainDecide:
         result = await chain.decide("test")
         assert result.tier_used == "ok"
         assert result.fallback_occurred is True
+
+    @pytest.mark.asyncio
+    async def test_provider_local_fallback_response_moves_to_next_tier(self) -> None:
+        tiers = [
+            ProviderTier(
+                provider_id="bad",
+                model_name="bad",
+                timeout_ms=2000,
+                triggers_to_next=["provider_fallback"],
+            ),
+            ProviderTier(provider_id="ok", model_name="ok", timeout_ms=2000),
+        ]
+        chain = ProviderChain(
+            tiers=tiers,
+            providers={"bad": ProviderFallbackProvider("bad"), "ok": OKProvider("ok")},
+        )
+
+        result = await chain.decide("test")
+
+        assert result.tier_used == "ok"
+        assert result.fallback_occurred is True
+        assert result.attempts[0]["trigger"] == "provider_fallback"
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_openai_provider_moves_to_next_tier_in_chain_mode(self) -> None:
+        bad_provider = InvalidJSONOpenAIProvider(
+            LLMProviderConfig(
+                provider_id="bad",
+                provider_type="openai_compatible",
+                model_name="bad-json",
+                raise_on_error=True,
+            )
+        )
+        tiers = [
+            ProviderTier(provider_id="bad", model_name="bad", timeout_ms=2000),
+            ProviderTier(provider_id="ok", model_name="ok", timeout_ms=2000),
+        ]
+        chain = ProviderChain(tiers=tiers, providers={"bad": bad_provider, "ok": OKProvider("ok")})
+
+        result = await chain.decide("test")
+
+        assert result.tier_used == "ok"
+        assert result.attempts[0]["trigger"] == "json_parse_error"
+
+    @pytest.mark.asyncio
+    async def test_empty_content_openai_provider_moves_to_next_tier_in_chain_mode(self) -> None:
+        empty_provider = EmptyContentOpenAIProvider(
+            LLMProviderConfig(
+                provider_id="empty",
+                provider_type="openai_compatible",
+                model_name="empty-content",
+                raise_on_error=True,
+                max_tokens=8192,
+            )
+        )
+        tiers = [
+            ProviderTier(provider_id="empty", model_name="empty", timeout_ms=2000),
+            ProviderTier(provider_id="ok", model_name="ok", timeout_ms=2000),
+        ]
+        chain = ProviderChain(tiers=tiers, providers={"empty": empty_provider, "ok": OKProvider("ok")})
+
+        result = await chain.decide("test")
+
+        assert result.tier_used == "ok"
+        assert result.attempts[0]["trigger"] == "json_parse_error"
 
 
 # ---------------------------------------------------------------------------

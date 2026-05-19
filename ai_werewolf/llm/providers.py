@@ -263,6 +263,8 @@ class OpenAICompatibleProvider:
                         break
 
         # 所有解析尝试都失败，记录警告并返回 fallback
+        if self.config.raise_on_error:
+            raise ValueError("LLM response is not valid JSON")
         logger.warning(
             "无法解析 LLM 响应为 JSON，使用 fallback 决策。响应内容: %s",
             content[:200],
@@ -334,14 +336,15 @@ class OpenAICompatibleProvider:
                     temperature=self.config.temperature,
                     max_retries=0,  # Disabled, ProviderChain handles fallback
                 )
-            except ModuleNotFoundError as exc:
-                if exc.name != "langchain_openai":
+            except Exception as exc:
+                if isinstance(exc, ModuleNotFoundError) and exc.name != "langchain_openai":
                     raise
                 logger.warning(
-                    "Provider %s: langchain_openai 不可用，回退到 openai 兼容 SDK。model=%s base_url=%s",
+                    "Provider %s: langchain_openai 不可用或初始化失败，回退到 openai 兼容 SDK。model=%s base_url=%s error=%s",
                     self.config.provider_id,
                     self.config.model_name,
                     self._client_base_url() or "(未设置)",
+                    str(exc)[:120],
                 )
                 from openai import OpenAI
 
@@ -482,6 +485,8 @@ class OpenAICompatibleProvider:
 
         # 如果没有 API Key，回退到假模型行为并记录警告
         if not api_key:
+            if self.config.raise_on_error:
+                raise RuntimeError(f"Provider {self.config.provider_id}: API key not configured")
             logger.warning(
                 "Provider %s: API Key 未配置（YAML api_key=%s，环境变量 %s），使用 fallback 响应。model=%s base_url=%s",
                 self.config.provider_id,
@@ -533,6 +538,8 @@ class OpenAICompatibleProvider:
                 if not content.strip():
                     diagnostics = self._response_diagnostics(response)
                     last_diagnostics = diagnostics
+                    if self.config.raise_on_error:
+                        raise ValueError("LLM returned empty content")
                     logger.warning(
                         "Provider %s: LLM %s返回空 content，将使用 fallback。model=%s base_url=%s "
                         "finish_reason=%s content_chars=%s reasoning_chars=%s usage=%s",
@@ -570,6 +577,8 @@ class OpenAICompatibleProvider:
             return parsed
 
         except Exception:
+            if self.config.raise_on_error:
+                raise
             # 捕获所有异常（网络错误、API 错误、解析错误等）
             # 记录错误但不中断游戏，返回 fallback 决策
             logger.exception(

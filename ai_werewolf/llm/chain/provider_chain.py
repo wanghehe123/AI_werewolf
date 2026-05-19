@@ -44,7 +44,7 @@ class ProviderTier:
         triggers_to_next:
             Error categories that cause a fallback to the next tier.
             Recognised values: ``timeout``, ``5xx``, ``429``,
-            ``json_parse_error``, ``always``.
+            ``json_parse_error``, ``provider_fallback``, ``always``.
     """
 
     provider_id: str
@@ -52,7 +52,7 @@ class ProviderTier:
     timeout_ms: int = 6000
     max_retries: int = 1
     triggers_to_next: list[str] = field(
-        default_factory=lambda: ["timeout", "5xx", "429", "json_parse_error"],
+        default_factory=lambda: ["timeout", "5xx", "429", "json_parse_error", "provider_fallback"],
     )
 
 
@@ -131,6 +131,8 @@ def _classify_error(exc: BaseException) -> str | None:
     # json_parse_error
     if isinstance(exc, (ValueError,)):
         return "json_parse_error"
+    if "provider returned local fallback response" in str(exc):
+        return "provider_fallback"
     try:
         from pydantic import ValidationError
         if isinstance(exc, ValidationError):
@@ -148,6 +150,15 @@ def _should_fallback(trigger: str | None, triggers_to_next: list[str]) -> bool:
     if "always" in triggers_to_next:
         return True
     return trigger in triggers_to_next
+
+
+def _provider_returned_local_fallback(result: dict) -> bool:
+    """Detect local provider fallbacks so the chain can keep degrading."""
+    reason = result.get("public_reason")
+    return isinstance(reason, str) and reason in {
+        "LLM call failed",
+        "API key not configured",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -220,9 +231,11 @@ class ProviderChain:
                         result = await asyncio.wait_for(
                             asyncio.to_thread(provider.decide, prompt),
                             timeout=tier.timeout_ms / 1000.0,
-                        )
+                    )
                     if not isinstance(result, dict):
                         raise ValueError("Provider did not return a dict")
+                    if _provider_returned_local_fallback(result):
+                        raise RuntimeError("provider returned local fallback response")
                     attempt_log["status"] = "ok"
                     attempts.append(attempt_log)
                     return ChainResult(

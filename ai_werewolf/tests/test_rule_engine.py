@@ -260,7 +260,7 @@ class TestBuildChainFromConfig:
         chain = build_chain_from_config(chain_config, registry)
         assert chain.total_budget_ms == 50
 
-    def test_chain_uses_provider_timeout_when_tier_budget_is_too_small(self) -> None:
+    def test_chain_tier_timeout_is_cap_for_cloned_provider(self, caplog) -> None:
         from ai_werewolf.llm.model_registry import (
             ModelProviderRegistry,
             build_chain_from_config,
@@ -283,7 +283,10 @@ class TestBuildChainFromConfig:
             registry,
         )
 
-        assert chain.total_budget_ms == 30000
+        assert chain.total_budget_ms == 6000
+        assert chain._providers["deepseek"].config.timeout == 6
+        assert chain._providers["deepseek"].config.raise_on_error is True
+        assert "已提升" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_chain_decides_with_rule_engine_only(self) -> None:

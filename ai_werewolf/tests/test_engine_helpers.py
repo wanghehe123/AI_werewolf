@@ -66,6 +66,27 @@ def test_allowed_actions_night():
     assert actions[0]["action_type"] == "skip"
 
 
+def test_allowed_actions_human_witch_pending_step_without_kill_target_shows_potion_choices():
+    from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+    from ai_werewolf.engine.helpers import allowed_actions
+    from ai_werewolf.engine.session import GameSession
+
+    players = [
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="witch", alive=True, is_human=True),
+        PlayerState(player_id="w1", agent_id="w1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        PlayerState(player_id="v1", agent_id="v1", seat=3, role_key="villager", alive=True, is_human=False),
+    ]
+    state = GameState(game_id="g", board_id="b", phase=GamePhase.NIGHT, day_count=1, players=players)
+    session = GameSession(state=state, agents={}, human_player_id="human")
+    session.night_pre_witch_resolved = True
+    session.night_pending_kill_target_id = None
+
+    actions = allowed_actions(state, human_player_id="human", session=session)
+
+    assert actions[0]["action_type"] != "night_start"
+    assert {action["action_type"] for action in actions} >= {"witch_poison", "no_action"}
+
+
 def test_allowed_actions_night_dead_human_can_continue_as_observer():
     from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
     from ai_werewolf.engine.helpers import allowed_actions
