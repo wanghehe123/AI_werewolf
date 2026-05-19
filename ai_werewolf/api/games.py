@@ -190,6 +190,7 @@ def create_game(request: CreateGameRequest):
         agents={agent.agent_id: agent for agent in selected_agents},
         human_player_id=request.human_player_id,
         private_infos=build_private_infos(state.players),
+        board_config=board,
     )
     session.append_public_event("game_created", f"{board.name} 已创建，等待开始。")
 

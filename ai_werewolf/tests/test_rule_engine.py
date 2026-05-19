@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from ai_werewolf.llm.model_config import LLMProviderConfig
 
 from ai_werewolf.llm.chain.rule_engine import (
     RuleEngineProvider,
@@ -258,6 +259,31 @@ class TestBuildChainFromConfig:
         registry = ModelProviderRegistry()
         chain = build_chain_from_config(chain_config, registry)
         assert chain.total_budget_ms == 50
+
+    def test_chain_uses_provider_timeout_when_tier_budget_is_too_small(self) -> None:
+        from ai_werewolf.llm.model_registry import (
+            ModelProviderRegistry,
+            build_chain_from_config,
+        )
+        from ai_werewolf.llm.providers import FakeModelProvider
+
+        registry = ModelProviderRegistry()
+        registry.register(
+            FakeModelProvider(
+                LLMProviderConfig(
+                    provider_id="deepseek",
+                    provider_type="fake",
+                    model_name="deepseek-test",
+                    timeout=30,
+                )
+            )
+        )
+        chain = build_chain_from_config(
+            [{"provider": "deepseek", "timeout_ms": 6000, "max_retries": 1}],
+            registry,
+        )
+
+        assert chain.total_budget_ms == 30000
 
     @pytest.mark.asyncio
     async def test_chain_decides_with_rule_engine_only(self) -> None:

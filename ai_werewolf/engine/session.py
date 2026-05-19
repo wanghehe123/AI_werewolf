@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ai_werewolf.domain.agents import AgentProfile
+from ai_werewolf.domain.boards import BoardConfig
 from ai_werewolf.domain.game_state import GameState, PlayerPrivateInfo
 
 
@@ -36,6 +37,7 @@ class GameSession:
     witch_has_save_potion: bool = True
     witch_has_poison: bool = True
     private_infos: dict[str, PlayerPrivateInfo] = field(default_factory=dict)
+    board_config: BoardConfig | None = None
     pending_last_words_player_id: str | None = None
     sheriff_candidates: list[str] = field(default_factory=list)
     sheriff_voters: list[str] = field(default_factory=list)

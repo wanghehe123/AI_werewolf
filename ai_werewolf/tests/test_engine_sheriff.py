@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+from ai_werewolf.domain.boards import BoardConfig, BoardRoleCount, SpeechRule, VoteRule, WinCondition
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
 from ai_werewolf.engine.orchestrator import PhaseOrchestrator
 from ai_werewolf.engine.session import GameSession
@@ -66,6 +67,28 @@ def test_start_game_skips_sheriff_election_for_board_without_sheriff():
 
     assert session.state.day_count == 1
     assert session.state.phase == GamePhase.NIGHT
+
+
+def test_start_game_enters_sheriff_election_for_custom_sheriff_board():
+    orch = _orchestrator()
+    session = _session("custom_board")
+    session.board_config = BoardConfig(
+        board_id="custom_board",
+        name="自定义警长局",
+        roles=[
+            BoardRoleCount(role_key="werewolf", count=2),
+            BoardRoleCount(role_key="seer", count=1),
+            BoardRoleCount(role_key="villager", count=5),
+        ],
+        sheriff_enabled=True,
+        speech_rule=SpeechRule.SHERIFF_SELECT_DIRECTION,
+        vote_rule=VoteRule.SINGLE_VOTE_WITH_PK,
+        win_condition=WinCondition.WOLVES_ELIMINATED_OR_PARITY,
+    )
+
+    orch._start_game(session)
+
+    assert session.state.phase == GamePhase.SHERIFF_ELECTION
 
 
 def test_finalize_sheriff_election_assigns_unique_winner():

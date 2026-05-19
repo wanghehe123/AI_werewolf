@@ -19,13 +19,15 @@ def catalog_session() -> Iterator[Session]:
 
 
 def board_to_domain_config(board: Board, roles: list[BoardRole]) -> BoardConfig:
+    speech_rule = SpeechRule.SHERIFF_SELECT_DIRECTION if board.sheriff_enabled else SpeechRule.SEAT_ORDER
+    vote_rule = VoteRule.SINGLE_VOTE_WITH_PK if board.sheriff_enabled else VoteRule.SINGLE_VOTE
     return BoardConfig(
         board_id=board.board_id,
         name=board.name,
         roles=[BoardRoleCount(role_key=role.role_key, count=role.count) for role in roles],
         sheriff_enabled=board.sheriff_enabled,
-        speech_rule=SpeechRule.SEAT_ORDER,
-        vote_rule=VoteRule.SINGLE_VOTE,
+        speech_rule=speech_rule,
+        vote_rule=vote_rule,
         win_condition=WinCondition.WOLVES_ELIMINATED_OR_PARITY,
         enabled=board.enabled,
     )

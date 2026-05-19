@@ -734,7 +734,7 @@ class PhaseOrchestrator:
         return next((player for player in session.state.players if player.player_id == session.human_player_id), None)
 
     def _board_has_sheriff(self, session: GameSession) -> bool:
-        board = next((board for board in default_boards() if board.board_id == session.state.board_id), None)
+        board = session.board_config or next((board for board in default_boards() if board.board_id == session.state.board_id), None)
         return bool(board and board.sheriff_enabled)
 
     def _player_by_id_or_400(self, session: GameSession, player_id: str, field_name: str):

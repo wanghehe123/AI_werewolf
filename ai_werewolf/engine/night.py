@@ -1113,9 +1113,11 @@ class NightResolver:
 
     def _board_roles(self, session: GameSession) -> dict[str, int]:
         """Extract {role_key: count} from the board config for prompt constraints."""
-        from ai_werewolf.seeds.boards import default_boards
+        board = session.board_config
+        if board is None:
+            from ai_werewolf.seeds.boards import default_boards
 
-        board = next((b for b in default_boards() if b.board_id == session.state.board_id), None)
+            board = next((b for b in default_boards() if b.board_id == session.state.board_id), None)
         if board is not None:
             return board.roles_count_dict()
         # Fallback: derive from current player list
