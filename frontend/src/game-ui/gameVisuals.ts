@@ -38,6 +38,11 @@ export function eventLabel(eventType: string): string {
     phase_changed: "阶段推进",
     night_step_started: "夜晚行动",
     night_step_finished: "夜晚行动",
+    sheriff_election: "警长竞选",
+    sheriff_election_speech: "竞选发言",
+    sheriff_vote: "警长投票",
+    sheriff_elected: "警长结果",
+    sheriff_tie: "警长结果",
     speech_completed: "玩家发言",
     speech_delta: "实时发言",
     current_speaker_changed: "轮到发言",
@@ -88,6 +93,9 @@ export function currentActionKind(game: GameStateDto): ActionDockKind {
   const action = game.allowed_actions[0];
   if (!action) return "observer";
 
+  if (game.phase === "sheriff_election") return "sheriff_election";
+  if (game.phase === "sheriff_speech" && action.action_type === "speech") return "sheriff_speech";
+  if (game.phase === "sheriff_speech" && (action.action_type === "vote" || action.action_type === "abstain")) return "sheriff_vote";
   if (action.action_type === "speech") return "speech";
   if (action.action_type === "vote") return "vote";
   if (action.action_type === "abstain") return "vote";
@@ -150,6 +158,7 @@ export function classifyEventFilter(eventType: string): EventFilterKind {
     "speech_delta",
     "speech",
     "last_words",
+    "sheriff_election_speech",
   ]);
   const actionTypes = new Set([
     "phase_changed",
@@ -159,6 +168,10 @@ export function classifyEventFilter(eventType: string): EventFilterKind {
     "exile",
     "game_end",
     "game_created",
+    "sheriff_election",
+    "sheriff_vote",
+    "sheriff_elected",
+    "sheriff_tie",
   ]);
 
   if (speechTypes.has(eventType)) return "speech";

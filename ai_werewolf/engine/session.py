@@ -37,6 +37,11 @@ class GameSession:
     witch_has_poison: bool = True
     private_infos: dict[str, PlayerPrivateInfo] = field(default_factory=dict)
     pending_last_words_player_id: str | None = None
+    sheriff_candidates: list[str] = field(default_factory=list)
+    sheriff_voters: list[str] = field(default_factory=list)
+    sheriff_election_speeches: dict[str, str] = field(default_factory=dict)
+    sheriff_election_votes: dict[str, str] = field(default_factory=dict)
+    sheriff_vote_open: bool = False
     night_pending_kill_target_id: str | None = None
     night_pending_guard_target_id: str | None = None
     stream_events: list[dict[str, Any]] = field(default_factory=list)

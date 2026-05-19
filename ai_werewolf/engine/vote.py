@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections import Counter
+from collections import defaultdict
 from typing import Any
 
 from ai_werewolf.engine.action_log import log_player_action
@@ -163,7 +163,10 @@ class VoteResolver:
         # 3. Tally and resolve
         exiled_player_id: str | None = None
         if all_votes:
-            vote_counts = Counter(all_votes.values())
+            vote_counts: dict[str, float] = defaultdict(float)
+            for voter_id, target_id in all_votes.items():
+                voter = state.player_by_id(voter_id)
+                vote_counts[target_id] += 1.5 if voter.sheriff else 1.0
             top_count = max(vote_counts.values())
             tied = sorted(pid for pid, cnt in vote_counts.items() if cnt == top_count)
             if len(tied) == 1:

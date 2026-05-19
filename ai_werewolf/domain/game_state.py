@@ -17,6 +17,7 @@ class GamePhase(StrEnum):
 
 class PlayerPrivateInfo(BaseModel):
     wolf_teammates: list[str] = Field(default_factory=list)
+    wolf_tactic_hint: str | None = None
     seer_results: list[dict] = Field(default_factory=list)
     witch_medicine: dict[str, bool] = Field(default_factory=lambda: {"save": True, "poison": True})
     guard_history: list[str] = Field(default_factory=list)

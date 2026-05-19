@@ -17,10 +17,12 @@ from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nod
 from ai_werewolf.llm.graphs.werewolf_council import run_werewolf_council
 from ai_werewolf.llm.graphs.witch_council import run_witch_council
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
+from ai_werewolf.llm.memory.models import PrivateRoleMemory
 from ai_werewolf.llm.memory.summary_builder import build_player_suspicion_memory, build_private_role_memory
 from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_store
 from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
+from ai_werewolf.llm.prompts.template_loader import render_template
 from ai_werewolf.llm.prompt_builder import build_night_action_prompt, format_private_info
 from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
@@ -83,6 +85,7 @@ class NightResolver:
         # 1. Wolf kill
         if self._has_alive_role(session, {"werewolf"}):
             events.append(event("night_step_started", "狼人开始行动。", step="werewolf"))
+        self._run_wolf_tactic_briefing(session, context)
         wolf_target_id = self._collect_wolf_kill(session, context, human_action)
         if self._has_alive_role(session, {"werewolf"}):
             events.append(event("night_step_finished", "狼人行动完成。", step="werewolf"))
@@ -134,6 +137,7 @@ class NightResolver:
         # 1. Wolf kill
         if self._has_alive_role(session, {"werewolf"}):
             events.append(event("night_step_started", "狼人开始行动。", step="werewolf"))
+        self._run_wolf_tactic_briefing(session, context)
         wolf_target_id = self._collect_wolf_kill(session, context, human_action)
         if self._has_alive_role(session, {"werewolf"}):
             events.append(event("night_step_finished", "狼人行动完成。", step="werewolf"))
@@ -311,6 +315,92 @@ class NightResolver:
             [player_label(w.player_id, session) for w in alive_ai_wolves],
         )
         return self._run_council_or_fallback(session, context, alive_ai_wolves)
+
+    def _select_wolf_tactic_leader(self, session: GameSession):
+        alive_wolves = [p for p in session.state.players if p.alive and p.role_key == "werewolf"]
+        if len(alive_wolves) < 2:
+            return None
+        human_wolf = next((player for player in alive_wolves if player.is_human), None)
+        if human_wolf is not None:
+            return human_wolf
+        return random.choice(alive_wolves)
+
+    def _run_wolf_tactic_briefing(self, session: GameSession, context: str) -> str | None:
+        if session.state.day_count != 1:
+            return None
+
+        leader = self._select_wolf_tactic_leader(session)
+        if leader is None or leader.is_human:
+            return None
+
+        agent = session.agents.get(leader.player_id)
+        if agent is None:
+            return None
+
+        alive_wolves = [p for p in session.state.players if p.alive and p.role_key == "werewolf"]
+        teammates = [player_label(wolf.player_id, session) for wolf in alive_wolves if wolf.player_id != leader.player_id]
+        candidates = [
+            player_label(player.player_id, session)
+            for player in session.state.players
+            if player.alive and player.role_key != "werewolf"
+        ]
+        prompt = render_template(
+            "council/wolf_tactic_briefing.st",
+            {
+                "round_id": f"night{session.state.day_count}",
+                "leader_label": player_label(leader.player_id, session),
+                "teammate_labels": ", ".join(teammates) if teammates else "无",
+                "candidate_labels": ", ".join(candidates) if candidates else "无",
+                "game_context": context or "无公开信息",
+            },
+        )
+        record_prompt_trace(session, leader.player_id, "wolf_tactic_briefing", prompt)
+        decider = build_decider_for_role(
+            leader.role_key,
+            self.model_registry,
+            self.role_model_bindings,
+            chain_config=self.chain_config,
+        )
+        try:
+            raw = decider.decide_raw(prompt)
+        except Exception:
+            logger.exception("Wolf tactic briefing failed for %s", leader.player_id)
+            return None
+
+        tactic = ""
+        if isinstance(raw, dict):
+            tactic = str(raw.get("tactic") or raw.get("plan") or raw.get("speech") or "").strip()
+        elif hasattr(raw, "speech"):
+            tactic = str(raw.speech or "").strip()
+        if not tactic:
+            return None
+
+        self._persist_wolf_tactic(session, leader.player_id, tactic)
+        return tactic
+
+    def _persist_wolf_tactic(self, session: GameSession, leader_id: str, tactic: str) -> None:
+        alive_wolves = [p for p in session.state.players if p.alive and p.role_key == "werewolf"]
+        for wolf in alive_wolves:
+            private_info = session.private_infos.get(wolf.player_id)
+            if private_info is None:
+                continue
+            private_info.wolf_tactic_hint = tactic
+            payload = private_info.model_dump(mode="json")
+            payload["wolf_tactic"] = tactic
+            payload["wolf_tactic_message"] = render_template(
+                "council/wolf_tactic_receive.st",
+                {
+                    "leader_label": player_label(leader_id, session),
+                    "tactic_text": tactic,
+                },
+            )
+            self.memory_store.save_private_role_memory(
+                PrivateRoleMemory(
+                    game_id=session.state.game_id,
+                    player_id=wolf.player_id,
+                    payload=payload,
+                )
+            )
 
     def _single_wolf_kill(
         self,

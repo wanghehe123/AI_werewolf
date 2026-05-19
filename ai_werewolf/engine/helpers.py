@@ -79,6 +79,43 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
         return []
     if state.phase == GamePhase.SETUP:
         return [{"action_type": "start_game", "label": "开始游戏"}]
+    if state.phase == GamePhase.SHERIFF_ELECTION:
+        human = _human_player(state, human_player_id)
+        if human is None or not human.alive:
+            return []
+        if session is not None:
+            decided = set(session.sheriff_candidates) | set(session.sheriff_voters)
+            if human.player_id in decided:
+                return []
+        return [
+            {"action_type": "run_for_sheriff", "label": "参加竞选"},
+            {"action_type": "skip_election", "label": "不参加"},
+        ]
+    if state.phase == GamePhase.SHERIFF_SPEECH:
+        human = _human_player(state, human_player_id)
+        if human is None or not human.alive or session is None:
+            return []
+        if session.sheriff_vote_open:
+            if human.player_id not in session.sheriff_voters:
+                return []
+            if human.player_id in session.sheriff_election_votes:
+                return []
+            candidates = [state.player_by_id(player_id) for player_id in session.sheriff_candidates]
+            return [
+                {
+                    "action_type": "vote",
+                    "label": "投票选警长",
+                    "requires_target": True,
+                    "target_options": [
+                        {"player_id": player.player_id, "label": _option_label(player, session)}
+                        for player in candidates
+                    ],
+                },
+                {"action_type": "abstain", "label": "弃票"},
+            ]
+        if human.player_id in session.sheriff_candidates and human.player_id not in session.sheriff_election_speeches:
+            return [{"action_type": "speech", "label": "竞选发言"}]
+        return []
     if state.phase == GamePhase.NIGHT:
         human = _human_player(state, human_player_id)
         if human is None or not human.alive:

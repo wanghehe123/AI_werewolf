@@ -380,6 +380,49 @@ def build_night_action_prompt(
     )
 
 
+def build_sheriff_campaign_prompt(
+    *,
+    agent: AgentProfile,
+    role_key: str,
+    player_label_text: str,
+    tactic_hint: str = "",
+) -> str:
+    faction_name = "狼人阵营" if _role_camp(role_key) == "wolf" else "好人阵营"
+    tactic_hint_section = f"夜间狼队战术提示：{tactic_hint}" if tactic_hint else ""
+    return render_template(
+        "sheriff/sheriff_campaign_speech.st",
+        {
+            "agent_name": agent.name,
+            "player_label_text": player_label_text,
+            "role_name": _role_display_name(role_key),
+            "faction_name": faction_name,
+            "tactic_hint_section": tactic_hint_section,
+        },
+    )
+
+
+def build_sheriff_vote_prompt(
+    *,
+    agent: AgentProfile,
+    role_key: str,
+    player_label_text: str,
+    candidate_speeches: str,
+    candidate_ids: list[str],
+) -> str:
+    faction_name = "狼人阵营" if _role_camp(role_key) == "wolf" else "好人阵营"
+    return render_template(
+        "sheriff/sheriff_vote.st",
+        {
+            "agent_name": agent.name,
+            "player_label_text": player_label_text,
+            "role_name": _role_display_name(role_key),
+            "faction_name": faction_name,
+            "candidate_speeches": candidate_speeches,
+            "candidate_ids_text": ", ".join(candidate_ids),
+        },
+    )
+
+
 def format_private_info(
     private_info: PlayerPrivateInfo,
     role_key: str,
@@ -417,6 +460,8 @@ def format_private_info(
             lines.append(f"- 当前存活狼队友：{alive_summary}{dead_note}")
         else:
             lines.append(f"狼队友：{', '.join(label(player_id) for player_id in private_info.wolf_teammates)}")
+    if role_key in {"werewolf", "wolf_king", "wolf_beauty"} and private_info.wolf_tactic_hint:
+        lines.append(f"狼队夜间战术提示：{private_info.wolf_tactic_hint}")
 
     if role_key == "seer" and private_info.seer_results:
         if players is not None:

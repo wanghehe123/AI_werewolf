@@ -31,6 +31,9 @@ export interface VisualEventItem {
 
 export type ActionDockKind =
   | "none"
+  | "sheriff_election"
+  | "sheriff_speech"
+  | "sheriff_vote"
   | "speech"
   | "vote"
   | "night_target"

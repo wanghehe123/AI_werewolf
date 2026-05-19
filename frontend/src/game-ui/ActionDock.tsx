@@ -42,6 +42,35 @@ export function ActionDock({
   const canVote = game.allowed_actions.some((a) => a.action_type === "vote");
   const canAbstain = game.allowed_actions.some((a) => a.action_type === "abstain");
 
+  if (actionKind === "sheriff_election") {
+    const canRun = game.allowed_actions.some((a) => a.action_type === "run_for_sheriff");
+    const canSkip = game.allowed_actions.some((a) => a.action_type === "skip_election");
+    return (
+      <DockWrapper>
+        <p className="text-xs tracking-[0.15em] uppercase text-[var(--color-gold)] mb-2">SHERIFF</p>
+        <h3 className="text-base font-bold mb-2">警长竞选报名</h3>
+        <p className="text-sm text-[var(--color-text-dim)] mb-3">
+          这一轮先决定是否上警。候选人稍后会依次发言，其他人负责投票。
+        </p>
+        <div className="flex gap-3">
+          <DockButton
+            disabled={pending || !canRun}
+            onClick={() => onSubmitAction({ action_type: "run_for_sheriff" })}
+          >
+            参加竞选
+          </DockButton>
+          <button
+            className="px-4 py-2 rounded-lg border border-[var(--color-warm-border)] bg-transparent text-[var(--color-text)] text-sm hover:bg-[var(--color-warm-card)] disabled:opacity-50"
+            disabled={pending || !canSkip}
+            onClick={() => onSubmitAction({ action_type: "skip_election" })}
+          >
+            不参加
+          </button>
+        </div>
+      </DockWrapper>
+    );
+  }
+
   // ── Setup ──
   if (game.phase === "setup") {
     return (
@@ -112,10 +141,11 @@ export function ActionDock({
   }
 
   // ── Speech ──
-  if (actionKind === "speech") {
+  if (actionKind === "speech" || actionKind === "sheriff_speech") {
+    const isSheriffSpeech = actionKind === "sheriff_speech";
     return (
       <DockWrapper>
-        <p className="text-xs text-[var(--color-gold)] mb-1">你正在发言</p>
+        <p className="text-xs text-[var(--color-gold)] mb-1">{isSheriffSpeech ? "你正在竞选发言" : "你正在发言"}</p>
         <textarea
           aria-label="发言内容"
           className="w-full p-3 rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-bg)] text-[var(--color-text)] resize-y min-h-[80px] text-sm"
@@ -124,41 +154,51 @@ export function ActionDock({
           rows={3}
         />
         <div className="flex gap-2 mt-2">
-          <QuickTemplate label="我先报信息" onClick={() => setSpeech("我有一些信息要分享。")} />
-          <QuickTemplate label="我先听后置位" onClick={() => setSpeech("我先听后置位发言再做判断。")} />
+          {isSheriffSpeech ? (
+            <>
+              <QuickTemplate label="我来带队" onClick={() => setSpeech("我愿意上警带队，把发言和票型梳理清楚。")} />
+              <QuickTemplate label="重视逻辑" onClick={() => setSpeech("我上警会优先盘逻辑和票线，不会随便带偏节奏。")} />
+            </>
+          ) : (
+            <>
+              <QuickTemplate label="我先报信息" onClick={() => setSpeech("我有一些信息要分享。")} />
+              <QuickTemplate label="我先听后置位" onClick={() => setSpeech("我先听后置位发言再做判断。")} />
+            </>
+          )}
         </div>
         <DockButton
           disabled={pending || speech.trim().length === 0}
           onClick={() => onSubmitAction({ action_type: "speech", content: speech })}
         >
-          提交发言
+          {isSheriffSpeech ? "提交竞选发言" : "提交发言"}
         </DockButton>
       </DockWrapper>
     );
   }
 
   // ── Vote ──
-  if (actionKind === "vote") {
+  if (actionKind === "vote" || actionKind === "sheriff_vote") {
     const targetPlayer = game.players.find((p) => p.player_id === selectedTargetId);
+    const isSheriffVote = actionKind === "sheriff_vote";
     return (
       <DockWrapper>
         <p className="text-xs tracking-[0.15em] uppercase text-[var(--color-gold)] mb-2">VOTE</p>
-        <h3 className="text-base font-bold mb-2">放逐投票</h3>
+        <h3 className="text-base font-bold mb-2">{isSheriffVote ? "警长投票" : "放逐投票"}</h3>
         <p className="text-sm text-[var(--color-text-dim)] mb-3">
           {targetPlayer
             ? `你将投给：${targetPlayer.seat}号 ${targetPlayer.display_name}`
-            : "点击座位选择投票目标"}
+            : `点击座位选择${isSheriffVote ? "警长候选人" : "投票目标"}`}
         </p>
         <div className="flex gap-3">
           <DockButton disabled={pending || !selectedTargetId || !canVote} onClick={() => onSubmitAction({ action_type: "vote", target_player_id: selectedTargetId! })}>
-            投票
+            {isSheriffVote ? "投给他" : "投票"}
           </DockButton>
           <button
             className="px-4 py-2 rounded-lg border border-[var(--color-warm-border)] bg-transparent text-[var(--color-text)] text-sm hover:bg-[var(--color-warm-card)] disabled:opacity-50"
             disabled={pending || !canAbstain}
             onClick={() => onSubmitAction({ action_type: "abstain" })}
           >
-            弃票
+            {isSheriffVote ? "弃选票" : "弃票"}
           </button>
         </div>
       </DockWrapper>

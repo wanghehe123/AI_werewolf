@@ -28,8 +28,10 @@ from ai_werewolf.llm.memory.summary_builder import (
 from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_store
 from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
+from ai_werewolf.llm.prompt_builder import build_sheriff_campaign_prompt, build_sheriff_vote_prompt
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import Winner, evaluate_winner
+from ai_werewolf.seeds.boards import default_boards
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,12 @@ class PhaseOrchestrator:
 
         if state.phase == GamePhase.SETUP and action_type == "start_game":
             self._start_game(session)
+        elif state.phase == GamePhase.SHERIFF_ELECTION and action_type in {"run_for_sheriff", "skip_election"}:
+            self._handle_sheriff_election(session, action)
+        elif state.phase == GamePhase.SHERIFF_SPEECH and action_type == "speech":
+            self._handle_sheriff_speech(session, action)
+        elif state.phase == GamePhase.SHERIFF_SPEECH and action_type in {"vote", "abstain"}:
+            self._handle_sheriff_vote(session, action)
         elif state.phase == GamePhase.NIGHT and action_type == "night_start":
             self._resolve_night_pre_witch(session, action)
         elif state.phase == GamePhase.NIGHT and action_type in {"skip", "wolf_kill", "seer_check", "guard", "witch_save", "witch_poison", "no_action"}:
@@ -134,10 +142,176 @@ class PhaseOrchestrator:
     # ---- Phase handlers ----
 
     def _start_game(self, session: GameSession) -> None:
-        session.state.phase = GamePhase.NIGHT
         session.state.day_count = 1
         log_game_start_roles(session)
+        if self._board_has_sheriff(session) and session.state.day_count == 1:
+            self._enter_sheriff_election(session)
+            return
+        session.state.phase = GamePhase.NIGHT
         session.append_public_event("phase_changed", "夜幕降临，所有玩家闭眼。")
+
+    def _enter_sheriff_election(self, session: GameSession) -> None:
+        session.state.phase = GamePhase.SHERIFF_ELECTION
+        session.sheriff_candidates = []
+        session.sheriff_voters = []
+        session.sheriff_election_speeches = {}
+        session.sheriff_election_votes = {}
+        session.sheriff_vote_open = False
+        session.append_public_event("phase_changed", "进入警长竞选阶段，请决定是否参与竞选。")
+
+    def _handle_sheriff_election(self, session: GameSession, action: dict) -> None:
+        actor_id = action["actor_player_id"]
+        if actor_id not in session.sheriff_candidates and actor_id not in session.sheriff_voters:
+            if action["action_type"] == "run_for_sheriff":
+                session.sheriff_candidates.append(actor_id)
+                session.append_public_event("sheriff_election", f"{player_label(actor_id, session)} 参加警长竞选。", actor_id=actor_id)
+            else:
+                session.sheriff_voters.append(actor_id)
+                session.append_public_event("sheriff_election", f"{player_label(actor_id, session)} 不参加警长竞选。", actor_id=actor_id)
+
+        self._auto_fill_ai_sheriff_decisions(session)
+        alive_ids = {player.player_id for player in session.state.players if player.alive}
+        decided = set(session.sheriff_candidates) | set(session.sheriff_voters)
+        if decided != alive_ids:
+            return
+        if not session.sheriff_candidates:
+            session.state.phase = GamePhase.NIGHT
+            session.append_public_event("phase_changed", "无人参加警长竞选，本局无警长，直接进入夜晚。")
+            return
+        session.state.phase = GamePhase.SHERIFF_SPEECH
+        session.append_public_event("phase_changed", f"共有 {len(session.sheriff_candidates)} 位玩家竞选警长，请候选人依次发言。")
+        self._generate_ai_sheriff_campaign_speeches(session)
+        self._maybe_open_sheriff_vote(session)
+
+    def _handle_sheriff_speech(self, session: GameSession, action: dict) -> None:
+        actor_id = action["actor_player_id"]
+        if actor_id not in session.sheriff_candidates:
+            raise HTTPException(status_code=400, detail="only sheriff candidates can speak now")
+        content = (action.get("content") or "").strip() or "我会认真带队。"
+        session.sheriff_election_speeches[actor_id] = content
+        session.append_public_event("sheriff_election_speech", f"{player_label(actor_id, session)}：{content}", actor_id=actor_id)
+        self._maybe_open_sheriff_vote(session)
+
+    def _handle_sheriff_vote(self, session: GameSession, action: dict) -> None:
+        actor_id = action["actor_player_id"]
+        if actor_id not in session.sheriff_voters or actor_id in session.sheriff_election_votes:
+            raise HTTPException(status_code=400, detail="you are not eligible to vote for sheriff now")
+        if action["action_type"] == "abstain":
+            session.sheriff_election_votes[actor_id] = ""
+            session.append_public_event("sheriff_vote", f"{player_label(actor_id, session)} 弃票。", actor_id=actor_id)
+        else:
+            target_id = action.get("target_player_id")
+            if target_id not in session.sheriff_candidates:
+                raise HTTPException(status_code=400, detail="invalid sheriff candidate")
+            session.sheriff_election_votes[actor_id] = target_id
+            session.append_public_event("sheriff_vote", f"{player_label(actor_id, session)} 投票给 {player_label(target_id, session)}。", actor_id=actor_id, target_id=target_id)
+        if all(voter_id in session.sheriff_election_votes for voter_id in session.sheriff_voters):
+            self._finalize_sheriff_election(session)
+
+    def _auto_fill_ai_sheriff_decisions(self, session: GameSession) -> None:
+        decided = set(session.sheriff_candidates) | set(session.sheriff_voters)
+        for player in session.state.players:
+            if player.is_human or not player.alive or player.player_id in decided:
+                continue
+            if player.role_key in {"seer", "werewolf"}:
+                session.sheriff_candidates.append(player.player_id)
+                session.append_public_event("sheriff_election", f"{player_label(player.player_id, session)} 参加警长竞选。", actor_id=player.player_id)
+            else:
+                session.sheriff_voters.append(player.player_id)
+                session.append_public_event("sheriff_election", f"{player_label(player.player_id, session)} 不参加警长竞选。", actor_id=player.player_id)
+
+    def _generate_ai_sheriff_campaign_speeches(self, session: GameSession) -> None:
+        for candidate_id in list(session.sheriff_candidates):
+            candidate = session.state.player_by_id(candidate_id)
+            if candidate.is_human or candidate_id in session.sheriff_election_speeches:
+                continue
+            agent = session.agents.get(candidate_id)
+            if agent is None:
+                continue
+            prompt = build_sheriff_campaign_prompt(
+                agent=agent,
+                role_key=candidate.role_key,
+                player_label_text=player_label(candidate_id, session),
+                tactic_hint=(session.private_infos.get(candidate_id).wolf_tactic_hint if session.private_infos.get(candidate_id) else "") or "",
+            )
+            decider = build_decider_for_role(
+                candidate.role_key,
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
+            record_prompt_trace(session, candidate_id, "sheriff_campaign", prompt)
+            speech = decider.decide(prompt).speech.strip() or "我会认真带队，尽量把信息梳理清楚。"
+            session.sheriff_election_speeches[candidate_id] = speech
+            session.append_public_event("sheriff_election_speech", f"{player_label(candidate_id, session)}：{speech}", actor_id=candidate_id)
+
+    def _maybe_open_sheriff_vote(self, session: GameSession) -> None:
+        if session.sheriff_vote_open:
+            return
+        if any(candidate_id not in session.sheriff_election_speeches for candidate_id in session.sheriff_candidates):
+            return
+        session.sheriff_vote_open = True
+        session.append_public_event("phase_changed", "竞选发言结束，请非候选玩家投票选出警长。")
+        self._collect_ai_sheriff_votes(session)
+        if all(voter_id in session.sheriff_election_votes for voter_id in session.sheriff_voters):
+            self._finalize_sheriff_election(session)
+
+    def _collect_ai_sheriff_votes(self, session: GameSession) -> None:
+        candidate_speeches = "\n".join(
+            f"{player_label(candidate_id, session)}：{session.sheriff_election_speeches.get(candidate_id, '（未发言）')}"
+            for candidate_id in session.sheriff_candidates
+        )
+        for voter_id in session.sheriff_voters:
+            voter = session.state.player_by_id(voter_id)
+            if voter.is_human or voter_id in session.sheriff_election_votes:
+                continue
+            agent = session.agents.get(voter_id)
+            if agent is None:
+                continue
+            prompt = build_sheriff_vote_prompt(
+                agent=agent,
+                role_key=voter.role_key,
+                player_label_text=player_label(voter_id, session),
+                candidate_speeches=candidate_speeches,
+                candidate_ids=session.sheriff_candidates,
+            )
+            decider = build_decider_for_role(
+                voter.role_key,
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
+            record_prompt_trace(session, voter_id, "sheriff_vote", prompt)
+            raw = decider.decide_raw(prompt)
+            target_id = raw.get("target_id") if isinstance(raw, dict) else None
+            if target_id not in session.sheriff_candidates:
+                target_id = session.sheriff_candidates[0]
+            session.sheriff_election_votes[voter_id] = target_id
+            session.append_public_event("sheriff_vote", f"{player_label(voter_id, session)} 投票给 {player_label(target_id, session)}。", actor_id=voter_id, target_id=target_id)
+
+    def _finalize_sheriff_election(self, session: GameSession) -> None:
+        vote_counts: dict[str, int] = {}
+        for target_id in session.sheriff_election_votes.values():
+            if not target_id:
+                continue
+            vote_counts[target_id] = vote_counts.get(target_id, 0) + 1
+        for player in session.state.players:
+            player.sheriff = False
+        if vote_counts:
+            top_count = max(vote_counts.values())
+            winners = sorted(target_id for target_id, count in vote_counts.items() if count == top_count)
+            if len(winners) == 1:
+                winner_id = winners[0]
+                session.state.player_by_id(winner_id).sheriff = True
+                session.append_public_event("sheriff_elected", f"{player_label(winner_id, session)} 以 {top_count} 票当选警长！", actor_id=winner_id)
+            else:
+                labels = "、".join(player_label(player_id, session) for player_id in winners)
+                session.append_public_event("sheriff_tie", f"警长竞选平票，本局无警长。平票玩家：{labels}")
+        else:
+            session.append_public_event("sheriff_tie", "警长竞选无人投票，本局无警长。")
+        session.sheriff_vote_open = False
+        session.state.phase = GamePhase.NIGHT
+        session.append_public_event("phase_changed", "警长竞选结束，进入夜晚阶段。")
 
     def _resolve_night(self, session: GameSession, action: dict | None = None) -> None:
         # Two-step witch night: if human is witch and kill target is cached, run witch step only
@@ -540,12 +714,14 @@ class PhaseOrchestrator:
             "speech",
             "vote",
             "abstain",
+            "run_for_sheriff",
+            "skip_election",
         }
         if action_type in participant_actions and not actor.alive:
             raise HTTPException(status_code=400, detail="dead players cannot act")
 
         target_id = action.get("target_player_id")
-        if action_type == "vote":
+        if action_type == "vote" and session.state.phase != GamePhase.SHERIFF_SPEECH:
             if not target_id:
                 raise HTTPException(status_code=400, detail="vote requires target_player_id")
             target = self._player_by_id_or_400(session, target_id, "target")
@@ -556,6 +732,10 @@ class PhaseOrchestrator:
 
     def _human_player(self, session: GameSession):
         return next((player for player in session.state.players if player.player_id == session.human_player_id), None)
+
+    def _board_has_sheriff(self, session: GameSession) -> bool:
+        board = next((board for board in default_boards() if board.board_id == session.state.board_id), None)
+        return bool(board and board.sheriff_enabled)
 
     def _player_by_id_or_400(self, session: GameSession, player_id: str, field_name: str):
         try:
