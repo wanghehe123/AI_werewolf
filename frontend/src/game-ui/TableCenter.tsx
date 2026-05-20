@@ -26,6 +26,7 @@ export function TableCenter({ game, latestEventMessage }: TableCenterProps) {
   return (
     <div className={`
       relative flex flex-col items-center justify-center rounded-2xl p-6 min-h-[160px]
+      max-h-[min(34vh,360px)] min-w-0 overflow-hidden
       ${isNight
         ? "bg-[var(--color-night-fog)]/50 border border-[var(--color-blue-night)]/20"
         : "bg-[var(--color-table-felt)] border border-[var(--color-table-edge)]/40"
@@ -61,14 +62,15 @@ export function TableCenter({ game, latestEventMessage }: TableCenterProps) {
 
       {/* Latest event */}
       {!speakingPlayer && latestEventMessage && (
-        <motion.p
-          className="text-sm text-[var(--color-text-dim)] text-center"
+        <motion.div
+          aria-label="当前事件摘要"
+          className="min-h-0 max-h-[min(24vh,220px)] overflow-y-auto px-1 text-sm leading-relaxed text-[var(--color-text-dim)] text-center [scrollbar-gutter:stable]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2 }}
         >
-          {latestEventMessage}
-        </motion.p>
+          <p>{latestEventMessage}</p>
+        </motion.div>
       )}
 
       {/* Vote tally during voting phases */}

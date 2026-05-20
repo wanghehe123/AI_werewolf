@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
 from ai_werewolf.engine.session import GameSession
-from ai_werewolf.engine.vote import VoteResolver, _append_locked_decision_block
+from ai_werewolf.engine.vote import AIVoteResult, VoteResolver, _append_locked_decision_block
 from ai_werewolf.llm.model_config import LLMProviderConfig
 from ai_werewolf.llm.providers import FakeModelProvider
 from ai_werewolf.llm.schemas import PlayerDecision
@@ -68,13 +68,10 @@ def test_tie_no_exile():
     # human votes ai_1, 3 AI each vote differently - no majority
     human_vote = {"actor_player_id": "human", "action_type": "vote", "target_player_id": "ai_1", "content": None, "client_action_id": "c1"}
 
-    call_idx = {"n": 0}
-    targets = ["ai_1", "ai_2", "ai_3"]
+    targets = {"ai_1": "ai_1", "ai_2": "ai_2", "ai_3": "ai_3"}
 
     def mock_decide(pid, prompt):
-        idx = call_idx["n"]
-        call_idx["n"] += 1
-        return PlayerDecision(speech="投", action_type="vote", target_id=targets[idx], public_reason="理由", private_memory_update=None)
+        return PlayerDecision(speech="投", action_type="vote", target_id=targets[pid], public_reason="理由", private_memory_update=None)
 
     with patch.object(resolver, "_get_ai_vote_decision", side_effect=mock_decide):
         result = resolver.resolve(session, human_vote)
@@ -95,7 +92,11 @@ def test_ai_vote_logs_structured_action_payload(caplog):
     }
     caplog.set_level(logging.INFO, logger="ai_werewolf.engine.action_log")
 
-    with patch.object(resolver, "_get_ai_vote", return_value=("human", "我投1号。")):
+    with patch.object(
+        resolver,
+        "_compute_ai_vote",
+        return_value=AIVoteResult(player_id="ai_1", target_id="human", speech="我投1号。"),
+    ):
         resolver.resolve(session, human_vote)
 
     action_logs = [record.message for record in caplog.records if record.message.startswith("player_action ")]
@@ -108,6 +109,158 @@ def test_ai_vote_logs_structured_action_payload(caplog):
     assert ai_logs[0]["action_type"] == "vote"
     assert ai_logs[0]["target_id"] == "human"
     assert ai_logs[0]["decision"]["speech"] == "我投1号。"
+
+
+def test_ai_vote_results_are_applied_in_player_order_when_computed_out_of_order():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    human_vote = {
+        "actor_player_id": "human",
+        "action_type": "abstain",
+        "target_player_id": None,
+        "content": None,
+        "client_action_id": "c1",
+    }
+    out_of_order_results = {
+        "ai_3": AIVoteResult(player_id="ai_3", target_id=None, speech="4号弃票"),
+        "ai_1": AIVoteResult(player_id="ai_1", target_id="human", speech="2号投1号"),
+        "ai_2": AIVoteResult(player_id="ai_2", target_id="human", speech="3号投1号"),
+    }
+
+    with patch.object(resolver, "_compute_ai_votes_concurrently", return_value=out_of_order_results):
+        resolver.resolve(session, human_vote)
+
+    ai_vote_events = [
+        event
+        for event in session.public_events
+        if event["event_type"] == "vote" and event["actor_id"] != "human"
+    ]
+    assert [event["actor_id"] for event in ai_vote_events] == ["ai_1", "ai_2", "ai_3"]
+
+
+def test_ai_vote_apply_persists_memory_and_prompt_trace_on_main_path():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    result = AIVoteResult(
+        player_id="ai_1",
+        target_id="human",
+        speech="2号投1号",
+        graph_result={
+            "decision": PlayerDecision(
+                speech="2号投1号",
+                action_type="vote",
+                target_id="human",
+                public_reason="理由",
+                private_memory_update=None,
+            ),
+            "suspicion_update": None,
+        },
+        prompt_trace="locked prompt",
+    )
+    all_votes: dict[str, str] = {}
+    events: list[dict] = []
+
+    with patch.object(resolver, "_persist_player_memories") as persist, patch(
+        "ai_werewolf.engine.vote.record_prompt_trace"
+    ) as trace:
+        resolver._apply_ai_vote_result(
+            session=session,
+            player=session.state.player_by_id("ai_1"),
+            result=result,
+            all_votes=all_votes,
+            events=events,
+        )
+
+    trace.assert_called_once_with(session, "ai_1", "exile_vote", "locked prompt")
+    persist.assert_called_once_with(session, "ai_1", result.graph_result)
+    assert all_votes == {"ai_1": "human"}
+    assert events[0]["actor_id"] == "ai_1"
+
+
+def test_compute_ai_vote_does_not_persist_memory_or_record_prompt_trace():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    resolver.memory_context_builder = MagicMock()
+    resolver.memory_context_builder.build_for_player.return_value = MagicMock(
+        game_id="g",
+        player_id="ai_2",
+        phase="exile_vote",
+        day=1,
+        model_dump=MagicMock(return_value={}),
+    )
+    resolver.memory_store = MagicMock()
+    provider = MagicMock()
+    provider.config.provider_id = "mock"
+    resolver.model_registry.provider_for_role.return_value = provider
+
+    with patch(
+        "ai_werewolf.engine.vote.run_player_decision_graph",
+        return_value={
+            "decision": PlayerDecision(
+                speech="我这一票给1号。",
+                action_type="vote",
+                target_id="human",
+                public_reason="怀疑最高",
+                private_memory_update=None,
+            ),
+            "suspicion_update": {"records": [{"target_player_id": "human", "suspicion_score": 80}]},
+        },
+    ), patch.object(resolver, "_persist_player_memories") as persist, patch(
+        "ai_werewolf.engine.vote.record_prompt_trace"
+    ) as trace:
+        result = resolver._compute_ai_vote(session, "ai_2", "公开历史")
+
+    assert result.target_id == "human"
+    assert result.graph_result is not None
+    persist.assert_not_called()
+    trace.assert_not_called()
+
+
+def test_compute_ai_vote_captures_prompt_trace_for_later_apply():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    resolver.memory_context_builder = MagicMock()
+    resolver.memory_context_builder.build_for_player.return_value = MagicMock(
+        game_id="g",
+        player_id="ai_2",
+        phase="exile_vote",
+        day=1,
+        model_dump=MagicMock(return_value={}),
+    )
+    decider = MagicMock()
+    decider.decide.return_value = PlayerDecision(
+        speech="我这一票给1号。",
+        action_type="vote",
+        target_id="human",
+        public_reason="怀疑最高",
+        private_memory_update=None,
+    )
+
+    def run_graph(**kwargs):
+        decision = kwargs["decision_generator"](
+            {
+                "role_key": "seer",
+                "strategy": {"strategy_type": "vote_push", "goal": "推进焦点位"},
+                "action_draft": {
+                    "action_type": "vote",
+                    "target_id": "human",
+                    "public_reason": "怀疑最高",
+                    "private_memory_update": None,
+                },
+            }
+        )
+        return {"decision": decision, "suspicion_update": None}
+
+    with patch("ai_werewolf.engine.vote.build_decider_for_role", return_value=decider), patch(
+        "ai_werewolf.engine.vote.run_player_decision_graph",
+        side_effect=run_graph,
+    ), patch("ai_werewolf.engine.vote.record_prompt_trace") as trace:
+        result = resolver._compute_ai_vote(session, "ai_2", "公开历史")
+
+    assert result.prompt_trace is not None
+    assert "【结构化决策已锁定】" in result.prompt_trace
+    decider.decide.assert_called_once_with(result.prompt_trace)
+    trace.assert_not_called()
 
 
 def test_get_ai_vote_uses_unified_decision_graph():

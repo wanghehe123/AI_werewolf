@@ -317,7 +317,7 @@ function WitchActionDock({
 function DockWrapper({ children, night }: { children: React.ReactNode; night?: boolean }) {
   return (
     <motion.section
-      className={`p-4 rounded-xl border ${night ? "border-[var(--color-blue-night)]/30 bg-[var(--color-warm-card)]" : "border-[var(--color-warm-border)] bg-[var(--color-warm-card)]"}`}
+      className={`relative z-20 shrink-0 p-4 rounded-xl border ${night ? "border-[var(--color-blue-night)]/30 bg-[var(--color-warm-card)]" : "border-[var(--color-warm-border)] bg-[var(--color-warm-card)]"}`}
       layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}

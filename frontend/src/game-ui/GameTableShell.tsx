@@ -103,10 +103,13 @@ export function GameTableShell({
     <main className="flex flex-col gap-4 max-w-7xl mx-auto px-4 py-4 relative h-screen overflow-hidden">
       <PhaseStatusBar game={game} />
 
-      <section className="grid grid-cols-[1fr_260px] gap-4 flex-1 min-h-0">
-        <div className="relative">
+      <section
+        aria-label="游戏桌面区域"
+        className="grid grid-cols-[minmax(0,1fr)_260px] gap-4 flex-1 min-h-0 overflow-hidden"
+      >
+        <div className="relative min-h-0 overflow-y-auto pr-1 pb-1">
           {/* Table layout with players around center */}
-          <div className="grid grid-cols-[1fr_1fr_1fr] gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 content-start min-h-full">
             {/* Top row */}
             {layout.top.map((player) => (
               <SeatWrapper key={player.playerId}>

@@ -116,14 +116,21 @@ export function derivePlayerVisualStates(
 ): PlayerVisualState[] {
   const selectableIds = selectablePlayerIds(game);
 
-  // Detect sheriff candidates from public events
+  // Detect sheriff candidates from public events only while the sheriff
+  // election flow is active. Historical election events should not keep
+  // hand-raise markers visible after a result has been announced.
+  const sheriffFlowActive =
+    (game.phase === "sheriff_election" || game.phase === "sheriff_speech") &&
+    !game.public_events.some((event) => event.event_type === "sheriff_elected" || event.event_type === "sheriff_tie");
   const candidateIds = new Set<string>();
-  for (const event of game.public_events) {
-    if (event.event_type === "sheriff_election" && event.actor_id) {
-      // Only count players who ARE running (not skipping/不参加)
-      const msg = event.payload.message ?? "";
-      if (msg.includes("参加警长竞选") && !msg.includes("不参加")) {
-        candidateIds.add(event.actor_id);
+  if (sheriffFlowActive) {
+    for (const event of game.public_events) {
+      if (event.event_type === "sheriff_election" && event.actor_id) {
+        // Only count players who ARE running (not skipping/不参加)
+        const msg = event.payload.message ?? "";
+        if (msg.includes("参加警长竞选") && !msg.includes("不参加")) {
+          candidateIds.add(event.actor_id);
+        }
       }
     }
   }

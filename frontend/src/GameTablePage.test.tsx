@@ -172,6 +172,61 @@ describe("GameTable", () => {
     expect(screen.getByText("已投 1 票")).toBeInTheDocument();
     expect(screen.queryByText(/待投票：.*小刚/)).not.toBeInTheDocument();
   });
+
+  it("clears sheriff candidate markers after the sheriff election result", () => {
+    render(
+      <GameTable
+        game={mockGame({
+          phase: "day_announcement",
+          players: [
+            mockPlayer({ player_id: "human", seat: 1, display_name: "你", is_human: true }),
+            mockPlayer({ player_id: "candidate_1", seat: 2, display_name: "小明", sheriff: true }),
+            mockPlayer({ player_id: "candidate_2", seat: 3, display_name: "小红", sheriff: false }),
+          ],
+          public_events: [
+            { event_type: "sheriff_election", actor_id: "candidate_1", target_id: null, payload: { message: "2号 小明 参加警长竞选。" }, public: true },
+            { event_type: "sheriff_election", actor_id: "candidate_2", target_id: null, payload: { message: "3号 小红 参加警长竞选。" }, public: true },
+            { event_type: "sheriff_elected", actor_id: "candidate_1", target_id: null, payload: { message: "2号 小明 当选警长。" }, public: true },
+          ],
+          allowed_actions: [],
+        })}
+        onSubmitAction={vi.fn()}
+        pending={false}
+      />
+    );
+
+    expect(screen.queryAllByAltText("举手参选")).toHaveLength(0);
+    expect(screen.queryByText("参选")).not.toBeInTheDocument();
+    expect(screen.getByText("警长")).toBeInTheDocument();
+  });
+
+  it("keeps a long center event in its own scroll region", () => {
+    const longSpeech = "8号 李向左：".repeat(80);
+
+    render(
+      <GameTable
+        game={mockGame({
+          phase: "sheriff_speech",
+          players: [
+            mockPlayer({ player_id: "human", seat: 1, display_name: "你", is_human: true }),
+            mockPlayer({ player_id: "candidate_1", seat: 2, display_name: "小明" }),
+            mockPlayer({ player_id: "candidate_2", seat: 3, display_name: "小红" }),
+            mockPlayer({ player_id: "bystander", seat: 4, display_name: "小刚" }),
+          ],
+          public_events: [
+            { event_type: "sheriff_election_speech", actor_id: "candidate_1", target_id: null, payload: { message: longSpeech }, public: true },
+          ],
+          allowed_actions: [{ action_type: "speech", label: "发言" }],
+        })}
+        onSubmitAction={vi.fn()}
+        pending={false}
+      />
+    );
+
+    expect(screen.getByLabelText("游戏桌面区域").className).toContain("overflow-hidden");
+    expect(screen.getByLabelText("当前事件摘要").className).toContain("overflow-y-auto");
+    expect(screen.getByLabelText("发言内容")).toBeInTheDocument();
+  });
 });
 
 function mockPlayer(overrides: Partial<GameStateDto["players"][number]> = {}): GameStateDto["players"][number] {

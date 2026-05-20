@@ -5,7 +5,7 @@ from ai_werewolf.domain.boards import BoardConfig, BoardRoleCount, SpeechRule, V
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
 from ai_werewolf.engine.orchestrator import PhaseOrchestrator
 from ai_werewolf.engine.session import GameSession
-from ai_werewolf.engine.vote import VoteResolver
+from ai_werewolf.engine.vote import AIVoteResult, VoteResolver
 from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
@@ -267,11 +267,12 @@ def test_vote_resolver_streams_vote_events_before_exile_result():
     session = _session("board_8_standard")
     session.state.phase = GamePhase.EXILE_VOTE
     resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
-    resolver._get_ai_vote = MagicMock(side_effect=[
-        ("v1", "2号投4号"),
-        ("v1", "3号投4号"),
-        (None, "4号弃票"),
-    ])
+    vote_results = {
+        "w1": AIVoteResult(player_id="w1", target_id="v1", speech="2号投4号"),
+        "s1": AIVoteResult(player_id="s1", target_id="v1", speech="3号投4号"),
+        "v1": AIVoteResult(player_id="v1", target_id=None, speech="4号弃票"),
+    }
+    resolver._compute_ai_vote = MagicMock(side_effect=lambda session_arg, player_id, context: vote_results[player_id])
     human_vote = {
         "actor_player_id": "human",
         "action_type": "vote",
@@ -309,11 +310,12 @@ def test_vote_resolver_counts_sheriff_vote_as_one_point_five():
         "client_action_id": "c1",
     }
 
-    resolver._get_ai_vote = MagicMock(side_effect=[
-        ("v1", "2号投4号"),
-        ("w1", "3号警长投2号"),
-        ("w1", "4号投2号"),
-    ])
+    vote_results = {
+        "w1": AIVoteResult(player_id="w1", target_id="v1", speech="2号投4号"),
+        "s1": AIVoteResult(player_id="s1", target_id="w1", speech="3号警长投2号"),
+        "v1": AIVoteResult(player_id="v1", target_id="w1", speech="4号投2号"),
+    }
+    resolver._compute_ai_vote = MagicMock(side_effect=lambda session_arg, player_id, context: vote_results[player_id])
 
     result = resolver.resolve(session, human_vote)
 

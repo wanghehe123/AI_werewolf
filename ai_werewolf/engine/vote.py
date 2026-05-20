@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
+from ai_werewolf.domain.game_state import PlayerState
 from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import display_name, event, player_label, resolve_player_id
@@ -24,6 +28,19 @@ from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
 logger = logging.getLogger(__name__)
+
+AI_VOTE_MAX_WORKERS = 3
+
+
+@dataclass
+class AIVoteResult:
+    player_id: str
+    target_id: str | None
+    speech: str
+    decision: PlayerDecision | None = None
+    graph_result: dict[str, Any] | None = None
+    prompt_trace: str | None = None
+    error: str | None = None
 
 
 def _append_locked_decision_block(prompt: str, state: dict[str, Any]) -> str:
@@ -140,37 +157,25 @@ class VoteResolver:
 
         # 2. AI votes via LLM
         context = build_game_context(session)
-        for player in state.players:
-            if player.is_human or not player.alive:
-                continue
-            target_id, speech = self._get_ai_vote(session, player.player_id, context)
-            if target_id:
-                all_votes[player.player_id] = target_id
-                log_player_action(
-                    session,
-                    actor_id=player.player_id,
-                    action_type="vote",
-                    target_id=target_id,
-                    source="ai",
-                    decision={"speech": speech, "action_type": "vote", "target_id": target_id},
-                )
-                events.append(self._append_vote_event(
-                    session,
-                    event("vote", f"{display_name(player.player_id, session)} 投票给了 {display_name(target_id, session)}。",
-                          actor_id=player.player_id, target_id=target_id),
-                ))
-            else:
-                log_player_action(
-                    session,
-                    actor_id=player.player_id,
-                    action_type="abstain",
-                    source="ai",
-                    decision={"speech": speech, "action_type": "abstain", "target_id": None},
-                )
-                events.append(self._append_vote_event(
-                    session,
-                    event("vote", f"{display_name(player.player_id, session)} 选择弃票。", actor_id=player.player_id),
-                ))
+        ai_players = [player for player in state.players if not player.is_human and player.alive]
+        vote_results = self._compute_ai_votes_concurrently(session, ai_players, context)
+        for player in ai_players:
+            result = vote_results.get(
+                player.player_id,
+                AIVoteResult(
+                    player_id=player.player_id,
+                    target_id=None,
+                    speech="弃票",
+                    error="missing_result",
+                ),
+            )
+            self._apply_ai_vote_result(
+                session=session,
+                player=player,
+                result=result,
+                all_votes=all_votes,
+                events=events,
+            )
 
         # 3. Tally and resolve
         exiled_player_id: str | None = None
@@ -211,10 +216,58 @@ class VoteResolver:
 
     def _get_ai_vote(self, session: GameSession, player_id: str, context: str) -> tuple[str | None, str]:
         """Get AI vote decision via LLM. Returns (target_id, speech)."""
+        result = self._compute_ai_vote(session, player_id, context)
+        self._persist_ai_vote_side_effects(session, result)
+        return result.target_id, result.speech
+
+    def _compute_ai_votes_concurrently(
+        self,
+        session: GameSession,
+        players: list[PlayerState],
+        context: str,
+    ) -> dict[str, AIVoteResult]:
+        """Compute AI vote decisions concurrently without mutating game state."""
+        if not players:
+            return {}
+
+        max_workers = min(AI_VOTE_MAX_WORKERS, len(players))
+        vote_results: dict[str, AIVoteResult] = {}
+        started = time.monotonic()
+
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ai-vote") as executor:
+            future_to_player = {
+                executor.submit(self._compute_ai_vote, session, player.player_id, context): player
+                for player in players
+            }
+            for future in as_completed(future_to_player):
+                player = future_to_player[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    logger.exception("AI %s vote future crashed", player.player_id)
+                    result = AIVoteResult(
+                        player_id=player.player_id,
+                        target_id=None,
+                        speech="弃票",
+                        error=str(exc),
+                    )
+                vote_results[player.player_id] = result
+
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "AI votes completed concurrently: players=%d max_workers=%d elapsed_ms=%d",
+            len(players),
+            max_workers,
+            elapsed_ms,
+        )
+        return vote_results
+
+    def _compute_ai_vote(self, session: GameSession, player_id: str, context: str) -> AIVoteResult:
+        """Compute one AI vote decision. Do not mutate session/events/logs/memory."""
         player = session.state.player_by_id(player_id)
         agent = session.agents.get(player_id)
         if agent is None:
-            return None, "弃票"
+            return AIVoteResult(player_id=player_id, target_id=None, speech="弃票")
 
         try:
             memory_context = self.memory_context_builder.build_for_player(session, player_id)
@@ -227,9 +280,16 @@ class VoteResolver:
             if getattr(self._get_ai_vote_decision, "__func__", None) is not VoteResolver._get_ai_vote_decision:
                 decision = self._get_ai_vote_decision(player_id, context)
                 target = self._resolve_vote_target(session, player_id, decision.target_id)
-                return target, _repair_vote_speech(session, player, decision)
+                return AIVoteResult(
+                    player_id=player_id,
+                    target_id=target,
+                    speech=_repair_vote_speech(session, player, decision),
+                    decision=decision,
+                )
 
+            prompt_trace: str | None = None
             def decision_generator(state: dict[str, Any]) -> PlayerDecision:
+                nonlocal prompt_trace
                 tasks = self.scheduler.schedule(
                     state=session.state,
                     agents=session.agents,
@@ -240,7 +300,7 @@ class VoteResolver:
                 if task is None:
                     return PlayerDecision(speech="弃票", action_type="vote", target_id=None, public_reason=None, private_memory_update=None)
                 locked_prompt = _append_locked_decision_block(task.prompt, state)
-                record_prompt_trace(session, player_id, "exile_vote", locked_prompt)
+                prompt_trace = locked_prompt
                 return decider.decide(locked_prompt)
 
             result = run_player_decision_graph(
@@ -253,16 +313,72 @@ class VoteResolver:
                 semantic_nodes=configured_semantic_nodes(),
                 alive_player_ids=session.state.alive_player_ids(),
             )
-            self._persist_player_memories(session, player_id, result)
             decision = result["decision"]
 
             target = decision.target_id
             target = self._resolve_vote_target(session, player_id, target)
 
-            return target, _repair_vote_speech(session, player, decision)
-        except Exception:
+            return AIVoteResult(
+                player_id=player_id,
+                target_id=target,
+                speech=_repair_vote_speech(session, player, decision),
+                decision=decision,
+                graph_result=result,
+                prompt_trace=prompt_trace,
+            )
+        except Exception as exc:
             logger.exception("AI %s vote failed", player_id)
-            return None, "弃票"
+            return AIVoteResult(player_id=player_id, target_id=None, speech="弃票", error=str(exc))
+
+    def _apply_ai_vote_result(
+        self,
+        *,
+        session: GameSession,
+        player: PlayerState,
+        result: AIVoteResult,
+        all_votes: dict[str, str],
+        events: list[dict[str, Any]],
+    ) -> None:
+        """Apply a computed AI vote result on the main thread."""
+        if result.error:
+            logger.warning("AI %s vote result has error: %s", player.player_id, result.error)
+        self._persist_ai_vote_side_effects(session, result)
+
+        target_id = result.target_id
+        speech = result.speech
+        if target_id:
+            all_votes[player.player_id] = target_id
+            log_player_action(
+                session,
+                actor_id=player.player_id,
+                action_type="vote",
+                target_id=target_id,
+                source="ai",
+                decision={"speech": speech, "action_type": "vote", "target_id": target_id},
+            )
+            events.append(self._append_vote_event(
+                session,
+                event("vote", f"{display_name(player.player_id, session)} 投票给了 {display_name(target_id, session)}。",
+                      actor_id=player.player_id, target_id=target_id),
+            ))
+        else:
+            log_player_action(
+                session,
+                actor_id=player.player_id,
+                action_type="abstain",
+                source="ai",
+                decision={"speech": speech, "action_type": "abstain", "target_id": None},
+            )
+            events.append(self._append_vote_event(
+                session,
+                event("vote", f"{display_name(player.player_id, session)} 选择弃票。", actor_id=player.player_id),
+            ))
+
+    def _persist_ai_vote_side_effects(self, session: GameSession, result: AIVoteResult) -> None:
+        if result.prompt_trace is not None:
+            record_prompt_trace(session, result.player_id, "exile_vote", result.prompt_trace)
+        if result.graph_result is not None:
+            self._persist_player_memories(session, result.player_id, result.graph_result)
 
     def _resolve_vote_target(self, session: GameSession, player_id: str, target: str | None) -> str | None:
         if target is None:
