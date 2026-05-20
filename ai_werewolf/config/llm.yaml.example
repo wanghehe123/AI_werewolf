@@ -85,17 +85,17 @@ chains:
   default:
     - tier: primary
       provider: deepseek
-      timeout_ms: 6000
+      timeout_ms: 20000
       max_retries: 1
       triggers_to_next: [timeout, 5xx, 429, json_parse_error]
     - tier: secondary
       provider: sf-qw
-      timeout_ms: 4000
+      timeout_ms: 20000
       max_retries: 1
       triggers_to_next: [timeout, 5xx]
     - tier: cheap_fallback
       provider: sf-kimi
-      timeout_ms: 3000
+      timeout_ms: 20000
       max_retries: 0
       triggers_to_next: [always]
     - tier: static

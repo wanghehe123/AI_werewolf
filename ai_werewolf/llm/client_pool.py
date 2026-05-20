@@ -95,8 +95,6 @@ def get_chat_openai(
     # Normalize base_url: ensure it ends with /v1 for OpenAI-compatible APIs
     if base_url:
         base_url = base_url.rstrip("/")
-        if not base_url.endswith("/v1"):
-            base_url = base_url + "/v1"
 
     cache_key = _make_cache_key(
         model=model,

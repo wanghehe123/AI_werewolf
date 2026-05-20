@@ -17,8 +17,9 @@ import asyncio
 import logging
 import json
 import re
+import threading
 from collections.abc import AsyncIterator, Iterator
-from typing import TYPE_CHECKING, Protocol
+from typing import Any, TYPE_CHECKING, Protocol
 
 from ai_werewolf.domain.actions import PlayerActionType
 from ai_werewolf.llm.safety import is_safe_speech
@@ -28,6 +29,46 @@ if TYPE_CHECKING:
     from ai_werewolf.llm.chain.provider_chain import ProviderChain
 
 logger = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------
+# Persistent event loop for running async chain calls from sync context
+# ------------------------------------------------------------------
+# asyncio.run() creates a NEW event loop per call and CLOSES it at the end.
+# This destroys httpx.AsyncClient connections created inside (e.g. by
+# ChatOpenAI.ainvoke()) and causes "RuntimeError: Event loop is closed" on
+# subsequent calls.  Instead we maintain ONE background thread with ONE
+# persistent event loop that lives for the entire process lifetime.
+# ------------------------------------------------------------------
+
+_ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
+_ASYNC_LOOP_LOCK = threading.Lock()
+
+
+def _persistent_loop() -> asyncio.AbstractEventLoop:
+    """Return a loop that lives forever in a daemon thread."""
+    global _ASYNC_LOOP
+    with _ASYNC_LOOP_LOCK:
+        if _ASYNC_LOOP is None or _ASYNC_LOOP.is_closed():
+            _ASYNC_LOOP = asyncio.new_event_loop()
+            t = threading.Thread(
+                target=_ASYNC_LOOP.run_forever,
+                daemon=True,
+                name="player-decider-async-loop",
+            )
+            t.start()
+        return _ASYNC_LOOP
+
+
+def _sync_call_async(coro) -> Any:
+    """Schedule *coro* on the persistent loop and block until done.
+
+    Unlike ``asyncio.run()`` this does NOT close the loop, so httpx
+    connections survive across calls.
+    """
+    loop = _persistent_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()  # raises the coroutine's exception if any
 
 
 class DecisionModel(Protocol):
@@ -150,7 +191,7 @@ class PlayerDecider:
         """
         if self._chain is not None:
             try:
-                chain_result = asyncio.run(self._chain.decide(prompt))
+                chain_result = _sync_call_async(self._chain.decide(prompt))
                 return chain_result.response
             except Exception:
                 logger.exception("ProviderChain failed in decide_raw, falling back to single provider")
@@ -188,7 +229,7 @@ class PlayerDecider:
         """
         assert self._chain is not None  # guaranteed by caller
         try:
-            chain_result = asyncio.run(self._chain.decide(prompt))
+            chain_result = _sync_call_async(self._chain.decide(prompt))
         except Exception:
             logger.exception("ProviderChain failed, falling back to single provider")
             return self._build_fallback(self.model.decide(prompt))

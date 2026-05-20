@@ -386,17 +386,132 @@ def build_sheriff_campaign_prompt(
     role_key: str,
     player_label_text: str,
     tactic_hint: str = "",
+    game_context: str = "",
+    alive_players: list[str] | None = None,
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
+    election_progress: str = "",
 ) -> str:
-    faction_name = "狼人阵营" if _role_camp(role_key) == "wolf" else "好人阵营"
-    tactic_hint_section = f"夜间狼队战术提示：{tactic_hint}" if tactic_hint else ""
+    """构建警长竞选发言阶段的完整 Prompt。
+
+    与其它游戏阶段保持一致的架构，包含人物设定、隐藏身份、角色约束、
+    板子信息、游戏历史、行动要求和标准化 JSON 输出格式。
+    不限制发言字数。
+    """
+    role_name = _role_display_name(role_key)
+    camp = _role_camp(role_key)
+    camp_name = "好人阵营" if camp == "good" else "狼人阵营"
+
+    # 人物设定
+    persona_body = "\n".join(
+        filter(
+            None,
+            [
+                f"你的座位号：{player_label_text}",
+                f"玩家名称：{agent.name}",
+                f"性格特点：{agent.persona}",
+                f"发言风格：{agent.speech_style}",
+                f"推理能力：{agent.reasoning_level}/5（越高越擅长分析逻辑）",
+                f"伪装能力：{agent.deception_level}/5（越高越擅长隐藏身份）",
+                f"攻击性：{agent.aggression_level}/5（越高越强势）",
+                f"合作性：{agent.cooperation_level}/5（越高越倾向团队配合）",
+                f"风险偏好：{_risk_preference_cn(agent.risk_preference.value)}",
+                f"记忆风格：{agent.memory_style}",
+            ],
+        )
+    )
+
+    # 隐藏身份
+    hidden_identity_body = "\n".join([
+        f"你的真实身份：{role_name}",
+        f"你的阵营：{camp_name}",
+    ])
+
+    # 身份优先级块
+    identity_priority_block = build_identity_priority_block(role_key, "sheriff_speech")
+
+    # 角色约束
+    role_constraints = "\n".join(_get_role_constraints(role_key, enabled_role_keys))
+
+    # 人格守则
+    persona_guardrails = render_template("player/persona_guardrails.st", {})
+
+    # 当前状态
+    current_state = "\n".join([
+        "当前轮次：第1天",
+        "当前阶段：警长竞选发言（sheriff_speech）",
+    ])
+
+    # 存活玩家
+    alive_block = ""
+    if alive_players:
+        alive_block = f"存活玩家：{', '.join(_format_player_options(alive_players, player_references))}"
+
+    # 板子角色约束
+    board_role_constraints_lines = "\n".join(_build_board_role_constraints(board_roles)) if board_roles else ""
+
+    # 禁止事项
+    forbidden = render_template("player/forbidden_rules.st", {})
+
+    # 输出格式
+    output_format = render_template(
+        "player/output_format.st",
+        {
+            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys)),
+            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys)),
+        },
+    )
+
+    # 竞选行动要求
+    campaign_action_hint = "\n".join([
+        "你正在参加警长竞选发言环节。你需要发表竞选演讲来争取其他玩家的投票。",
+        "",
+        "你可以做以下事（根据你的身份做出合理选择）：",
+        "- 表明你竞选警长的动机和愿意",
+        "- 展示你的带队能力和逻辑分析能力",
+        "- 如果你是好人（预言家/女巫/猎人/平民），可以以好人视角承诺公正带队、理性归票",
+        "- 如果你是预言家，可以悍跳预言家或退水不跳",
+        "- 如果你是狼人，可以伪装成好人竞选警长，为自己和狼队友创造优势",
+        "- 你可以分析当前局面，表达自己的站边和判断",
+        "",
+        "发言要点（选择性地融入，不必逐条覆盖）：",
+        "1. 为什么参选警长——你的动机和诚意",
+        "2. 你的带队方针——当选后会如何组织发言、如何归票",
+        "3. 对游戏的理解——你如何看待当前的玩家构成",
+        "4. 你的身份态度——是否强势跳身份、是否退水留空间",
+        "",
+        "硬性约束：",
+        "- 不限制发言字数，但要言之有物，不要废话",
+        "- 不能说出「我们的狼队友」「我们狼人」等暴露隐秘阵营的话",
+        "- 不能贴脸、不能场外、不能把系统设定挂嘴边",
+        "- 不能在发言中直接引用输出 JSON 格式或 action 枚举",
+        "- 发言必须符合你的 agent 人设和身份视角",
+    ])
+
+    # 战术提示
+    tactic_hint_section = ""
+    if tactic_hint:
+        tactic_hint_section = section("【狼队战术提示】", f"夜间狼队战术提示：{tactic_hint}")
+
     return render_template(
         "sheriff/sheriff_campaign_speech.st",
         {
-            "agent_name": agent.name,
-            "player_label_text": player_label_text,
-            "role_name": _role_display_name(role_key),
-            "faction_name": faction_name,
+            "persona_section": section("【人物设定】", persona_body),
+            "hidden_identity_section": section("【隐藏身份】", hidden_identity_body),
+            "identity_priority_block": join_non_empty_sections("=" * 40, identity_priority_block),
+            "role_constraints_section": section("【角色约束】", role_constraints),
+            "board_context_section": section("【板子信息】", board_context) if board_context else "",
+            "persona_guardrails_section": section("【你必须严格遵守的人格守则】", persona_guardrails),
+            "current_state_section": section("【当前状态】", current_state),
+            "alive_players_block": alive_block,
+            "election_progress_section": section("【竞选情况】", election_progress) if election_progress else "",
+            "game_history_section": section("【游戏历史】", game_context) if game_context else "",
+            "action_requirements_section": section("【行动要求 — 警长竞选发言】", campaign_action_hint),
             "tactic_hint_section": tactic_hint_section,
+            "output_format_section": section("【输出格式】", output_format),
+            "forbidden_section": section("【禁止事项】", forbidden),
         },
     )
 
@@ -408,17 +523,115 @@ def build_sheriff_vote_prompt(
     player_label_text: str,
     candidate_speeches: str,
     candidate_ids: list[str],
+    tactic_hint: str = "",
+    game_context: str = "",
+    alive_players: list[str] | None = None,
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
+    election_progress: str = "",
 ) -> str:
-    faction_name = "狼人阵营" if _role_camp(role_key) == "wolf" else "好人阵营"
+    """构建警长竞选投票阶段的完整 Prompt。
+
+    与其它游戏阶段保持一致，包含人物设定、隐藏身份、角色约束、
+    板子信息、候选人发言、游戏历史和标准化 JSON 输出格式。
+    """
+    role_name = _role_display_name(role_key)
+    camp = _role_camp(role_key)
+    camp_name = "好人阵营" if camp == "good" else "狼人阵营"
+
+    # 人物设定
+    persona_body = "\n".join(
+        filter(
+            None,
+            [
+                f"你的座位号：{player_label_text}",
+                f"玩家名称：{agent.name}",
+                f"性格特点：{agent.persona}",
+                f"发言风格：{agent.speech_style}",
+                f"推理能力：{agent.reasoning_level}/5",
+                f"伪装能力：{agent.deception_level}/5",
+                f"攻击性：{agent.aggression_level}/5",
+                f"合作性：{agent.cooperation_level}/5",
+                f"风险偏好：{_risk_preference_cn(agent.risk_preference.value)}",
+                f"记忆风格：{agent.memory_style}",
+            ],
+        )
+    )
+
+    hidden_identity_body = "\n".join([
+        f"你的真实身份：{role_name}",
+        f"你的阵营：{camp_name}",
+    ])
+
+    identity_priority_block = build_identity_priority_block(role_key, "sheriff_vote")
+    role_constraints = "\n".join(_get_role_constraints(role_key, enabled_role_keys))
+    persona_guardrails = render_template("player/persona_guardrails.st", {})
+
+    current_state = "\n".join([
+        "当前轮次：第1天",
+        "当前阶段：警长投票（sheriff_vote）",
+    ])
+
+    alive_block = ""
+    if alive_players:
+        alive_block = f"存活玩家：{', '.join(_format_player_options(alive_players, player_references))}"
+
+    forbidden = render_template("player/forbidden_rules.st", {})
+
+    output_format = render_template(
+        "player/output_format.st",
+        {
+            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys)),
+            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys)),
+        },
+    )
+
+    # 警长投票行动要求
+    vote_action_hint = "\n".join([
+        "你现在需要在警长竞选中投票。所有候选人的发言已在上方列出，你需要选择你认为最合适的候选人。",
+        "",
+        "投票决策要点：",
+        "1. 仔细对比每位候选人的发言质量、逻辑严密性和带队态度",
+        "2. 如果你的阵营有候选人参选，优先考虑本阵营的利益",
+        "3. 如果你是狼人且没有狼队友参选（或狼队友发言不佳），可以投票给发言最像好人的候选人以免暴露",
+        "4. 如果你是好人（预言家/女巫/猎人/平民），应优先考虑发言最稳定、带队价值最高的候选人",
+        "5. 注意识别可能的狼人悍跳——发言过于完美但缺乏实质内容，可能是狼人在伪装",
+        "",
+        "可投候选人ID：", ", ".join(candidate_ids),
+        "",
+        "硬性约束：",
+        "- target_id 必须从上方候选人ID中选择",
+        "- action_type 必须为 \"vote\"",
+        "- public_reason 写你的投票理由，不限制字数但要有实质内容",
+        "- speech 可以为空字符串（投票不需要发言）",
+        "- private_memory_update 记录你认为值得记住的信息",
+        "- 不能说出「我们的狼队友」「我们狼人」等暴露隐秘阵营的话",
+    ])
+
+    tactic_hint_section = ""
+    if tactic_hint:
+        tactic_hint_section = section("【狼队战术提示】", f"夜间狼队战术提示：{tactic_hint}")
+
     return render_template(
         "sheriff/sheriff_vote.st",
         {
-            "agent_name": agent.name,
-            "player_label_text": player_label_text,
-            "role_name": _role_display_name(role_key),
-            "faction_name": faction_name,
-            "candidate_speeches": candidate_speeches,
-            "candidate_ids_text": ", ".join(candidate_ids),
+            "persona_section": section("【人物设定】", persona_body),
+            "hidden_identity_section": section("【隐藏身份】", hidden_identity_body),
+            "identity_priority_block": join_non_empty_sections("=" * 40, identity_priority_block),
+            "role_constraints_section": section("【角色约束】", role_constraints),
+            "board_context_section": section("【板子信息】", board_context) if board_context else "",
+            "persona_guardrails_section": section("【你必须严格遵守的人格守则】", persona_guardrails),
+            "current_state_section": section("【当前状态】", current_state),
+            "alive_players_block": alive_block,
+            "election_progress_section": section("【竞选情况】", election_progress) if election_progress else "",
+            "candidate_speeches_section": section("【候选人发言】", candidate_speeches),
+            "game_history_section": section("【游戏历史】", game_context) if game_context else "",
+            "action_requirements_section": section("【行动要求 — 警长投票】", vote_action_hint),
+            "tactic_hint_section": tactic_hint_section,
+            "output_format_section": section("【输出格式】", output_format),
+            "forbidden_section": section("【禁止事项】", forbidden),
         },
     )
 

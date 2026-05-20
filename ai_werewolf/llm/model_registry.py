@@ -12,7 +12,6 @@
 """
 
 import logging
-import math
 
 from ai_werewolf.llm.chain.provider_chain import ProviderChain, ProviderTier
 from ai_werewolf.llm.chain.rule_engine import RuleEngineProvider
@@ -305,6 +304,12 @@ def _normalize_chain_entries(
 
 
 def _clone_provider_for_tier(provider: ModelProvider, timeout_ms: int) -> ModelProvider:
-    timeout_seconds = max(1, math.ceil(timeout_ms / 1000))
-    cloned_config = provider.config.model_copy(update={"timeout": timeout_seconds, "raise_on_error": True})
+    # Set the provider's SDK timeout to 70% of the chain tier timeout so that
+    # the SDK raises properly-classified errors (429, 5xx, etc.) BEFORE the
+    # chain's asyncio.wait_for cancels the call.  Without this gap,
+    # asyncio.wait_for always wins the race and everything becomes a generic
+    # TimeoutError, losing the real HTTP status code.
+    provider_timeout_ms = int(timeout_ms * 0.7)
+    timeout_seconds = max(2, provider_timeout_ms / 1000)
+    cloned_config = provider.config.model_copy(update={"timeout": int(timeout_seconds), "raise_on_error": True})
     return build_provider(cloned_config)

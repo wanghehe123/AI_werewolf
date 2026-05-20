@@ -284,7 +284,10 @@ class TestBuildChainFromConfig:
         )
 
         assert chain.total_budget_ms == 6000
-        assert chain._providers["deepseek"].config.timeout == 6
+        # Provider SDK timeout is 70% of chain tier timeout so the SDK raises
+        # properly-classified errors (429, 5xx) before asyncio.wait_for cancels.
+        # 6000ms * 0.7 = 4200ms / 1000 = 4s
+        assert chain._providers["deepseek"].config.timeout == 4
         assert chain._providers["deepseek"].config.raise_on_error is True
         assert "已提升" not in caplog.text
 

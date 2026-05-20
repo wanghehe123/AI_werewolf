@@ -61,6 +61,19 @@ class ModelProvider(Protocol):
         """Yield speech text chunks for real-time display."""
         ...
 
+    async def async_decide(self, prompt: str) -> dict:
+        """Async version of decide() for use inside ProviderChain.
+
+        Unlike the sync :meth:`decide` which is wrapped in
+        :func:`asyncio.to_thread`, this method allows the chain's
+        :func:`asyncio.wait_for` to truly cancel the underlying HTTP
+        request when a timeout fires.
+
+        Providers that don't implement this fall back to thread-based
+        execution inside the chain.
+        """
+        ...
+
 
 def _chunk_text(text: str, size: int = 6) -> Iterator[str]:
     for index in range(0, len(text), size):
@@ -111,6 +124,10 @@ class FakeModelProvider:
     def stream_speech(self, prompt: str) -> Iterator[str]:
         """Return stable chunks for tests and local development."""
         yield from _chunk_text(self.decide(prompt)["speech"])
+
+    async def async_decide(self, prompt: str) -> dict:
+        """Async path for ProviderChain — delegates to sync decide."""
+        return self.decide(prompt)
 
 
 class OpenAICompatibleProvider:
@@ -504,6 +521,12 @@ class OpenAICompatibleProvider:
             last_diagnostics: dict[str, Any] | None = None
             retry_max_tokens: int | None = None
 
+            logger.debug(
+                "Provider %s: sending LLM request. model=%s base_url=%s max_tokens=%d timeout=%s prompt_chars=%d",
+                self.config.provider_id, self.config.model_name,
+                base_url or "(未设置)", self.config.max_tokens,
+                self.config.timeout, len(prompt),
+            )
             response = self._chat_completion(llm, prompt, self.config.max_tokens)
 
             # 提取响应文本
@@ -576,19 +599,162 @@ class OpenAICompatibleProvider:
                 )
             return parsed
 
-        except Exception:
+        except Exception as exc:
             if self.config.raise_on_error:
                 raise
             # 捕获所有异常（网络错误、API 错误、解析错误等）
             # 记录错误但不中断游戏，返回 fallback 决策
             logger.exception(
-                "Provider %s: LLM API 调用失败，使用 fallback 响应。model=%s base_url=%s stage=%s retry_max_tokens=%s diagnostics=%s",
+                "Provider %s: LLM API 调用失败。model=%s base_url=%s stage=%s retry_max_tokens=%s "
+                "timeout=%s max_tokens=%s diagnostics=%s exc_type=%s exc_msg=%s",
                 self.config.provider_id,
                 self.config.model_name,
                 base_url or "(未设置)",
                 locals().get("request_stage", "initial_request"),
                 locals().get("retry_max_tokens"),
+                self.config.timeout,
+                self.config.max_tokens,
                 locals().get("last_diagnostics"),
+                type(exc).__qualname__,
+                str(exc)[:200],
+            )
+            return self._fallback_decision(prompt, "LLM call failed")
+
+    # ------------------------------------------------------------------
+    # Async LLM call — used by ProviderChain for proper cancellation
+    # ------------------------------------------------------------------
+
+    async def _chat_completion_async(
+        self,
+        llm,
+        prompt: str,
+        max_tokens: int,
+        *,
+        timeout: int | None = None,
+    ):
+        """Async version of _chat_completion using ainvoke() when available.
+
+        Unlike the sync version wrapped in asyncio.to_thread(), this uses the
+        LangChain async API (ainvoke) which operates on httpx.AsyncClient.
+        When asyncio.wait_for() cancels the call, the underlying HTTP
+        connection is properly torn down — no ghost threads, no request leak.
+        """
+        if hasattr(llm, "ainvoke"):
+            from ai_werewolf.llm.client_pool import get_chat_openai
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            llm = get_chat_openai(
+                model=self.config.model_name,
+                api_key=self._get_api_key(),
+                base_url=self._client_base_url(),
+                timeout=timeout or self.config.timeout,
+                max_tokens=max_tokens,
+                temperature=self.config.temperature,
+                max_retries=0,
+            )
+            messages = [
+                SystemMessage(content=self._build_system_prompt()),
+                HumanMessage(content=prompt),
+            ]
+            return await llm.ainvoke(messages)
+
+        # Fallback: raw OpenAI SDK (synchronous).  This path is rarely taken
+        # (only when langchain_openai is not installed).  We wrap it in
+        # to_thread but keep the timeout short so the chain's wait_for
+        # doesn't race against it.
+        import asyncio
+        return await asyncio.to_thread(
+            self._chat_completion, llm, prompt, max_tokens, timeout=timeout,
+        )
+
+    async def async_decide(self, prompt: str) -> dict:
+        """Async entry point for the ProviderChain degradation loop.
+
+        Mirror of :meth:`decide` but uses async HTTP so that
+        :func:`asyncio.wait_for` can truly cancel the request instead of
+        just abandoning a blocked thread.
+        """
+        api_key = self._get_api_key()
+        base_url = self._client_base_url()
+
+        if not api_key:
+            if self.config.raise_on_error:
+                raise RuntimeError(f"Provider {self.config.provider_id}: API key not configured")
+            logger.warning(
+                "Provider %s: API Key 未配置（YAML api_key=%s，环境变量 %s），使用 fallback 响应。model=%s base_url=%s",
+                self.config.provider_id,
+                "已配置" if self.config.api_key else "未配置",
+                self.config.api_key_env or "(未设置)",
+                self.config.model_name,
+                base_url or "(未设置)",
+            )
+            return self._fallback_decision(prompt, "API key not configured")
+
+        try:
+            llm = self._get_llm_client()
+            request_stage = "initial_request"
+            last_diagnostics: dict[str, Any] | None = None
+            retry_max_tokens: int | None = None
+
+            logger.debug(
+                "Provider %s: sending async LLM request. model=%s base_url=%s max_tokens=%d timeout=%s prompt_chars=%d",
+                self.config.provider_id, self.config.model_name,
+                base_url or "(未设置)", self.config.max_tokens,
+                self.config.timeout, len(prompt),
+            )
+            response = await self._chat_completion_async(llm, prompt, self.config.max_tokens)
+
+            content = self._response_content(response)
+            if not content.strip():
+                diagnostics = self._response_diagnostics(response)
+                last_diagnostics = diagnostics
+                retry_max_tokens = self._empty_content_retry_tokens(self.config.max_tokens, diagnostics)
+                retried = False
+                if retry_max_tokens is not None:
+                    retried = True
+                    logger.warning(
+                        "Provider %s: LLM async 返回空 content，准备提高 max_tokens 后重试。model=%s base_url=%s "
+                        "finish_reason=%s content_chars=%s reasoning_chars=%s usage=%s retry_max_tokens=%s",
+                        self.config.provider_id, self.config.model_name,
+                        base_url or "(未设置)", diagnostics["finish_reason"],
+                        diagnostics["content_chars"], diagnostics["reasoning_chars"],
+                        diagnostics["usage"], retry_max_tokens,
+                    )
+                    request_stage = "retry_after_empty_content"
+                    response = await self._chat_completion_async(
+                        llm, prompt, retry_max_tokens,
+                        timeout=self._retry_timeout_seconds(retry_max_tokens),
+                    )
+                    content = self._response_content(response)
+                if not content.strip():
+                    diagnostics = self._response_diagnostics(response)
+                    last_diagnostics = diagnostics
+                    if self.config.raise_on_error:
+                        raise ValueError("LLM returned empty content")
+                    logger.warning(
+                        "Provider %s: LLM async %s返回空 content，将使用 fallback。model=%s base_url=%s "
+                        "finish_reason=%s content_chars=%s reasoning_chars=%s usage=%s",
+                        self.config.provider_id, self.config.model_name,
+                        "重试后仍" if retried else "在当前预算下",
+                        base_url or "(未设置)", diagnostics["finish_reason"],
+                        diagnostics["content_chars"], diagnostics["reasoning_chars"],
+                        diagnostics["usage"],
+                    )
+
+            parsed = self._parse_response(content)
+            return parsed
+
+        except Exception as exc:
+            if self.config.raise_on_error:
+                raise
+            logger.exception(
+                "Provider %s: LLM async API 调用失败。model=%s base_url=%s stage=%s retry_max_tokens=%s "
+                "timeout=%s max_tokens=%s diagnostics=%s exc_type=%s exc_msg=%s",
+                self.config.provider_id, self.config.model_name,
+                base_url or "(未设置)", locals().get("request_stage", "initial_request"),
+                locals().get("retry_max_tokens"), self.config.timeout,
+                self.config.max_tokens, locals().get("last_diagnostics"),
+                type(exc).__qualname__, str(exc)[:200],
             )
             return self._fallback_decision(prompt, "LLM call failed")
 

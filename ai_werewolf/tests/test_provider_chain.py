@@ -64,6 +64,30 @@ class TimeoutProvider:
         raise asyncio.TimeoutError("stream timeout")
 
 
+class AsyncReadTimeoutProvider:
+    """Raises an SDK-style timeout caused by an HTTP read timeout."""
+
+    def __init__(self, provider_id: str = "read_timeout") -> None:
+        self.config = _config(provider_id)
+
+    async def async_decide(self, prompt: str, **kwargs: object) -> dict:
+        class APITimeoutError(Exception):
+            pass
+
+        class ReadTimeout(Exception):
+            pass
+
+        exc = APITimeoutError("request timed out")
+        exc.__cause__ = ReadTimeout("read timeout")
+        raise exc
+
+    def decide(self, prompt: str) -> dict:
+        raise AssertionError("async_decide should be used")
+
+    def stream_speech(self, prompt: str) -> Iterator[str]:
+        raise asyncio.TimeoutError("stream timeout")
+
+
 class ServerErrorProvider:
     """Always raises a 500-style exception."""
 
@@ -158,7 +182,18 @@ class TestChainResult:
 
 class TestClassifyError:
     def test_timeout_error(self) -> None:
-        assert _classify_error(asyncio.TimeoutError()) == "timeout"
+        assert _classify_error(asyncio.TimeoutError()) == "chain_timeout"
+
+    def test_read_timeout_cause(self) -> None:
+        class APITimeoutError(Exception):
+            pass
+
+        class ReadTimeout(Exception):
+            pass
+
+        exc = APITimeoutError("request timed out")
+        exc.__cause__ = ReadTimeout("read timeout")
+        assert _classify_error(exc) == "read_timeout"
 
     def test_value_error(self) -> None:
         assert _classify_error(ValueError("bad json")) == "json_parse_error"
@@ -174,12 +209,32 @@ class TestClassifyError:
         assert _classify_error(Err("rate limit")) == "429"
 
     def test_unknown(self) -> None:
-        assert _classify_error(RuntimeError("mystery")) is None
+        # _classify_error always returns a string now — unknown → "unknown"
+        assert _classify_error(RuntimeError("mystery")) == "unknown"
+
+    def test_event_loop_closed(self) -> None:
+        assert _classify_error(RuntimeError("Event loop is closed")) == "event_loop_closed"
+
+    def test_connection_error_name(self) -> None:
+        class APIConnectionError(Exception):
+            pass
+        assert _classify_error(APIConnectionError("connect failed")) == "connection_error"
+
+    def test_auth_error_status(self) -> None:
+        class AuthExc(Exception):
+            status_code = 401
+        assert _classify_error(AuthExc("unauthorized")) == "auth_error"
 
 
 class TestShouldFallback:
     def test_trigger_match(self) -> None:
         assert _should_fallback("timeout", ["timeout", "5xx"]) is True
+
+    def test_specific_timeout_matches_legacy_timeout_trigger(self) -> None:
+        assert _should_fallback("read_timeout", ["timeout"]) is True
+
+    def test_specific_timeout_matches_specific_trigger(self) -> None:
+        assert _should_fallback("read_timeout", ["read_timeout"]) is True
 
     def test_no_match(self) -> None:
         assert _should_fallback("timeout", ["5xx"]) is False
@@ -187,8 +242,15 @@ class TestShouldFallback:
     def test_always(self) -> None:
         assert _should_fallback("anything", ["always"]) is True
 
-    def test_none_trigger(self) -> None:
-        assert _should_fallback(None, ["timeout"]) is False
+    def test_unknown_fallback(self) -> None:
+        # unknown errors always trigger fallback (conservative)
+        assert _should_fallback("unknown", ["timeout"]) is True
+
+    def test_auth_always_fallback(self) -> None:
+        assert _should_fallback("auth_error", ["timeout"]) is True
+
+    def test_event_loop_fallback(self) -> None:
+        assert _should_fallback("event_loop_closed", ["timeout"]) is True
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +329,30 @@ class TestProviderChainDecide:
         statuses = [a["status"] for a in result.attempts]
         assert "error" in statuses
         assert "ok" in statuses
+
+    @pytest.mark.asyncio
+    async def test_read_timeout_attempt_records_effective_timeout(self) -> None:
+        tiers = [
+            ProviderTier(
+                provider_id="bad",
+                model_name="bad",
+                timeout_ms=2000,
+                triggers_to_next=["timeout"],
+            ),
+            ProviderTier(provider_id="ok", model_name="ok", timeout_ms=2000),
+        ]
+        chain = ProviderChain(
+            tiers=tiers,
+            providers={"bad": AsyncReadTimeoutProvider("bad"), "ok": OKProvider("ok")},
+        )
+
+        result = await chain.decide("test prompt")
+
+        failed_attempt = result.attempts[0]
+        assert failed_attempt["trigger"] == "read_timeout"
+        assert failed_attempt["tier_timeout_ms"] == 2000
+        assert 0 < failed_attempt["effective_timeout_ms"] <= 2000
+        assert failed_attempt["provider_http_timeout_ms"] == 30000
 
     @pytest.mark.asyncio
     async def test_provider_not_found_skipped(self) -> None:
