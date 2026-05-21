@@ -13,8 +13,16 @@ from ai_werewolf.engine.session import GameSession
 logger = logging.getLogger(__name__)
 
 
-def record_prompt_trace(session: GameSession, player_id: str, prompt_kind: str, prompt: str) -> Path:
-    """Write the full prompt to a trace file and log only compact metadata."""
+def record_prompt_trace(
+    session: GameSession,
+    player_id: str,
+    prompt_kind: str,
+    prompt: str,
+    *,
+    response: object | None = None,
+    metadata: dict[str, object] | None = None,
+) -> Path:
+    """Write prompt/debug output to a trace file and log compact metadata."""
     player = session.state.player_by_id(player_id)
     trace_dir = Path.cwd() / "logs" / "prompt_traces" / session.state.game_id
     trace_dir.mkdir(parents=True, exist_ok=True)
@@ -24,7 +32,8 @@ def record_prompt_trace(session: GameSession, player_id: str, prompt_kind: str, 
         f"{_safe(prompt_kind)}_seat{player.seat}_{_safe(player_id)}.md"
     )
     path = trace_dir / filename
-    path.write_text(prompt, encoding="utf-8")
+    trace_text = _format_trace(prompt, response=response, metadata=metadata)
+    path.write_text(trace_text, encoding="utf-8")
 
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     payload = {
@@ -40,10 +49,33 @@ def record_prompt_trace(session: GameSession, player_id: str, prompt_kind: str, 
         "prompt_chars": len(prompt),
         "prompt_sha256": digest,
         "path": str(path),
+        "has_response": response is not None,
     }
+    if metadata:
+        payload.update(metadata)
     logger.info("prompt_trace %s", json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return path
 
 
 def _safe(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "unknown"
+
+
+def _format_trace(prompt: str, *, response: object | None, metadata: dict[str, object] | None) -> str:
+    if response is None and not metadata:
+        return prompt
+    sections = ["## Prompt", prompt]
+    if response is not None:
+        sections.extend(["", "## LLM Output", _jsonish(response)])
+    if metadata:
+        sections.extend(["", "## Metadata", json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True)])
+    return "\n".join(sections)
+
+
+def _jsonish(value: object) -> str:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")  # type: ignore[assignment]
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+    except TypeError:
+        return str(value)

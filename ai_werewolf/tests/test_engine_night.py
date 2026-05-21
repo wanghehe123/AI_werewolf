@@ -138,6 +138,32 @@ def test_ai_seer_check_writes_latest_private_role_memory():
     assert saved.payload["seer_results"] == [{"round": "night1", "target": "w1", "result": "werewolf"}]
 
 
+def test_night_decision_failure_still_records_prompt_trace():
+    players = _default_players()
+    session = _make_session(players, _default_agents())
+    resolver = NightResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    decider = MagicMock()
+    decider.decide.side_effect = RuntimeError("provider exploded")
+
+    with patch("ai_werewolf.engine.night.record_prompt_trace") as trace:
+        decision = resolver._get_ai_decision_with_prompt(
+            session,
+            "seer1",
+            "night prompt",
+            decider=decider,
+        )
+
+    assert decision.action_type == "speak"
+    trace.assert_called_once_with(
+        session,
+        "seer1",
+        "night_action",
+        "night prompt",
+        response=None,
+        metadata={"chain_error": "provider exploded"},
+    )
+
+
 def test_human_seer_action_records_private_result():
     players = [
         PlayerState(player_id="human", agent_id=None, seat=1, role_key="seer", alive=True, is_human=True),

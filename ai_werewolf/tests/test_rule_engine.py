@@ -62,6 +62,26 @@ WITCH_POISON_PROMPT = (
     "请做出你的决策。"
 )
 
+WITCH_POISON_PROMPT_N1 = (
+    "玩家名称：witch_ai\n"
+    "你的真实身份：女巫\n"
+    "当前阶段：night_action\n"
+    "第1夜\n"
+    "是否使用毒药\n"
+    "存活玩家：Alice(1号) witch_ai(2号) Bob(3号)\n"
+    "请做出你的决策。"
+)
+
+WITCH_POISON_PROMPT_N2 = (
+    "玩家名称：witch_ai\n"
+    "你的真实身份：女巫\n"
+    "当前阶段：night_action\n"
+    "第2夜\n"
+    "是否使用毒药\n"
+    "存活玩家：Alice(1号) witch_ai(2号) Bob(3号)\n"
+    "请做出你的决策。"
+)
+
 VOTE_PROMPT = (
     "玩家名称：voter_ai\n"
     "你的真实身份：平民\n"
@@ -78,6 +98,23 @@ SPEAK_PROMPT = (
     "发言\n"
     "存活玩家：Alice(1号) speaker_ai(2号) Bob(3号)\n"
     "请做出你的决策。"
+)
+
+LOCKED_SPEAK_PROMPT = (
+    SPEAK_PROMPT
+    + "\n\n【结构化决策已锁定】\n"
+    + "- action_type: speak\n"
+    + "- target_id: Bob\n"
+    + "- public_reason: 3号的站边需要继续听\n"
+    + "如果你的 speech 提到投票或行动对象，必须与 locked target_id 保持一致。\n"
+)
+
+LOCKED_VOTE_PROMPT = (
+    VOTE_PROMPT
+    + "\n\n【结构化决策已锁定】\n"
+    + "- action_type: vote\n"
+    + "- target_id: Bob\n"
+    + "- public_reason: 3号的票型最需要解释\n"
 )
 
 HUNTER_SHOOT_PROMPT = (
@@ -116,6 +153,10 @@ class TestParsePromptContext:
     def test_vote_action(self) -> None:
         ctx = _parse_prompt_context(VOTE_PROMPT)
         assert ctx["action_hint"] == "vote"
+
+    def test_locked_action_type_overrides_generic_vote_keyword(self) -> None:
+        ctx = _parse_prompt_context(LOCKED_SPEAK_PROMPT)
+        assert ctx["action_hint"] == "speak"
 
     def test_alive_players(self) -> None:
         ctx = _parse_prompt_context(WEREWOLF_KILL_PROMPT)
@@ -189,6 +230,20 @@ class TestRuleEngineProviderDecide:
         self._validate_schema(result)
         assert result["action_type"] == "no_action"
 
+    def test_witch_poison_waits_on_night1(self) -> None:
+        engine = RuleEngineProvider()
+        result = engine.decide(WITCH_POISON_PROMPT_N1)
+        self._validate_schema(result)
+        assert result["action_type"] == "no_action"
+        assert result["target_id"] is None
+
+    def test_witch_poison_targets_first_other_from_night2(self) -> None:
+        engine = RuleEngineProvider()
+        result = engine.decide(WITCH_POISON_PROMPT_N2)
+        self._validate_schema(result)
+        assert result["action_type"] == "witch_poison"
+        assert result["target_id"] == "Alice"
+
     def test_vote(self) -> None:
         engine = RuleEngineProvider()
         result = engine.decide(VOTE_PROMPT)
@@ -197,12 +252,28 @@ class TestRuleEngineProviderDecide:
         assert result["target_id"] is not None
         assert result["target_id"] != "voter_ai"
 
+    def test_vote_prefers_locked_target_id(self) -> None:
+        engine = RuleEngineProvider()
+        result = engine.decide(LOCKED_VOTE_PROMPT)
+        self._validate_schema(result)
+        assert result["action_type"] == "vote"
+        assert result["target_id"] == "Bob"
+
     def test_speak(self) -> None:
         engine = RuleEngineProvider()
         result = engine.decide(SPEAK_PROMPT)
         self._validate_schema(result)
         assert result["action_type"] == "speak"
         assert result["speech"]  # should be non-empty
+
+    def test_locked_speak_uses_speak_branch_and_reason(self) -> None:
+        engine = RuleEngineProvider()
+        result = engine.decide(LOCKED_SPEAK_PROMPT)
+        self._validate_schema(result)
+        assert result["action_type"] == "speak"
+        assert "投给一名玩家" not in result["speech"]
+        assert "speaker_ai" in result["speech"]
+        assert "3号的站边需要继续听" in result["speech"]
 
     def test_hunter_shoot(self) -> None:
         engine = RuleEngineProvider()
@@ -307,6 +378,13 @@ class TestBuildChainFromConfig:
         assert result.tier_used == "rule_engine"
         assert result.response["action_type"] == "speak"
 
+    def test_semantic_nodes_default_to_disabled(self, monkeypatch) -> None:
+        from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nodes
+
+        monkeypatch.delenv("AI_WEREWOLF_SEMANTIC_GRAPH_NODES", raising=False)
+
+        assert configured_semantic_nodes() == set()
+
 
 # ---------------------------------------------------------------------------
 # Tests -- PlayerDecider with chain
@@ -328,6 +406,33 @@ class TestPlayerDeciderWithChain:
         decision = decider.decide(SPEAK_PROMPT)
         assert decision.action_type.value == "speak"
         assert decision.speech  # non-empty
+
+    def test_chain_path_exposes_last_chain_metadata(self) -> None:
+        from ai_werewolf.llm.chain.provider_chain import ProviderChain, ProviderTier
+        from ai_werewolf.llm.chain.rule_engine import RuleEngineProvider
+        from ai_werewolf.llm.player_decider import PlayerDecider
+        from ai_werewolf.llm.providers import FakeModelProvider
+
+        class FailingModel:
+            config = _config("primary")
+
+            def decide(self, prompt: str) -> dict:
+                raise TimeoutError("primary timed out")
+
+        tiers = [
+            ProviderTier(provider_id="primary", model_name="primary", timeout_ms=50, max_retries=0),
+            ProviderTier(provider_id="rule_engine", model_name="rule", timeout_ms=50, max_retries=0),
+        ]
+        chain = ProviderChain(tiers=tiers, providers={"primary": FailingModel(), "rule_engine": RuleEngineProvider()})
+
+        decider = PlayerDecider(model=FakeModelProvider(_config("fake")), chain=chain)
+        decision = decider.decide(SPEAK_PROMPT)
+
+        assert decision.action_type.value == "speak"
+        assert decider.last_chain_metadata is not None
+        assert decider.last_chain_metadata["tier_used"] == "rule_engine"
+        assert decider.last_chain_metadata["fallback_occurred"] is True
+        assert decider.last_chain_metadata["attempts"][0]["trigger"] == "chain_timeout"
 
     def test_no_chain_uses_single_provider(self) -> None:
         from ai_werewolf.llm.player_decider import PlayerDecider

@@ -262,6 +262,69 @@ def test_get_ai_speech_prefers_player_speech_graph():
     run_graph.assert_called_once()
 
 
+def test_ai_speech_generation_failure_records_error_prompt_trace():
+    agents = {"s1": MagicMock(name="Agent_s1")}
+    orch, session = _mock_orchestrator(agents)
+    session.state.phase = GamePhase.DAY_SPEECH
+    session.state.day_count = 1
+    decider = MagicMock()
+    decider.decide.side_effect = RuntimeError("provider exploded")
+
+    def run_graph(**kwargs):
+        try:
+            kwargs["speech_generator"](
+                {
+                    "role_key": "seer",
+                    "strategy": {"strategy_type": "attack", "goal": "继续找狼"},
+                    "action_draft": {
+                        "action_type": "speak",
+                        "target_id": "w1",
+                        "public_reason": "2号需要解释",
+                        "private_memory_update": None,
+                    },
+                }
+            )
+        except RuntimeError:
+            return {
+                "decision": MagicMock(speech="图兜底发言"),
+                "analysis": {},
+                "strategy": {},
+                "action_draft": {},
+                "speech": "图兜底发言",
+                "error": "decision_generation_failed",
+            }
+        raise AssertionError("speech_generator should have failed")
+
+    with (
+        _patch.object(orch, "_find_day_speech_task", return_value=MagicMock(prompt="day prompt")),
+        _patch(
+            "ai_werewolf.engine.orchestrator.MemoryContextBuilder.build_for_player",
+            return_value=MagicMock(
+                game_id="g",
+                player_id="s1",
+                phase="day_speech",
+                day=1,
+                model_dump=MagicMock(return_value={}),
+            ),
+        ),
+        _patch("ai_werewolf.engine.orchestrator.build_decider_for_role", return_value=decider),
+        _patch("ai_werewolf.engine.orchestrator.run_player_speech_graph", side_effect=run_graph),
+        _patch("ai_werewolf.engine.orchestrator.record_prompt_trace") as trace,
+    ):
+        result = orch._run_ai_speech_graph(session, "s1", "公开历史")
+
+    assert result["decision"].speech == "图兜底发言"
+    trace.assert_called_once_with(
+        session,
+        "s1",
+        "day_speech",
+        trace.call_args.args[3],
+        response=None,
+        metadata={"chain_error": "provider exploded"},
+    )
+    assert "【结构化决策已锁定】" in trace.call_args.args[3]
+
+
 def test_check_win_or_next_night_saves_day_summary():
     agents = {pid: MagicMock(name=f"Agent_{pid}") for pid in ["w1", "w2", "s1", "v1", "v2"]}
     orch, session = _mock_orchestrator(agents)

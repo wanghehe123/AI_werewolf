@@ -263,6 +263,77 @@ def test_compute_ai_vote_captures_prompt_trace_for_later_apply():
     trace.assert_not_called()
 
 
+def test_compute_ai_vote_keeps_prompt_trace_when_decider_fails():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    resolver.memory_context_builder = MagicMock()
+    resolver.memory_context_builder.build_for_player.return_value = MagicMock(
+        game_id="g",
+        player_id="ai_2",
+        phase="exile_vote",
+        day=1,
+        model_dump=MagicMock(return_value={}),
+    )
+    decider = MagicMock()
+    decider.decide.side_effect = RuntimeError("provider exploded")
+
+    def run_graph(**kwargs):
+        kwargs["decision_generator"](
+            {
+                "role_key": "seer",
+                "strategy": {"strategy_type": "vote_push", "goal": "推进焦点位"},
+                "action_draft": {
+                    "action_type": "vote",
+                    "target_id": "human",
+                    "public_reason": "怀疑最高",
+                    "private_memory_update": None,
+                },
+            }
+        )
+
+    with patch("ai_werewolf.engine.vote.build_decider_for_role", return_value=decider), patch(
+        "ai_werewolf.engine.vote.run_player_decision_graph",
+        side_effect=run_graph,
+    ):
+        result = resolver._compute_ai_vote(session, "ai_2", "公开历史")
+
+    assert result.error == "provider exploded"
+    assert result.prompt_trace is not None
+    assert "【结构化决策已锁定】" in result.prompt_trace
+    assert result.chain_metadata == {"chain_error": "provider exploded"}
+
+
+def test_ai_vote_apply_records_error_prompt_trace():
+    session = _make_session_with_vote_phase()
+    resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())
+    result = AIVoteResult(
+        player_id="ai_1",
+        target_id=None,
+        speech="弃票",
+        prompt_trace="locked prompt",
+        chain_metadata={"chain_error": "provider exploded"},
+        error="provider exploded",
+    )
+
+    with patch("ai_werewolf.engine.vote.record_prompt_trace") as trace:
+        resolver._apply_ai_vote_result(
+            session=session,
+            player=session.state.player_by_id("ai_1"),
+            result=result,
+            all_votes={},
+            events=[],
+        )
+
+    trace.assert_called_once_with(
+        session,
+        "ai_1",
+        "exile_vote",
+        "locked prompt",
+        response=None,
+        metadata={"chain_error": "provider exploded"},
+    )
+
+
 def test_get_ai_vote_uses_unified_decision_graph():
     session = _make_session_with_vote_phase()
     resolver = VoteResolver(model_registry=MagicMock(), role_model_bindings=[], role_registry=MagicMock())

@@ -116,6 +116,7 @@ class PlayerDecider:
         """
         self.model = model
         self._chain = chain
+        self.last_chain_metadata: dict[str, Any] | None = None
 
     def decide(self, prompt: str) -> PlayerDecision:
         """
@@ -137,6 +138,7 @@ class PlayerDecider:
         if self._chain is not None:
             return self._decide_via_chain(prompt)
 
+        self.last_chain_metadata = None
         # Original single-provider path (unchanged).
         raw_decision = self.model.decide(prompt)
 
@@ -228,11 +230,14 @@ class PlayerDecider:
         与单 provider 路径（decide()）一致，包含空发言检查和安全性校验。
         """
         assert self._chain is not None  # guaranteed by caller
+        self.last_chain_metadata = None
         try:
             chain_result = _sync_call_async(self._chain.decide(prompt))
         except Exception:
             logger.exception("ProviderChain failed, falling back to single provider")
             return self._build_fallback(self.model.decide(prompt))
+
+        self.last_chain_metadata = _chain_metadata(chain_result)
 
         if chain_result.fallback_occurred:
             logger.info(
@@ -355,6 +360,14 @@ def _strip_thinking_blocks(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
     return text
+
+
+def _chain_metadata(chain_result: Any) -> dict[str, Any]:
+    return {
+        "tier_used": chain_result.tier_used,
+        "fallback_occurred": chain_result.fallback_occurred,
+        "attempts": chain_result.attempts,
+    }
 
 
 def _without_thinking_blocks(source: Iterator[str], raw_chunks: list[str]) -> Iterator[str]:

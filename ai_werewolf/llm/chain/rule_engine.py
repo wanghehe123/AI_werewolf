@@ -58,7 +58,10 @@ def _parse_prompt_context(prompt: str) -> dict[str, Any]:
             ctx["role_key"] = role_map.get(raw_role, raw_role)
 
         # Action hint from phase info
-        if "wolf_kill" in prompt or "选择要击杀的玩家" in prompt:
+        locked_action = _parse_locked_field("action_type", prompt)
+        if locked_action:
+            ctx["action_hint"] = locked_action
+        elif "wolf_kill" in prompt or "选择要击杀的玩家" in prompt:
             ctx["action_hint"] = "wolf_kill"
         elif "seer_check" in prompt or "选择要查验的玩家" in prompt:
             ctx["action_hint"] = "seer_check"
@@ -68,13 +71,12 @@ def _parse_prompt_context(prompt: str) -> dict[str, Any]:
             ctx["action_hint"] = "witch_poison"
         elif "hunter_shoot" in prompt or "选择要带走的玩家" in prompt:
             ctx["action_hint"] = "hunter_shoot"
-        elif "vote" in prompt or "投票" in prompt:
-            if "exile_vote" in prompt or "投票放逐" in prompt:
-                ctx["action_hint"] = "vote"
-            else:
-                ctx["action_hint"] = "vote"
-        elif "speak" in prompt or "发言" in prompt:
+        elif "投票放逐" in prompt or "确定你的放逐" in prompt or "exile_vote" in prompt:
+            ctx["action_hint"] = "vote"
+        elif "speak" in prompt or "发言" in prompt or "day_speech" in prompt:
             ctx["action_hint"] = "speak"
+        elif "vote" in prompt or "投票" in prompt:
+            ctx["action_hint"] = "vote"
 
         # Alive players from "存活玩家：..." or similar patterns
         alive_match = re.search(r"存活玩家[：:]\s*(.+)", prompt)
@@ -204,7 +206,16 @@ class RuleEngineProvider:
 
         # -- witch / witch_poison ------------------------------------------------
         if role == "witch" and action == "witch_poison":
-            # Conservative: never poison
+            if night is not None and night >= 2:
+                target = _first_other(others)
+                if target is not None:
+                    return {
+                        "speech": "我选择使用毒药。",
+                        "action_type": "witch_poison",
+                        "target_id": target,
+                        "public_reason": None,
+                        "private_memory_update": f"第{night}夜使用毒药指向{target}",
+                    }
             return {
                 "speech": "",
                 "action_type": "no_action",
@@ -215,7 +226,7 @@ class RuleEngineProvider:
 
         # -- vote ----------------------------------------------------------------
         if action == "vote":
-            target = _first_other(others)
+            target = _parse_locked_field("target_id", prompt) or _first_other(others)
             return {
                 "speech": "我投给一名玩家。",
                 "action_type": "vote",
@@ -226,8 +237,16 @@ class RuleEngineProvider:
 
         # -- speak ---------------------------------------------------------------
         if action == "speak":
+            self_name = _extract_player_name(prompt)
+            reason = _parse_locked_field("public_reason", prompt)
+            if self_name and reason:
+                speech = f"我是{self_name}。我听了前面的发言，{reason}，这条线我会继续观察。"
+            elif reason:
+                speech = f"我听了前面的发言，{reason}，这条线我会继续观察。"
+            else:
+                speech = _GENERIC_SPEECH
             return {
-                "speech": _GENERIC_SPEECH,
+                "speech": speech,
                 "action_type": "speak",
                 "target_id": None,
                 "public_reason": None,
@@ -266,6 +285,29 @@ def _first_other(others: list[dict]) -> str | None:
     if others:
         return others[0]["player_id"]
     return None
+
+
+def _parse_locked_field(field_name: str, prompt: str) -> str | None:
+    """Extract a scalar field from the locked decision block."""
+    block_match = re.search(r"【结构化决策已锁定】(?P<block>.*)", prompt, flags=re.DOTALL)
+    if not block_match:
+        return None
+    pattern = rf"^\s*-\s*{re.escape(field_name)}[：:]\s*(?P<value>.*)$"
+    field_match = re.search(pattern, block_match.group("block"), flags=re.MULTILINE)
+    if not field_match:
+        return None
+    value = field_match.group("value").strip()
+    if not value or value in {"None", "null"}:
+        return None
+    return value
+
+
+def _extract_player_name(prompt: str) -> str | None:
+    match = re.search(r"(?:你的玩家ID|玩家名称|你的名称)[：:]\s*(.+?)[\n，。]", prompt)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    return value or None
 
 
 def _first_non_role(

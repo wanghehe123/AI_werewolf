@@ -12,12 +12,13 @@ from ai_werewolf.engine.action_log import log_game_start_roles, log_player_actio
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import event, player_label
 from ai_werewolf.engine.hunter import HunterResolver
+from ai_werewolf.engine.locked_decision import append_locked_decision_block
 from ai_werewolf.engine.night import NightResolver
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import VoteResolver
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
-from ai_werewolf.llm.graphs.player_decision_prompt_catalog import role_camp_goal, role_display_name
+from ai_werewolf.llm.graphs.player_decision_prompt_catalog import role_display_name
 from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nodes, run_player_speech_graph
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
 from ai_werewolf.llm.memory.summary_builder import (
@@ -36,26 +37,18 @@ from ai_werewolf.seeds.boards import default_boards
 logger = logging.getLogger(__name__)
 
 
-def _append_locked_decision_block(prompt: str, state: dict[str, Any]) -> str:
-    draft = state.get("action_draft", {})
-    strategy = state.get("strategy", {})
-    role_key = state.get("role_key", "unknown")
-    return (
-        f"{prompt}\n\n"
-        "【结构化决策已锁定】\n"
-        f"- 你的真实身份: {role_display_name(role_key)}\n"
-        f"- 你的阵营目标: {role_camp_goal(role_key)}\n"
-        f"- strategy_type: {strategy.get('strategy_type')}\n"
-        f"- strategy_goal: {strategy.get('goal')}\n"
-        f"- action_type: {draft.get('action_type')}\n"
-        f"- target_id: {draft.get('target_id')}\n"
-        f"- public_reason: {draft.get('public_reason')}\n"
-        f"- private_memory_update: {draft.get('private_memory_update')}\n"
-        "你必须继续以真实身份进行内在推理，不能把自己真的当成另一个阵营。\n"
-        "你可以伪装，但不能用“我是普通好人”“我是平民”这种自我代入替代真实身份思考，除非当前策略明确要求你悍跳具体身份。\n"
-        "如果你的 speech 提到投票或行动对象，必须与 locked target_id 保持一致；如果做不到，就不要在 speech 里写具体座位号。\n"
-        "你只能生成自然发言和理由，不能改变 action_type 或 target_id。\n"
-    )
+_append_locked_decision_block = append_locked_decision_block
+
+
+def _chain_metadata_for_events(decider: PlayerDecider) -> dict[str, Any] | None:
+    metadata = getattr(decider, "last_chain_metadata", None)
+    if not metadata:
+        return None
+    return {
+        "chain_tier": metadata.get("tier_used"),
+        "chain_fallback": metadata.get("fallback_occurred"),
+        "chain_attempts": metadata.get("attempts", []),
+    }
 
 
 class PhaseOrchestrator:
@@ -850,8 +843,26 @@ class PhaseOrchestrator:
             if task is None:
                 return "我暂时没有想说的。"
             locked_prompt = _append_locked_decision_block(task.prompt, state)
-            record_prompt_trace(session, player_id, "day_speech", locked_prompt)
-            decision = decider.decide(locked_prompt)
+            try:
+                decision = decider.decide(locked_prompt)
+            except Exception as exc:
+                record_prompt_trace(
+                    session,
+                    player_id,
+                    "day_speech",
+                    locked_prompt,
+                    response=None,
+                    metadata={"chain_error": str(exc)},
+                )
+                raise
+            record_prompt_trace(
+                session,
+                player_id,
+                "day_speech",
+                locked_prompt,
+                response=decision,
+                metadata=_chain_metadata_for_events(decider),
+            )
             return decision.speech
 
         result = run_player_speech_graph(

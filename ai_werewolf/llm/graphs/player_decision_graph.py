@@ -40,7 +40,7 @@ def configured_semantic_nodes() -> set[str]:
     if raw_value is None and ("PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules):
         raw_value = ""
     if raw_value is None:
-        raw_value = "n1"
+        raw_value = ""
     nodes = {item.strip() for item in raw_value.split(",") if item.strip()}
     return nodes & {"n1", "n2", "n3"}
 

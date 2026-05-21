@@ -14,10 +14,10 @@ from ai_werewolf.domain.game_state import PlayerState
 from ai_werewolf.engine.action_log import log_player_action
 from ai_werewolf.engine.context import build_game_context
 from ai_werewolf.engine.helpers import display_name, event, player_label, resolve_player_id
+from ai_werewolf.engine.locked_decision import append_locked_decision_block
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.action_scheduler import AIActionScheduler
-from ai_werewolf.llm.graphs.player_decision_prompt_catalog import role_camp_goal, role_display_name
 from ai_werewolf.llm.graphs.player_decision_graph import configured_semantic_nodes, run_player_decision_graph
 from ai_werewolf.llm.memory.context_builder import MemoryContextBuilder
 from ai_werewolf.llm.memory.summary_builder import build_player_suspicion_memory, build_private_role_memory
@@ -40,29 +40,11 @@ class AIVoteResult:
     decision: PlayerDecision | None = None
     graph_result: dict[str, Any] | None = None
     prompt_trace: str | None = None
+    chain_metadata: dict[str, Any] | None = None
     error: str | None = None
 
 
-def _append_locked_decision_block(prompt: str, state: dict[str, Any]) -> str:
-    draft = state.get("action_draft", {})
-    strategy = state.get("strategy", {})
-    role_key = state.get("role_key", "unknown")
-    return (
-        f"{prompt}\n\n"
-        "【结构化决策已锁定】\n"
-        f"- 你的真实身份: {role_display_name(role_key)}\n"
-        f"- 你的阵营目标: {role_camp_goal(role_key)}\n"
-        f"- strategy_type: {strategy.get('strategy_type')}\n"
-        f"- strategy_goal: {strategy.get('goal')}\n"
-        f"- action_type: {draft.get('action_type')}\n"
-        f"- target_id: {draft.get('target_id')}\n"
-        f"- public_reason: {draft.get('public_reason')}\n"
-        f"- private_memory_update: {draft.get('private_memory_update')}\n"
-        "你必须继续以真实身份进行内在推理，不能把自己真的当成另一个阵营。\n"
-        "你可以伪装，但不能用“我是普通好人”“我是平民”这种自我代入替代真实身份思考，除非当前策略明确要求你悍跳具体身份。\n"
-        "如果你的 speech 提到投票或行动对象，必须与 locked target_id 保持一致；如果做不到，就不要在 speech 里写具体座位号。\n"
-        "你只能生成自然发言和理由，不能改变 action_type 或 target_id。\n"
-    )
+_append_locked_decision_block = append_locked_decision_block
 
 
 def _repair_vote_speech(
@@ -88,6 +70,17 @@ def _repair_vote_speech(
 
     reason = decision.public_reason or "当前这条线最需要解释"
     return f"我这一票会投给{player_label(target_id, session)}，因为{reason}。"
+
+
+def _chain_metadata_for_events(decider: PlayerDecider) -> dict[str, Any] | None:
+    metadata = getattr(decider, "last_chain_metadata", None)
+    if not metadata:
+        return None
+    return {
+        "chain_tier": metadata.get("tier_used"),
+        "chain_fallback": metadata.get("fallback_occurred"),
+        "chain_attempts": metadata.get("attempts", []),
+    }
 
 
 class VoteResolver:
@@ -269,6 +262,8 @@ class VoteResolver:
         if agent is None:
             return AIVoteResult(player_id=player_id, target_id=None, speech="弃票")
 
+        prompt_trace: str | None = None
+        chain_metadata: dict[str, Any] | None = None
         try:
             memory_context = self.memory_context_builder.build_for_player(session, player_id)
             decider = build_decider_for_role(
@@ -287,9 +282,8 @@ class VoteResolver:
                     decision=decision,
                 )
 
-            prompt_trace: str | None = None
             def decision_generator(state: dict[str, Any]) -> PlayerDecision:
-                nonlocal prompt_trace
+                nonlocal prompt_trace, chain_metadata
                 tasks = self.scheduler.schedule(
                     state=session.state,
                     agents=session.agents,
@@ -301,7 +295,9 @@ class VoteResolver:
                     return PlayerDecision(speech="弃票", action_type="vote", target_id=None, public_reason=None, private_memory_update=None)
                 locked_prompt = _append_locked_decision_block(task.prompt, state)
                 prompt_trace = locked_prompt
-                return decider.decide(locked_prompt)
+                decision = decider.decide(locked_prompt)
+                chain_metadata = _chain_metadata_for_events(decider)
+                return decision
 
             result = run_player_decision_graph(
                 agent=agent,
@@ -325,10 +321,20 @@ class VoteResolver:
                 decision=decision,
                 graph_result=result,
                 prompt_trace=prompt_trace,
+                chain_metadata=chain_metadata,
             )
         except Exception as exc:
             logger.exception("AI %s vote failed", player_id)
-            return AIVoteResult(player_id=player_id, target_id=None, speech="弃票", error=str(exc))
+            if prompt_trace is not None and chain_metadata is None:
+                chain_metadata = {"chain_error": str(exc)}
+            return AIVoteResult(
+                player_id=player_id,
+                target_id=None,
+                speech="弃票",
+                prompt_trace=prompt_trace,
+                chain_metadata=chain_metadata,
+                error=str(exc),
+            )
 
     def _apply_ai_vote_result(
         self,
@@ -355,6 +361,7 @@ class VoteResolver:
                 target_id=target_id,
                 source="ai",
                 decision={"speech": speech, "action_type": "vote", "target_id": target_id},
+                metadata=result.chain_metadata,
             )
             events.append(self._append_vote_event(
                 session,
@@ -368,6 +375,7 @@ class VoteResolver:
                 action_type="abstain",
                 source="ai",
                 decision={"speech": speech, "action_type": "abstain", "target_id": None},
+                metadata=result.chain_metadata,
             )
             events.append(self._append_vote_event(
                 session,
@@ -376,7 +384,17 @@ class VoteResolver:
 
     def _persist_ai_vote_side_effects(self, session: GameSession, result: AIVoteResult) -> None:
         if result.prompt_trace is not None:
-            record_prompt_trace(session, result.player_id, "exile_vote", result.prompt_trace)
+            if result.decision is not None or result.chain_metadata is not None:
+                record_prompt_trace(
+                    session,
+                    result.player_id,
+                    "exile_vote",
+                    result.prompt_trace,
+                    response=result.decision,
+                    metadata=result.chain_metadata,
+                )
+            else:
+                record_prompt_trace(session, result.player_id, "exile_vote", result.prompt_trace)
         if result.graph_result is not None:
             self._persist_player_memories(session, result.player_id, result.graph_result)
 

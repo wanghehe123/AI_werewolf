@@ -30,3 +30,32 @@ def test_record_prompt_trace_writes_prompt_file_and_logs_metadata_only(tmp_path,
     assert payload["prompt_chars"] == len(prompt)
     assert payload["path"] == str(path)
     assert prompt not in records[0]
+
+
+def test_record_prompt_trace_can_append_response_metadata(tmp_path, monkeypatch, caplog):
+    monkeypatch.chdir(tmp_path)
+    player = PlayerState(player_id="ai_1", agent_id="ai_1", seat=2, role_key="werewolf", alive=True, is_human=False)
+    state = GameState(game_id="g1", board_id="board", phase=GamePhase.EXILE_VOTE, day_count=1, players=[
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="seer", alive=True, is_human=True),
+        player,
+    ])
+    session = GameSession(state=state, agents={}, human_player_id="human", private_infos=build_private_infos(state.players))
+    caplog.set_level(logging.INFO, logger="ai_werewolf.engine.prompt_trace")
+
+    path = record_prompt_trace(
+        session,
+        player.player_id,
+        "exile_vote",
+        "prompt body",
+        response={"speech": "我投2号", "action_type": "vote", "target_id": "human"},
+        metadata={"chain_tier": "rule_engine", "chain_fallback": True},
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "## Prompt" in text
+    assert "## LLM Output" in text
+    assert '"chain_tier": "rule_engine"' in text
+    records = [record.message for record in caplog.records if record.message.startswith("prompt_trace ")]
+    payload = json.loads(records[0].removeprefix("prompt_trace "))
+    assert payload["has_response"] is True
+    assert payload["chain_tier"] == "rule_engine"
