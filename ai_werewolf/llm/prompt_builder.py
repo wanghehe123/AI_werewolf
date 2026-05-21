@@ -22,6 +22,7 @@ LLM Prompt 构建器
 }
 """
 
+import re
 from collections.abc import Callable
 
 from ai_werewolf.domain.agents import AgentProfile
@@ -52,6 +53,8 @@ def build_player_prompt(
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     self_label: str = "",
+    strategy_provider: StrategyProvider | None = None,
+    strategy_hint_block: str = "",
 ) -> str:
     """
     构建 AI 玩家的完整 Prompt（基于通用提示词规范）
@@ -125,6 +128,19 @@ def build_player_prompt(
         },
     )
     forbidden = render_template("player/forbidden_rules.st", {})
+    if not strategy_hint_block:
+        provider = strategy_provider or StaticWerewolfStrategyProvider()
+        strategy_hint_block = render_strategy_hint_block(
+            provider.get_hints(
+                role_key=role_key,
+                phase=phase,
+                day_count=_day_count_from_round_info(round_info),
+                private_info=private_info,
+                public_context=game_context,
+                board_roles=board_roles or {},
+                alive_players=alive_players or [],
+            )
+        )
     player_references_body = ""
     if player_references:
         player_references_body = "\n".join(
@@ -141,7 +157,7 @@ def build_player_prompt(
             "persona_section": section("【人物设定】", persona_body),
             "hidden_identity_section": section("【隐藏身份】", hidden_identity_body),
             "identity_priority_block": join_non_empty_sections("=" * 40, build_identity_priority_block(role_key, phase)),
-            "strategy_hint_block": "",
+            "strategy_hint_block": strategy_hint_block,
             "role_constraints_section": section("【角色约束】", role_constraints),
             "board_context_section": section("【板子信息】", board_context),
             "board_role_constraints_block": "\n".join(_build_board_role_constraints(board_roles)) if board_roles else "",
@@ -173,6 +189,7 @@ def build_speech_prompt(
     board_roles: dict[str, int] | None = None,
     speech_progress: str = "",
     self_label: str = "",
+    strategy_provider: StrategyProvider | None = None,
 ) -> str:
     """
     构建白天发言阶段的 Prompt
@@ -218,6 +235,7 @@ def build_speech_prompt(
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
         self_label=self_label,
+        strategy_provider=strategy_provider,
     )
 
 
@@ -235,6 +253,7 @@ def build_vote_prompt(
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     self_label: str = "",
+    strategy_provider: StrategyProvider | None = None,
 ) -> str:
     """
     构建投票阶段的 Prompt
@@ -276,6 +295,7 @@ def build_vote_prompt(
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
         self_label=self_label,
+        strategy_provider=strategy_provider,
     )
 
 
@@ -292,6 +312,7 @@ def build_last_words_prompt(
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     self_label: str = "",
+    strategy_provider: StrategyProvider | None = None,
 ) -> str:
     """
     构建遗言阶段的 Prompt。
@@ -315,6 +336,7 @@ def build_last_words_prompt(
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
         self_label=self_label,
+        strategy_provider=strategy_provider,
     )
 
 
@@ -1052,6 +1074,13 @@ def _format_player_options(player_ids: list[str], references: dict[str, str] | N
 
 def _format_player_reference_lines(references: dict[str, str]) -> list[str]:
     return [f"- {player_id}（{label}）" for player_id, label in references.items()]
+
+
+def _day_count_from_round_info(round_info: str) -> int:
+    match = re.search(r"(?:day|第)?\s*(\d+)", round_info or "", re.IGNORECASE)
+    if not match:
+        return 0
+    return int(match.group(1))
 
 
 def _action_enum_lines(enabled_role_keys: set[str] | None = None) -> list[str]:

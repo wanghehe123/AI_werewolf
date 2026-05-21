@@ -26,6 +26,7 @@ class DaySummary(BaseModel):
     alliances: list[dict[str, Any]] = Field(default_factory=list)
     vote_summary: dict[str, Any] | None = None
     low_signal_players: list[str] = Field(default_factory=list)
+    situation_ledger: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlayerSuspicionMemory(BaseModel):

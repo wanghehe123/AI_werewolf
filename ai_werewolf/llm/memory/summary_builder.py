@@ -13,8 +13,11 @@ from ai_werewolf.llm.memory.models import DaySummary, PlayerSuspicionMemory, Pri
 
 _SUSPICION_PATTERN = re.compile(r"(\d+)号")
 _CLAIM_PATTERN = re.compile(r"(?:我是|我跳)(预言家|女巫|猎人|守卫|平民|村民|狼人)")
+_ROLE_CLAIM_PATTERN = re.compile(r"(?:我是|我才是|我跳)(?:真)?(预言家|女巫|猎人|守卫|平民|村民|狼人)")
+_CHECK_RESULT_PATTERN = re.compile(r"(?:验|查验)(\d+)号?[^。！？\n，,]{0,10}(金水|查杀|好人|狼人)")
 _LOW_SIGNAL_HINTS = ("过", "先听", "再听", "看看", "没信息")
 _AGGRESSIVE_HINTS = ("怀疑", "攻击", "打", "投", "冲", "不像好人", "像狼")
+_BAD_SPEECH_HINTS = ("自投", "摆烂", "不配合", "心态爆炸")
 
 
 def build_day_summary(session: GameSession) -> DaySummary:
@@ -76,6 +79,12 @@ def build_day_summary(session: GameSession) -> DaySummary:
             })
 
     vote_summary = _build_vote_summary(session, day_events)
+    situation_ledger = _build_situation_ledger(
+        session=session,
+        day_events=day_events,
+        vote_summary=vote_summary,
+        low_signal_players=low_signal_players,
+    )
     if not summary_items and vote_summary["main_votes"]:
         top_vote = vote_summary["main_votes"][0]
         voters = "、".join(_seat_labels_from_ids(session, top_vote["voters"]))
@@ -91,6 +100,7 @@ def build_day_summary(session: GameSession) -> DaySummary:
         alliances=alliances,
         vote_summary=vote_summary,
         low_signal_players=low_signal_players,
+        situation_ledger=situation_ledger,
     )
 
 
@@ -150,6 +160,158 @@ def _build_vote_summary(session: GameSession, day_events: list[dict[str, Any]]) 
         for target_id, voters in sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))
     ]
     return {"exiled": exiled, "main_votes": main_votes}
+
+
+def _build_situation_ledger(
+    *,
+    session: GameSession,
+    day_events: list[dict[str, Any]],
+    vote_summary: dict[str, Any],
+    low_signal_players: list[str],
+) -> dict[str, Any]:
+    """Build a compact public ledger that helps prompts reason from structure.
+
+    The ledger is intentionally rule-based and conservative. It records public
+    claims, vote shapes, and "bad speech but not necessarily wolf" markers
+    without trying to solve the game.
+    """
+    seer_claims: dict[str, dict[str, Any]] = {}
+    role_claims: dict[str, dict[str, Any]] = {}
+    wolf_candidates: dict[str, str] = {}
+    vote_patterns: list[dict[str, Any]] = []
+    bad_speech_not_equal_wolf: list[str] = []
+
+    seat_to_player_id = {player.seat: player.player_id for player in session.state.players}
+
+    for public_event in day_events:
+        event_type = public_event.get("event_type")
+        actor_id = public_event.get("actor_id")
+        target_id = public_event.get("target_id")
+        message = public_event.get("payload", {}).get("message", "")
+
+        if event_type == "speech" and actor_id:
+            claim_match = _ROLE_CLAIM_PATTERN.search(message)
+            if claim_match:
+                role = claim_match.group(1)
+                claim_payload = {
+                    "role": role,
+                    "timing": _claim_timing(message),
+                    "evidence": message[:160],
+                }
+                if role == "预言家":
+                    check_result = _extract_check_result(message)
+                    if check_result is not None:
+                        claim_payload["check_result"] = check_result
+                    badge_flow = _extract_badge_flow(message)
+                    if badge_flow:
+                        claim_payload["badge_flow"] = badge_flow
+                    seer_claims[actor_id] = claim_payload
+                else:
+                    if _is_forced_god_claim(role, message):
+                        claim_payload["wolf_benefits"] = ["躲出局", "找真神", "污染预言家视角", "分裂归票"]
+                    role_claims[actor_id] = claim_payload
+
+            if any(hint in message for hint in _BAD_SPEECH_HINTS) and actor_id not in bad_speech_not_equal_wolf:
+                bad_speech_not_equal_wolf.append(actor_id)
+
+            mentioned_seats = [int(seat) for seat in _SUSPICION_PATTERN.findall(message)]
+            if any(hint in message for hint in _AGGRESSIVE_HINTS):
+                for seat in mentioned_seats:
+                    candidate_id = seat_to_player_id.get(seat)
+                    if candidate_id and candidate_id != actor_id:
+                        wolf_candidates.setdefault(candidate_id, f"{session.state.player_by_id(actor_id).seat}号发言施压")
+
+        if event_type == "vote" and actor_id:
+            if target_id == actor_id:
+                vote_patterns.append({
+                    "type": "self_vote",
+                    "player_id": actor_id,
+                    "reason": "自投/不配合只能说明发言质量差，需要继续判断是否有狼收益",
+                })
+                if actor_id not in bad_speech_not_equal_wolf:
+                    bad_speech_not_equal_wolf.append(actor_id)
+            elif target_id:
+                vote_patterns.append({"type": "vote", "player_id": actor_id, "target_player_id": target_id})
+
+    for player_id in low_signal_players:
+        if player_id not in bad_speech_not_equal_wolf:
+            bad_speech_not_equal_wolf.append(player_id)
+
+    for group in vote_summary.get("main_votes", []):
+        voters = group.get("voters", [])
+        target = group.get("target")
+        if target and len(voters) >= 2:
+            vote_patterns.append({
+                "type": "key_vote_group",
+                "target_player_id": target,
+                "voters": list(voters),
+                "reason": "多人集中归票，需要结合站边与救狼/卖狼收益判断",
+            })
+            wolf_candidates.setdefault(target, "进入关键归票焦点")
+
+    alive_players = [player for player in session.state.players if player.alive]
+    dead_players = [player for player in session.state.players if not player.alive]
+    return {
+        "seer_claims": seer_claims,
+        "role_claims": role_claims,
+        "wolf_candidates": wolf_candidates,
+        "vote_patterns": vote_patterns,
+        "turn_state": {
+            "day": session.state.day_count,
+            "phase": session.state.phase.value,
+            "alive_players": len(alive_players),
+            "dead_players": len(dead_players),
+            "needs_vote_shape_review": bool(vote_patterns),
+        },
+        "bad_speech_not_equal_wolf": bad_speech_not_equal_wolf,
+    }
+
+
+def _extract_check_result(message: str) -> dict[str, Any] | None:
+    match = _CHECK_RESULT_PATTERN.search(message)
+    if not match:
+        return None
+    result = match.group(2)
+    if result == "好人":
+        result = "金水"
+    elif result == "狼人":
+        result = "查杀"
+    return {"target_seat": int(match.group(1)), "result": result}
+
+
+def _extract_badge_flow(message: str) -> str | None:
+    match = re.search(r"警徽流([^。！？\n]*)", message)
+    if not match:
+        return None
+    return match.group(1).strip(" ：:，,")
+
+
+def _claim_timing(message: str) -> str:
+    if _looks_like_self_forced_by_check(message):
+        return "被查杀后被迫起跳"
+    if any(word in message for word in ("被推", "抗推", "必须跳")):
+        return "被迫起跳"
+    return "主动声明"
+
+
+def _is_forced_god_claim(role: str, message: str) -> bool:
+    return role in {"女巫", "猎人", "守卫"} and (
+        _looks_like_self_forced_by_check(message) or "被迫" in message or "必须跳" in message
+    )
+
+
+def _looks_like_self_forced_by_check(message: str) -> bool:
+    return any(
+        marker in message
+        for marker in (
+            "我被查杀",
+            "查杀我",
+            "给我查杀",
+            "被查杀以后我",
+            "被查杀后我",
+            "我必须跳",
+        )
+    )
 
 
 def _seat_labels_from_ids(session: GameSession, player_ids: list[str]) -> list[str]:
