@@ -57,13 +57,7 @@ class HunterResolver:
         events: list[dict[str, Any]] = []
 
         if player.is_human:
-            # Simplified: human hunter auto-shoots first valid non-hunter target
-            targets = [p.player_id for p in session.state.players if p.alive and p.role_key != "hunter"]
-            if targets:
-                target_id = targets[0]
-                session.state.player_by_id(target_id).alive = False
-                info.hunter_can_shoot = False
-                events.append(event("hunter_shoot", f"你开枪带走了 {display_name(target_id, session)}！", target_id=target_id))
+            return events
         else:
             # AI hunter: use LLM to decide
             context = build_game_context(session)

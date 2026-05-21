@@ -83,6 +83,7 @@ class GameSessionRepository:
             witch_has_save_potion: bool = raw.get("witch_has_save_potion", "1") in ("1", "true", "True")
             witch_has_poison: bool = raw.get("witch_has_poison", "1") in ("1", "true", "True")
             pending_lw_id: str | None = raw.get("pending_last_words_player_id") or None
+            pending_lw_cause: str | None = raw.get("pending_last_words_death_cause") or None
             stream_event_seq: int = int(raw.get("stream_event_seq", "0"))
             pending_first_night_result: bool = raw.get("pending_first_night_result", "0") in ("1", "true", "True")
             board_config_raw: str | None = raw.get("board_config") or None
@@ -96,6 +97,7 @@ class GameSessionRepository:
             night_actions: list[dict[str, Any]] = json_loads(raw.get("night_actions", "[]"))
             voted_list: list[str] = json_loads(raw.get("voted_player_ids", "[]"))
             pending_first_night_deaths: list[str] = json_loads(raw.get("pending_first_night_deaths", "[]"))
+            pending_death_triggers: list[dict[str, str]] = json_loads(raw.get("pending_death_triggers", "[]"))
             sheriff_candidates: list[str] = json_loads(raw.get("sheriff_candidates", "[]"))
             sheriff_voters: list[str] = json_loads(raw.get("sheriff_voters", "[]"))
             sheriff_election_speeches: dict[str, str] = json_loads(raw.get("sheriff_election_speeches", "{}"))
@@ -121,6 +123,7 @@ class GameSessionRepository:
                 private_infos=private_infos,
                 board_config=board_config,
                 pending_last_words_player_id=pending_lw_id,
+                pending_last_words_death_cause=pending_lw_cause,
                 sheriff_candidates=sheriff_candidates,
                 sheriff_voters=sheriff_voters,
                 sheriff_election_speeches=sheriff_election_speeches,
@@ -128,6 +131,10 @@ class GameSessionRepository:
                 sheriff_vote_open=sheriff_vote_open,
                 pending_first_night_result=pending_first_night_result,
                 pending_first_night_deaths=pending_first_night_deaths,
+                pending_death_triggers=pending_death_triggers,
+                pending_death_trigger_next_phase=raw.get("pending_death_trigger_next_phase") or None,
+                pending_sheriff_transfer_player_id=raw.get("pending_sheriff_transfer_player_id") or None,
+                pending_hunter_shoot_player_id=raw.get("pending_hunter_shoot_player_id") or None,
                 night_pending_kill_target_id=raw.get("night_pending_kill_target_id") or None,
                 night_pending_guard_target_id=raw.get("night_pending_guard_target_id") or None,
                 night_pre_witch_resolved=night_pre_witch_resolved,
@@ -172,8 +179,13 @@ class GameSessionRepository:
                 "witch_has_save_potion": "1" if session.witch_has_save_potion else "0",
                 "witch_has_poison": "1" if session.witch_has_poison else "0",
                 "stream_event_seq": str(session.stream_event_seq),
+                "pending_last_words_death_cause": session.pending_last_words_death_cause or "",
                 "pending_first_night_result": "1" if session.pending_first_night_result else "0",
                 "pending_first_night_deaths": json_dumps(session.pending_first_night_deaths),
+                "pending_death_triggers": json_dumps(session.pending_death_triggers),
+                "pending_death_trigger_next_phase": session.pending_death_trigger_next_phase or "",
+                "pending_sheriff_transfer_player_id": session.pending_sheriff_transfer_player_id or "",
+                "pending_hunter_shoot_player_id": session.pending_hunter_shoot_player_id or "",
                 "board_config": session.board_config.model_dump_json() if session.board_config is not None else "",
                 "sheriff_candidates": json_dumps(session.sheriff_candidates),
                 "sheriff_voters": json_dumps(session.sheriff_voters),

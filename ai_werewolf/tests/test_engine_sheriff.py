@@ -2,7 +2,8 @@ from unittest.mock import MagicMock, patch
 
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.boards import BoardConfig, BoardRoleCount, SpeechRule, VoteRule, WinCondition
-from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerPrivateInfo, PlayerState
+from ai_werewolf.engine.helpers import allowed_actions
 from ai_werewolf.engine.orchestrator import PhaseOrchestrator
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import AIVoteResult, VoteResolver
@@ -186,6 +187,107 @@ def test_deferred_poisoned_hunter_does_not_shoot_after_sheriff_election():
 
     assert session.state.player_by_id("v1").alive is False
     orch.hunter.try_shoot.assert_not_called()
+
+
+def test_deferred_first_night_sheriff_death_enters_badge_transfer():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.day_count = 1
+    session.state.phase = GamePhase.SHERIFF_SPEECH
+    session.sheriff_candidates = ["human"]
+    session.sheriff_voters = ["w1", "s1", "v1"]
+    session.sheriff_election_votes = {"w1": "human", "s1": "human", "v1": "human"}
+    session.pending_first_night_result = True
+    session.pending_first_night_deaths = [{"player_id": "human", "cause": "night_kill"}]
+
+    orch._finalize_sheriff_election(session)
+
+    assert session.state.player_by_id("human").alive is False
+    assert session.state.player_by_id("human").sheriff is True
+    assert session.state.phase == GamePhase.SHERIFF_TRANSFER
+    assert session.pending_sheriff_transfer_player_id == "human"
+
+
+def test_human_sheriff_transfer_action_lists_alive_targets_and_tear_badge():
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_TRANSFER
+    session.state.player_by_id("human").alive = False
+    session.state.player_by_id("human").sheriff = True
+    session.pending_sheriff_transfer_player_id = "human"
+
+    actions = allowed_actions(session.state, session.human_player_id, session)
+
+    assert actions[0]["action_type"] == "sheriff_transfer"
+    assert {option["player_id"] for option in actions[0]["target_options"]} == {"w1", "s1", "v1"}
+    assert actions[1]["action_type"] == "tear_badge"
+
+
+def test_human_hunter_after_last_words_gets_shoot_choice_instead_of_auto_shoot():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.LAST_WORDS
+    session.state.day_count = 1
+    human = session.state.player_by_id("human")
+    human.role_key = "hunter"
+    human.alive = False
+    session.pending_last_words_player_id = "human"
+    session.pending_last_words_death_cause = "exile"
+    session.private_infos["human"] = PlayerPrivateInfo(hunter_can_shoot=True)
+
+    orch._finish_last_words(session)
+
+    assert session.state.phase == GamePhase.HUNTER_SHOOT
+    assert session.pending_hunter_shoot_player_id == "human"
+    actions = allowed_actions(session.state, session.human_player_id, session)
+    assert actions[0]["action_type"] == "hunter_shoot"
+    assert {option["player_id"] for option in actions[0]["target_options"]} == {"w1", "s1", "v1"}
+    assert actions[1]["action_type"] == "no_action"
+
+
+def test_human_hunter_can_decline_shoot_after_death():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.HUNTER_SHOOT
+    session.state.day_count = 1
+    human = session.state.player_by_id("human")
+    human.role_key = "hunter"
+    human.alive = False
+    session.pending_hunter_shoot_player_id = "human"
+    session.pending_death_trigger_next_phase = "check_win_or_next_night"
+    session.private_infos["human"] = PlayerPrivateInfo(hunter_can_shoot=True)
+
+    orch.advance(session, {"actor_player_id": "human", "action_type": "no_action"})
+
+    assert session.private_infos["human"].hunter_can_shoot is False
+    assert session.pending_hunter_shoot_player_id is None
+    assert session.state.phase == GamePhase.NIGHT
+
+
+def test_terminal_sheriff_death_ends_game_without_badge_transfer():
+    orch = _orchestrator()
+    players = [
+        _player("human", 1, "villager", is_human=True),
+        _player("w1", 2, "werewolf"),
+    ]
+    human = players[0]
+    human.sheriff = True
+    human.alive = False
+    session = GameSession(
+        state=GameState(game_id="g1", board_id="board_8_standard", phase=GamePhase.DAY_ANNOUNCEMENT, day_count=1, players=players),
+        agents={},
+        human_player_id="human",
+    )
+
+    orch._queue_death_triggers(
+        session,
+        [{"player_id": "human", "cause": "night_kill"}],
+        next_phase=GamePhase.DAY_ANNOUNCEMENT.value,
+    )
+    orch._advance_pending_death_triggers(session)
+
+    assert session.state.phase == GamePhase.GAME_OVER
+    assert session.state.winner == "wolves"
+    assert session.pending_sheriff_transfer_player_id is None
 
 
 def test_finalize_sheriff_election_enters_day_announcement_after_first_night():

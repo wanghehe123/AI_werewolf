@@ -117,6 +117,8 @@ class PhaseOrchestrator:
             self._handle_sheriff_speech(session, action)
         elif state.phase == GamePhase.SHERIFF_SPEECH and action_type in {"vote", "abstain"}:
             self._handle_sheriff_vote(session, action)
+        elif state.phase == GamePhase.SHERIFF_TRANSFER and action_type in {"sheriff_transfer", "tear_badge"}:
+            self._handle_sheriff_transfer(session, action)
         elif state.phase == GamePhase.NIGHT and action_type == "night_start":
             self._resolve_night_pre_witch(session, action)
         elif state.phase == GamePhase.NIGHT and action_type in {"skip", "wolf_kill", "seer_check", "guard", "witch_save", "witch_poison", "no_action"}:
@@ -129,6 +131,8 @@ class PhaseOrchestrator:
             self._resolve_vote(session, action)
         elif state.phase == GamePhase.LAST_WORDS and action_type == "continue":
             self._finish_last_words(session)
+        elif state.phase == GamePhase.HUNTER_SHOOT and action_type in {"hunter_shoot", "no_action"}:
+            self._handle_hunter_shoot(session, action)
         else:
             raise HTTPException(status_code=400, detail=f"action {action_type} is not allowed in {state.phase.value}")
 
@@ -470,6 +474,90 @@ class PhaseOrchestrator:
         session.sheriff_vote_open = False
         self._reveal_pending_first_night_result(session)
 
+    def _handle_sheriff_transfer(self, session: GameSession, action: dict) -> None:
+        sheriff_id = session.pending_sheriff_transfer_player_id
+        if action.get("actor_player_id") != sheriff_id:
+            raise HTTPException(status_code=400, detail="only the dead sheriff can transfer the badge")
+        old_sheriff = session.state.player_by_id(sheriff_id)
+        old_sheriff.sheriff = False
+        if action["action_type"] == "tear_badge":
+            session.append_public_event("sheriff_badge_removed", f"{player_label(sheriff_id, session)} 撕掉警徽，本局暂时没有警长。", actor_id=sheriff_id)
+        else:
+            target_id = action.get("target_player_id")
+            target = self._player_by_id_or_400(session, target_id, "target")
+            if not target.alive:
+                raise HTTPException(status_code=400, detail="cannot transfer badge to dead player")
+            target.sheriff = True
+            session.append_public_event(
+                "sheriff_badge_transferred",
+                f"{player_label(sheriff_id, session)} 将警徽移交给 {player_label(target_id, session)}。",
+                actor_id=sheriff_id,
+                target_id=target_id,
+            )
+        session.pending_sheriff_transfer_player_id = None
+        self._advance_pending_death_triggers(session)
+
+    def _auto_resolve_sheriff_transfer(self, session: GameSession) -> None:
+        sheriff_id = session.pending_sheriff_transfer_player_id
+        if not sheriff_id:
+            self._advance_pending_death_triggers(session)
+            return
+        target_id = next((player.player_id for player in session.state.players if player.alive and player.player_id != sheriff_id), None)
+        action = {
+            "actor_player_id": sheriff_id,
+            "action_type": "sheriff_transfer" if target_id else "tear_badge",
+            "target_player_id": target_id,
+        }
+        self._handle_sheriff_transfer(session, action)
+
+    def _handle_hunter_shoot(self, session: GameSession, action: dict) -> None:
+        hunter_id = session.pending_hunter_shoot_player_id
+        if action.get("actor_player_id") != hunter_id:
+            raise HTTPException(status_code=400, detail="only the dead hunter can shoot")
+        info = session.private_infos.setdefault(hunter_id, PlayerPrivateInfo())
+        if not info.hunter_can_shoot:
+            session.pending_hunter_shoot_player_id = None
+            self._advance_pending_death_triggers(session)
+            return
+        info.hunter_can_shoot = False
+        if action["action_type"] == "no_action":
+            session.append_public_event("hunter_shoot", f"{player_label(hunter_id, session)} 选择不开枪。", actor_id=hunter_id)
+            session.pending_hunter_shoot_player_id = None
+            self._advance_pending_death_triggers(session)
+            return
+        target_id = action.get("target_player_id")
+        target = self._player_by_id_or_400(session, target_id, "target")
+        if not target.alive:
+            raise HTTPException(status_code=400, detail="cannot shoot dead player")
+        target.alive = False
+        session.append_public_event(
+            "hunter_shoot",
+            f"{player_label(hunter_id, session)} 开枪带走了 {player_label(target_id, session)}！",
+            actor_id=hunter_id,
+            target_id=target_id,
+        )
+        session.pending_hunter_shoot_player_id = None
+        self._queue_death_triggers(session, [{"player_id": target_id, "cause": "hunter_shoot"}])
+        self._advance_pending_death_triggers(session)
+
+    def _auto_resolve_hunter_shoot(self, session: GameSession) -> None:
+        hunter_id = session.pending_hunter_shoot_player_id
+        if not hunter_id:
+            self._advance_pending_death_triggers(session)
+            return
+        alive_before = {player.player_id for player in session.state.players if player.alive}
+        shoot_events = self.hunter.try_shoot(session, hunter_id, death_cause="exile")
+        for public_event in shoot_events:
+            self._append_event_dict(session, public_event)
+        session.pending_hunter_shoot_player_id = None
+        death_records = [
+            {"player_id": player.player_id, "cause": "hunter_shoot"}
+            for player in session.state.players
+            if player.player_id in alive_before and not player.alive
+        ]
+        self._queue_death_triggers(session, death_records)
+        self._advance_pending_death_triggers(session)
+
     def _resolve_night(self, session: GameSession, action: dict | None = None) -> None:
         # Two-step witch night: if human is witch and kill target is cached, run witch step only
         human = self._human_player(session)
@@ -477,6 +565,7 @@ class PhaseOrchestrator:
             self._resolve_night_witch_step(session, action)
             return
 
+        alive_before = {player.player_id for player in session.state.players if player.alive}
         defer_first_night_result = self._should_defer_first_night_result(session)
         events = self.night.resolve(session, human_action=action, defer_death_reveal=defer_first_night_result)
         for public_event in events:
@@ -491,19 +580,9 @@ class PhaseOrchestrator:
             self._enter_sheriff_election(session)
             return
 
-        # Check if any dead player is a hunter (can shoot on night kill)
-        for player in session.state.players:
-            if not player.alive and player.role_key == "hunter":
-                info = session.private_infos.get(player.player_id, PlayerPrivateInfo())
-                if info.hunter_can_shoot:
-                    shoot_events = self.hunter.try_shoot(session, player.player_id, death_cause="night_kill")
-                    for public_event in shoot_events:
-                        self._append_event_dict(session, public_event)
-
-        # Check win after night + hunter shoot
-        winner = evaluate_winner(session.state, self.role_registry)
-        if winner is not None:
-            self._end_game(session, winner)
+        death_records = self._night_death_records_since(session, alive_before)
+        self._queue_death_triggers(session, death_records, next_phase=GamePhase.DAY_ANNOUNCEMENT.value)
+        self._advance_pending_death_triggers(session)
 
     def _resolve_night_pre_witch(self, session: GameSession, action: dict) -> None:
         """First step of two-step witch night: run wolf/seer/guard, cache kill target."""
@@ -535,6 +614,7 @@ class PhaseOrchestrator:
 
     def _resolve_night_witch_step(self, session: GameSession, action: dict) -> None:
         """Second step of two-step witch night: apply witch action and resolve deaths."""
+        alive_before = {player.player_id for player in session.state.players if player.alive}
         defer_first_night_result = self._should_defer_first_night_result(session)
         events = self.night.resolve_witch_step(
             session,
@@ -549,19 +629,9 @@ class PhaseOrchestrator:
             self._enter_sheriff_election(session)
             return
 
-        # Check if any dead player is a hunter (can shoot on night kill)
-        for player in session.state.players:
-            if not player.alive and player.role_key == "hunter":
-                info = session.private_infos.get(player.player_id, PlayerPrivateInfo())
-                if info.hunter_can_shoot:
-                    shoot_events = self.hunter.try_shoot(session, player.player_id, death_cause="night_kill")
-                    for public_event in shoot_events:
-                        self._append_event_dict(session, public_event)
-
-        # Check win after night + hunter shoot
-        winner = evaluate_winner(session.state, self.role_registry)
-        if winner is not None:
-            self._end_game(session, winner)
+        death_records = self._night_death_records_since(session, alive_before)
+        self._queue_death_triggers(session, death_records, next_phase=GamePhase.DAY_ANNOUNCEMENT.value)
+        self._advance_pending_death_triggers(session)
 
     def _should_defer_first_night_result(self, session: GameSession) -> bool:
         return (
@@ -592,20 +662,8 @@ class PhaseOrchestrator:
         else:
             session.append_public_event("night_result", "昨夜平安夜，没有玩家出局。")
 
-        for player in session.state.players:
-            if not player.alive and player.role_key == "hunter":
-                info = session.private_infos.get(player.player_id, PlayerPrivateInfo())
-                cause = death_causes.get(player.player_id, "night_kill")
-                if info.hunter_can_shoot and cause != "poison":
-                    shoot_events = self.hunter.try_shoot(session, player.player_id, death_cause=cause)
-                    for public_event in shoot_events:
-                        self._append_event_dict(session, public_event)
-                elif cause == "poison":
-                    info.hunter_can_shoot = False
-
-        winner = evaluate_winner(session.state, self.role_registry)
-        if winner is not None:
-            self._end_game(session, winner)
+        self._queue_death_triggers(session, death_records, next_phase=GamePhase.DAY_ANNOUNCEMENT.value)
+        self._advance_pending_death_triggers(session)
 
     def _normalize_pending_death_records(self, raw_records: list) -> list[dict[str, str]]:
         records: list[dict[str, str]] = []
@@ -616,6 +674,98 @@ class PhaseOrchestrator:
                 cause = item.get("cause") if isinstance(item.get("cause"), str) else "night_kill"
                 records.append({"player_id": item["player_id"], "cause": cause})
         return records
+
+    def _night_death_records_since(self, session: GameSession, alive_before: set[str]) -> list[dict[str, str]]:
+        poison_targets = {
+            action.get("target_player_id")
+            for action in session.night_actions
+            if action.get("action_type") == "witch_poison"
+        }
+        records: list[dict[str, str]] = []
+        for player in session.state.players:
+            if player.player_id in alive_before and not player.alive:
+                cause = "poison" if player.player_id in poison_targets else "night_kill"
+                records.append({"player_id": player.player_id, "cause": cause})
+        return records
+
+    def _queue_death_triggers(
+        self,
+        session: GameSession,
+        death_records: list[dict[str, str]],
+        *,
+        next_phase: str | None = None,
+    ) -> None:
+        if next_phase is not None:
+            session.pending_death_trigger_next_phase = next_phase
+        existing = {(trigger.get("type"), trigger.get("player_id")) for trigger in session.pending_death_triggers}
+        sheriff_triggers: list[dict[str, str]] = []
+        hunter_triggers: list[dict[str, str]] = []
+        for record in death_records:
+            player_id = record["player_id"]
+            cause = record.get("cause", "night_kill")
+            player = session.state.player_by_id(player_id)
+            if cause == "poison" and player.role_key == "hunter":
+                info = session.private_infos.setdefault(player_id, PlayerPrivateInfo())
+                info.hunter_can_shoot = False
+            winner_after_death = evaluate_winner(session.state, self.role_registry)
+            if (
+                winner_after_death is None
+                and player.sheriff
+                and any(candidate.alive and candidate.player_id != player_id for candidate in session.state.players)
+            ):
+                key = ("sheriff_transfer", player_id)
+                if key not in existing:
+                    sheriff_triggers.append({"type": "sheriff_transfer", "player_id": player_id, "cause": cause})
+                    existing.add(key)
+            if player.role_key == "hunter":
+                info = session.private_infos.setdefault(player_id, PlayerPrivateInfo())
+                if info.hunter_can_shoot and cause != "poison":
+                    key = ("hunter_shoot", player_id)
+                    if key not in existing:
+                        hunter_triggers.append({"type": "hunter_shoot", "player_id": player_id, "cause": cause})
+                        existing.add(key)
+        session.pending_death_triggers.extend(sheriff_triggers + hunter_triggers)
+
+    def _advance_pending_death_triggers(self, session: GameSession) -> None:
+        while session.pending_death_triggers:
+            trigger = session.pending_death_triggers.pop(0)
+            player_id = trigger["player_id"]
+            player = session.state.player_by_id(player_id)
+            if trigger["type"] == "sheriff_transfer":
+                if player.sheriff and any(candidate.alive and candidate.player_id != player_id for candidate in session.state.players):
+                    session.pending_sheriff_transfer_player_id = player_id
+                    session.state.phase = GamePhase.SHERIFF_TRANSFER
+                    session.append_public_event("phase_changed", f"{player_label(player_id, session)} 死亡，请移交或撕掉警徽。", actor_id=player_id)
+                    if not player.is_human:
+                        self._auto_resolve_sheriff_transfer(session)
+                    return
+                continue
+            if trigger["type"] == "hunter_shoot":
+                info = session.private_infos.get(player_id, PlayerPrivateInfo())
+                if player.role_key == "hunter" and info.hunter_can_shoot:
+                    session.pending_hunter_shoot_player_id = player_id
+                    session.state.phase = GamePhase.HUNTER_SHOOT
+                    session.append_public_event("phase_changed", f"{player_label(player_id, session)} 可以选择是否开枪。", actor_id=player_id)
+                    if not player.is_human:
+                        self._auto_resolve_hunter_shoot(session)
+                    return
+                continue
+        self._finish_death_trigger_sequence(session)
+
+    def _finish_death_trigger_sequence(self, session: GameSession) -> None:
+        session.pending_sheriff_transfer_player_id = None
+        session.pending_hunter_shoot_player_id = None
+        next_phase = session.pending_death_trigger_next_phase
+        session.pending_death_trigger_next_phase = None
+        winner = evaluate_winner(session.state, self.role_registry)
+        if winner is not None:
+            self._end_game(session, winner)
+            return
+        if next_phase == "check_win_or_next_night":
+            self._check_win_or_next_night(session)
+            return
+        if next_phase:
+            session.state.phase = GamePhase(next_phase)
 
     def _enter_speech(self, session: GameSession) -> None:
         session.state.phase = GamePhase.DAY_SPEECH
@@ -703,6 +853,7 @@ class PhaseOrchestrator:
 
         if exiled_id is not None:
             session.pending_last_words_player_id = exiled_id
+            session.pending_last_words_death_cause = "exile"
             session.state.phase = GamePhase.LAST_WORDS
 
             # Generate AI last words if exiled player is AI
@@ -719,20 +870,23 @@ class PhaseOrchestrator:
                 session.append_public_event("last_words", f"{player_label(exiled_id, session)}：{last_words}", actor_id=exiled_id)
 
             session.append_public_event("last_words", f"{player_label(exiled_id, session)} 留下遗言，白天即将结束。", actor_id=exiled_id)
-
-            # Check hunter shoot for exiled hunter
-            if exiled_player.role_key == "hunter":
-                info = session.private_infos.get(exiled_id, PlayerPrivateInfo())
-                if info.hunter_can_shoot:
-                    shoot_events = self.hunter.try_shoot(session, exiled_id, death_cause="exile")
-                    for public_event in shoot_events:
-                        self._append_event_dict(session, public_event)
         else:
             self._check_win_or_next_night(session)
 
     def _finish_last_words(self, session: GameSession) -> None:
+        player_id = session.pending_last_words_player_id
+        death_cause = session.pending_last_words_death_cause or "exile"
         session.pending_last_words_player_id = None
+        session.pending_last_words_death_cause = None
         session.append_public_event("phase_changed", "遗言结束，进入下一阶段。")
+        if player_id:
+            self._queue_death_triggers(
+                session,
+                [{"player_id": player_id, "cause": death_cause}],
+                next_phase="check_win_or_next_night",
+            )
+            self._advance_pending_death_triggers(session)
+            return
         self._check_win_or_next_night(session)
 
     # ---- Win check helpers ----
@@ -960,10 +1114,23 @@ class PhaseOrchestrator:
             "run_for_sheriff",
             "skip_election",
         }
-        if action_type in participant_actions and not actor.alive:
+        dead_action_allowed = (
+            session.state.phase == GamePhase.HUNTER_SHOOT
+            and action_type == "no_action"
+            and session.pending_hunter_shoot_player_id == actor.player_id
+        )
+        if action_type in participant_actions and not actor.alive and not dead_action_allowed:
             raise HTTPException(status_code=400, detail="dead players cannot act")
 
         target_id = action.get("target_player_id")
+        if action_type in {"sheriff_transfer", "hunter_shoot"}:
+            if not target_id:
+                raise HTTPException(status_code=400, detail=f"{action_type} requires target_player_id")
+            target = self._player_by_id_or_400(session, target_id, "target")
+            if not target.alive:
+                raise HTTPException(status_code=400, detail="cannot target dead player")
+            if target.player_id == actor.player_id:
+                raise HTTPException(status_code=400, detail="cannot target yourself")
         if action_type == "vote" and session.state.phase != GamePhase.SHERIFF_SPEECH:
             if not target_id:
                 raise HTTPException(status_code=400, detail="vote requires target_player_id")

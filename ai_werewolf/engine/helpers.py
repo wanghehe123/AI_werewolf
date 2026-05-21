@@ -116,6 +116,17 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
         if human.player_id in session.sheriff_candidates and human.player_id not in session.sheriff_election_speeches:
             return [{"action_type": "speech", "label": "竞选发言"}]
         return []
+    if state.phase == GamePhase.SHERIFF_TRANSFER:
+        human = _human_player(state, human_player_id)
+        if human is None or session is None:
+            return []
+        if session.pending_sheriff_transfer_player_id != human.player_id:
+            return []
+        targets = [player for player in state.players if player.alive and player.player_id != human.player_id]
+        return [
+            _target_action("sheriff_transfer", "移交警徽", targets, session),
+            {"action_type": "tear_badge", "label": "撕掉警徽"},
+        ]
     if state.phase == GamePhase.NIGHT:
         human = _human_player(state, human_player_id)
         if human is None or not human.alive:
@@ -213,6 +224,17 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
         return [{"action_type": "vote", "label": "投票"}, {"action_type": "abstain", "label": "弃票"}]
     if state.phase == GamePhase.LAST_WORDS:
         return [{"action_type": "continue", "label": "继续"}]
+    if state.phase == GamePhase.HUNTER_SHOOT:
+        human = _human_player(state, human_player_id)
+        if human is None or session is None:
+            return []
+        if session.pending_hunter_shoot_player_id != human.player_id:
+            return []
+        targets = [player for player in state.players if player.alive and player.player_id != human.player_id]
+        return [
+            _target_action("hunter_shoot", "开枪带走", targets, session),
+            {"action_type": "no_action", "label": "不开枪"},
+        ]
     return []
 
 

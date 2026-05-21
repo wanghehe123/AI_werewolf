@@ -15,6 +15,8 @@ class PlayerActionType(StrEnum):
     NO_ACTION = "no_action"
     RUN_FOR_SHERIFF = "run_for_sheriff"
     WITHDRAW_SHERIFF_RUN = "withdraw_sheriff_run"
+    SHERIFF_TRANSFER = "sheriff_transfer"
+    TEAR_BADGE = "tear_badge"
 
 
 class PlayerAction(BaseModel):

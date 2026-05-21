@@ -49,3 +49,25 @@ def test_hunter_cannot_shoot_when_poisoned():
     resolver = HunterResolver(model_registry=MagicMock(), role_model_bindings=[])
     events = resolver.try_shoot(session, "hunter_ai", death_cause="poison")
     assert events == []
+
+
+def test_human_hunter_is_not_auto_resolved_by_try_shoot():
+    """Human hunter must choose a target through the action phase."""
+    players = [
+        PlayerState(player_id="hunter_human", agent_id=None, seat=1, role_key="hunter", alive=False, is_human=True),
+        PlayerState(player_id="wolf1", agent_id="wolf1", seat=2, role_key="werewolf", alive=True, is_human=False),
+    ]
+    state = GameState(game_id="g", board_id="b", phase=GamePhase.HUNTER_SHOOT, day_count=1, players=players)
+    session = GameSession(
+        state=state,
+        agents={},
+        human_player_id="hunter_human",
+        private_infos={"hunter_human": PlayerPrivateInfo(hunter_can_shoot=True)},
+    )
+
+    resolver = HunterResolver(model_registry=MagicMock(), role_model_bindings=[])
+    events = resolver.try_shoot(session, "hunter_human", death_cause="exile")
+
+    assert events == []
+    assert session.state.player_by_id("wolf1").alive is True
+    assert session.private_infos["hunter_human"].hunter_can_shoot is True

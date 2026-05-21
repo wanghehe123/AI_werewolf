@@ -46,6 +46,11 @@ class GameSession:
     sheriff_vote_open: bool = False
     pending_first_night_result: bool = False
     pending_first_night_deaths: list[dict[str, str]] = field(default_factory=list)
+    pending_last_words_death_cause: str | None = None
+    pending_death_triggers: list[dict[str, str]] = field(default_factory=list)
+    pending_death_trigger_next_phase: str | None = None
+    pending_sheriff_transfer_player_id: str | None = None
+    pending_hunter_shoot_player_id: str | None = None
     night_pending_kill_target_id: str | None = None
     night_pending_guard_target_id: str | None = None
     night_pre_witch_resolved: bool = False

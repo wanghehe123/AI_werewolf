@@ -29,6 +29,11 @@ from ai_werewolf.domain.game_state import PlayerPrivateInfo, PlayerState
 from ai_werewolf.llm.graphs.player_decision_prompt_catalog import build_identity_priority_block
 from ai_werewolf.llm.prompts.template_loader import render_template
 from ai_werewolf.llm.prompts.template_models import join_non_empty_sections, section
+from ai_werewolf.llm.strategy_provider import (
+    StaticWerewolfStrategyProvider,
+    StrategyProvider,
+    render_strategy_hint_block,
+)
 
 
 def build_player_prompt(
@@ -393,6 +398,7 @@ def build_sheriff_campaign_prompt(
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     election_progress: str = "",
+    strategy_provider: StrategyProvider | None = None,
 ) -> str:
     """构建警长竞选发言阶段的完整 Prompt。
 
@@ -472,8 +478,8 @@ def build_sheriff_campaign_prompt(
         "- 表明你竞选警长的动机和愿意",
         "- 展示你的带队能力和逻辑分析能力",
         "- 如果你是好人（预言家/女巫/猎人/平民），可以以好人视角承诺公正带队、理性归票",
-        "- 如果你是预言家，可以悍跳预言家或退水不跳",
-        "- 如果你是狼人，可以伪装成好人竞选警长，为自己和狼队友创造优势",
+        "- 如果你是预言家，通常应起跳预言家，公开真实查验并给出警徽流",
+        "- 如果你是狼人，通常应考虑悍跳预言家抢警徽，为自己和狼队友创造优势",
         "- 你可以分析当前局面，表达自己的站边和判断",
         "",
         "发言要点（选择性地融入，不必逐条覆盖）：",
@@ -494,6 +500,18 @@ def build_sheriff_campaign_prompt(
     tactic_hint_section = ""
     if tactic_hint:
         tactic_hint_section = section("【狼队战术提示】", f"夜间狼队战术提示：{tactic_hint}")
+    provider = strategy_provider or StaticWerewolfStrategyProvider()
+    strategy_hint_section = render_strategy_hint_block(
+        provider.get_hints(
+            role_key=role_key,
+            phase="sheriff_speech",
+            day_count=1,
+            private_info=None,
+            public_context=game_context,
+            board_roles=board_roles or {},
+            alive_players=alive_players or [],
+        )
+    )
 
     return render_template(
         "sheriff/sheriff_campaign_speech.st",
@@ -510,6 +528,7 @@ def build_sheriff_campaign_prompt(
             "game_history_section": section("【游戏历史】", game_context) if game_context else "",
             "action_requirements_section": section("【行动要求 — 警长竞选发言】", campaign_action_hint),
             "tactic_hint_section": tactic_hint_section,
+            "strategy_hint_section": strategy_hint_section,
             "output_format_section": section("【输出格式】", output_format),
             "forbidden_section": section("【禁止事项】", forbidden),
         },

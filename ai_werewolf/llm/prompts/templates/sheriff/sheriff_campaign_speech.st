@@ -22,6 +22,8 @@ ${action_requirements_section}
 
 ${tactic_hint_section}
 
+${strategy_hint_section}
+
 ${output_format_section}
 
 ${forbidden_section}
