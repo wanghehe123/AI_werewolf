@@ -82,13 +82,13 @@ describe("socket service", () => {
         disconnect: () => {}
       } as unknown as Socket;
 
-      emitPlayerAction(socket, { action_type: "vote", target_player_id: "p2" });
+      emitPlayerAction(socket, { action_type: "vote", target_player_id: "p2" }, "player_abc");
 
       expect(emittedEvent).toBe("player_action");
       const data = emittedData as Record<string, unknown>;
       expect(data.action_type).toBe("vote");
       expect(data.target_player_id).toBe("p2");
-      expect(data.actor_player_id).toBe("human");
+      expect(data.actor_player_id).toBe("player_abc");
     });
   });
 });

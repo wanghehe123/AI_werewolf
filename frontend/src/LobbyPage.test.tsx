@@ -51,14 +51,17 @@ describe("LobbyPage", () => {
     expect(screen.getAllByText("6人新手局")).toHaveLength(2);
     expect(screen.getByText("AI玩家1")).toBeInTheDocument();
 
+    await userEvent.type(screen.getByLabelText("玩家名称"), "阿愿");
     await userEvent.click(screen.getByRole("button", { name: "开局" }));
 
     expect(createGame).toHaveBeenCalledWith({
       board_id: "board_6_beginner",
-      human_player_id: "human",
+      human_player_id: expect.stringMatching(/^player_/),
+      human_player_name: "阿愿",
       human_role_key: "random",
       agent_ids: ["agent_0", "agent_1", "agent_2", "agent_3", "agent_4"]
     });
+    expect(createGame.mock.calls[0][0].human_player_id).not.toBe("human");
   });
 
   it("lets the player choose a role before creating a game", async () => {
@@ -70,12 +73,28 @@ describe("LobbyPage", () => {
       </MemoryRouter>
     );
 
+    await userEvent.type(screen.getByLabelText("玩家名称"), "阿愿");
     await userEvent.selectOptions(screen.getByLabelText("选择你的职业"), "seer");
     await userEvent.click(screen.getByRole("button", { name: "开局" }));
 
     expect(createGame).toHaveBeenCalledWith(expect.objectContaining({
+      human_player_name: "阿愿",
       human_role_key: "seer"
     }));
+  });
+
+  it("requires a player name before creating a game", async () => {
+    const createGame = vi.fn().mockResolvedValue({ game_id: "game_123" });
+
+    render(
+      <MemoryRouter>
+        <LobbyPage boards={boardsWithPlayerCount()} agents={agents} createGame={createGame} />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole("button", { name: "开局" })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("玩家名称"), "阿愿");
+    expect(screen.getByRole("button", { name: "开局" })).toBeEnabled();
   });
 
   it("disables start when selected agents do not fill the board", () => {

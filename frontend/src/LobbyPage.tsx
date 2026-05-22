@@ -16,11 +16,12 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
   const requiredAgents = Math.max((selectedBoard?.player_count ?? 1) - 1, 0);
   const roleOptions = selectedBoard?.roles ?? [];
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>(() => agents.slice(0, requiredAgents).map((agent) => agent.agent_id));
+  const [humanPlayerName, setHumanPlayerName] = useState("");
   const [humanRoleKey, setHumanRoleKey] = useState("random");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canStart = Boolean(selectedBoard) && selectedAgentIds.length === requiredAgents && !pending;
+  const canStart = Boolean(selectedBoard) && humanPlayerName.trim().length > 0 && selectedAgentIds.length === requiredAgents && !pending;
 
   function toggleAgent(agentId: string) {
     setSelectedAgentIds((current) => {
@@ -43,7 +44,8 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
     try {
       const game = await createGame({
         board_id: selectedBoard.board_id,
-        human_player_id: "human",
+        human_player_id: humanPlayerIdFromName(humanPlayerName),
+        human_player_name: humanPlayerName.trim(),
         human_role_key: humanRoleKey,
         agent_ids: selectedAgentIds
       });
@@ -85,6 +87,17 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
         </div>
 
         <div className="p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
+          <label className="mb-3.5 text-[#f0d9ab] font-extrabold block" htmlFor="human-player-name">玩家名称</label>
+          <input
+            id="human-player-name"
+            aria-label="玩家名称"
+            className="w-full min-h-[42px] border border-white/[0.14] rounded-lg px-3 bg-white/[0.06] text-[var(--color-text)]"
+            value={humanPlayerName}
+            onChange={(event) => setHumanPlayerName(event.target.value)}
+            placeholder="输入你在本局里的名字"
+            maxLength={18}
+          />
+          <p className="text-[#b9aa92] mt-2 mb-5">AI 会用这个名字称呼你，避免把真人玩家识别成 human。</p>
           <label className="mb-3.5 text-[#f0d9ab] font-extrabold block" htmlFor="human-role-select">选择你的职业</label>
           <p className="text-[#b9aa92]">默认随机；选择具体职业可方便测试夜晚技能和发言视角。</p>
           <select
@@ -148,4 +161,12 @@ function roleLabel(roleKey: string): string {
     guardian: "守卫"
   };
   return labels[roleKey] ?? roleKey;
+}
+
+function humanPlayerIdFromName(name: string): string {
+  const encoded = Array.from(name.trim())
+    .map((char) => char.codePointAt(0)?.toString(36) ?? "")
+    .filter(Boolean)
+    .join("_");
+  return `player_${encoded || "guest"}`.slice(0, 64);
 }

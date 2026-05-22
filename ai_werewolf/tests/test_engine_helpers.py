@@ -26,6 +26,41 @@ def test_display_name_human():
     assert display_name("human", session) == "你"
 
 
+def test_display_name_human_uses_entered_player_name():
+    from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
+    from ai_werewolf.engine.helpers import display_name, player_references
+    from ai_werewolf.engine.session import GameSession
+
+    state = GameState(
+        game_id="g", board_id="b", phase=GamePhase.SETUP, day_count=0,
+        players=[
+            PlayerState(
+                player_id="human",
+                agent_id=None,
+                seat=1,
+                role_key="villager",
+                alive=True,
+                is_human=True,
+                display_name="阿愿",
+            ),
+            PlayerState(player_id="ai_1", agent_id="ai_1", seat=2, role_key="werewolf", alive=True, is_human=False),
+        ],
+    )
+    session = GameSession(state=state, agents={}, human_player_id="human")
+
+    assert display_name("human", session) == "阿愿"
+    assert player_references(session)["human"] == "1号 阿愿"
+
+
+def test_create_game_request_replaces_literal_human_id_when_name_is_present():
+    from ai_werewolf.api.games import _human_player_id_for_request
+
+    player_id = _human_player_id_for_request("human", "阿愿")
+
+    assert player_id.startswith("player_")
+    assert player_id != "human"
+
+
 def test_display_name_ai():
     from ai_werewolf.domain.agents import AgentProfile
     from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState

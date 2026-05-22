@@ -35,6 +35,7 @@ class PlayerState(BaseModel):
     role_key: str
     alive: bool
     is_human: bool
+    display_name: str | None = None
     sheriff: bool = False
 
 

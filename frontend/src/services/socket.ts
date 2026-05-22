@@ -82,10 +82,11 @@ export function connectGameSocket(options: GameSocketOptions): Socket {
 
 export function emitPlayerAction(
   socket: Socket,
-  action: { action_type: string; target_player_id?: string | null; content?: string | null }
+  action: { action_type: string; target_player_id?: string | null; content?: string | null },
+  actorPlayerId = "human"
 ): void {
   socket.emit("player_action", {
-    actor_player_id: "human",
+    actor_player_id: actorPlayerId,
     action_type: action.action_type,
     target_player_id: action.target_player_id ?? undefined,
     content: action.content ?? undefined,

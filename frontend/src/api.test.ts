@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, createGame, fetchBoards, subscribeGameStream } from "./api";
+import { ApiError, createGame, fetchBoards, submitGameAction, subscribeGameStream } from "./api";
 
 describe("api client", () => {
   afterEach(() => {
@@ -54,5 +54,21 @@ describe("api client", () => {
     expect(addEventListener).toHaveBeenCalledWith("exile", expect.any(Function));
     subscription.close();
     expect(close).toHaveBeenCalled();
+  });
+
+  it("submits actions with the current human player id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ code: 0, data: { game_id: "game_1" } })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await submitGameAction("game_1", { action_type: "start_game" }, "player_abc", "http://api.local");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toMatchObject({
+      actor_player_id: "player_abc",
+      action_type: "start_game"
+    });
   });
 });

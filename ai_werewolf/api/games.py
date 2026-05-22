@@ -5,10 +5,11 @@ REST API 端点：创建游戏、查询状态、提交行动。
 游戏逻辑已移至 engine/ 模块，本文件只做 HTTP 请求解析和响应格式化。
 """
 
-import logging
 import asyncio
+import hashlib
 import io
 import json
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 class CreateGameRequest(BaseModel):
     board_id: str
     human_player_id: str
+    human_player_name: str | None = None
     agent_ids: list[str]
     human_role_key: str | None = None
 
@@ -154,6 +156,16 @@ def _player_model_bindings(state: GameState) -> dict[str, str]:
     }
 
 
+def _human_player_id_for_request(raw_player_id: str, display_name: str | None) -> str:
+    player_id = raw_player_id.strip()
+    if player_id and player_id != "human":
+        return player_id
+    if not display_name:
+        return player_id or "human"
+    digest = hashlib.sha1(display_name.encode("utf-8")).hexdigest()[:12]
+    return f"player_{digest}"
+
+
 # ==================== API 端点 ====================
 
 @router.post("")
@@ -173,13 +185,16 @@ def create_game(request: CreateGameRequest):
         raise HTTPException(status_code=400, detail="agent count must fill board seats after human player")
 
     human_role_key = None if request.human_role_key in {None, "", "random"} else request.human_role_key
+    human_display_name = (request.human_player_name or "").strip() or None
+    human_player_id = _human_player_id_for_request(request.human_player_id, human_display_name)
     try:
         state = initialize_game_node(
             board,
-            request.human_player_id,
+            human_player_id,
             selected_agents,
             seed=None,
             human_role_key=human_role_key,
+            human_display_name=human_display_name,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -188,7 +203,7 @@ def create_game(request: CreateGameRequest):
     session = GameSession(
         state=state,
         agents={agent.agent_id: agent for agent in selected_agents},
-        human_player_id=request.human_player_id,
+        human_player_id=human_player_id,
         private_infos=build_private_infos(state.players),
         board_config=board,
     )
@@ -197,7 +212,7 @@ def create_game(request: CreateGameRequest):
     _games[state.game_id] = session
 
     if _game_repository is not None:
-        _game_repository.save_game(state, request.human_player_id, _player_model_bindings(state))
+        _game_repository.save_game(state, human_player_id, _player_model_bindings(state))
 
     return success_response(data=frontend_state(session, _model_registry, _role_model_bindings))
 

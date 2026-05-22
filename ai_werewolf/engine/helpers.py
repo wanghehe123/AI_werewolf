@@ -21,6 +21,9 @@ def event(event_type: str, message: str, **payload: Any) -> dict[str, Any]:
 
 def display_name(player_id: str, session: GameSession) -> str:
     """Get display name for a player. Human player shows as '你'."""
+    player = session.state.player_by_id(player_id)
+    if player.display_name and player.display_name.strip():
+        return player.display_name.strip()
     if player_id == session.human_player_id:
         return "你"
     agent = session.agents.get(player_id)

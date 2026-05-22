@@ -224,7 +224,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   submitAction: async (gameId, action) => {
     set({ pending: true, error: null });
     try {
-      const game = await submitGameAction(gameId, action);
+      const actorPlayerId = get().game?.human_player_id ?? "human";
+      const game = await submitGameAction(gameId, action, actorPlayerId);
       // Announcements are generated from SSE events, not here.
       // state_snapshot (always the last SSE event) handles
       // public_events that lack an SSE counterpart (e.g. exile).

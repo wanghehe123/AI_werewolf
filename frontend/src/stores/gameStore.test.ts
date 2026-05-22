@@ -292,6 +292,20 @@ describe("gameStore", () => {
       useGameStore.setState({ pending: true });
       expect(useGameStore.getState().pending).toBe(true);
     });
+
+    it("uses the loaded human player id when submitting actions", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ code: 0, data: { ...mockGame(), human_player_id: "player_abc" } })
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      useGameStore.getState().setGame({ ...mockGame(), human_player_id: "player_abc" });
+
+      await useGameStore.getState().submitAction("game_1", { action_type: "start_game" });
+
+      const [, init] = fetchMock.mock.calls[0];
+      expect(JSON.parse(init.body)).toMatchObject({ actor_player_id: "player_abc" });
+    });
   });
 
   describe("reset", () => {

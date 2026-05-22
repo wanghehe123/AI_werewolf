@@ -161,6 +161,7 @@ export interface GameStateDto {
 export interface CreateGameRequest {
   board_id: string;
   human_player_id: string;
+  human_player_name?: string | null;
   agent_ids: string[];
   human_role_key?: string | null;
 }
