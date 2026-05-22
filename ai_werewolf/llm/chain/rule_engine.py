@@ -256,10 +256,26 @@ class RuleEngineProvider:
         # -- hunter_shoot --------------------------------------------------------
         if action == "hunter_shoot":
             target = _first_other(others)
+            if target:
+                target_name = target
+                # Try to extract a readable name from alive_players
+                for p in alive:
+                    if p["player_id"] == target:
+                        seat = p.get("seat", "")
+                        if seat:
+                            target_name = f"{seat}号"
+                        break
+                return {
+                    "speech": f"我选择开枪带走{target_name}。",
+                    "action_type": "hunter_shoot",
+                    "target_id": target,
+                    "public_reason": None,
+                    "private_memory_update": None,
+                }
             return {
-                "speech": "我带走一名玩家。",
+                "speech": "局势不明，我选择不开枪。",
                 "action_type": "hunter_shoot",
-                "target_id": target,
+                "target_id": None,
                 "public_reason": None,
                 "private_memory_update": None,
             }
