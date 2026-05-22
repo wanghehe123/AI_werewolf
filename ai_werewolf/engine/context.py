@@ -36,7 +36,7 @@ def build_game_context(
 
     # Day summaries from Redis (requires both memory_store and player_id)
     if memory_store is not None and player_id is not None:
-        day_summary_text = _build_day_summary_context(memory_store, session.state.game_id)
+        day_summary_text = _build_day_summary_context(memory_store, session)
         if day_summary_text:
             sections.append(day_summary_text)
 
@@ -73,9 +73,10 @@ def _build_self_speech_history(session: GameSession, player_id: str) -> str:
         - 第1天发言：「...」
         - 第2天发言：「...」
     """
-    # Find day boundaries for labeling
+    # Find day boundaries for labeling.
+    # Day 1 starts from game creation (sheriff campaign is part of day 1).
     day_for_event: dict[int, int] = {}
-    current_day = 0
+    current_day = 1
     for idx, event in enumerate(session.public_events):
         etype = event.get("event_type", "")
         if etype == "phase_changed":
@@ -83,8 +84,8 @@ def _build_self_speech_history(session: GameSession, player_id: str) -> str:
             msg = payload.get("message", "")
             if "天亮了" in msg:
                 current_day += 1
-        elif etype == "night_result":
-            current_day += 1
+        # Only increment on night_result if 天亮了 hasn't already set it
+        # (night_result and 天亮了 appear in the same phase; 天亮了 comes first)
         day_for_event[idx] = current_day
 
     own_events: list[tuple[int, str, str]] = []  # (event_index, label, speech_text)
@@ -119,15 +120,16 @@ def _build_self_speech_history(session: GameSession, player_id: str) -> str:
     return "\n".join(lines)
 
 
-def _build_day_summary_context(memory_store, game_id: str) -> str:
-    """Fetch day summaries from Redis and format as a concise context block.
+def _build_day_summary_context(memory_store, session: GameSession) -> str:
+    """Fetch day summaries from Redis and format as a concise context block
+    using seat numbers (not raw player IDs) for readability.
 
     Returns a section like::
 
         【历史摘要】
         第1天：
-        - 1号跳预言家，报3号金水
-        - ...
+        - 3号跳预言家，报1号金水
+        - 放逐投票：6票出3号
     """
     try:
         from ai_werewolf.llm.memory.store import MemoryStore  # noqa: F811
@@ -135,31 +137,48 @@ def _build_day_summary_context(memory_store, game_id: str) -> str:
         return ""
 
     try:
-        summaries = memory_store.get_day_summaries(game_id)
+        summaries = memory_store.get_day_summaries(session.state.game_id)
     except Exception:
-        logger.debug("Failed to fetch day summaries from Redis for game %s", game_id, exc_info=True)
+        logger.debug("Failed to fetch day summaries from Redis for game %s", session.state.game_id, exc_info=True)
         return ""
 
     if not summaries:
         return ""
+
+    # Build seat lookup from session players
+    player_seats: dict[str, int] = {}
+    for p in session.state.players:
+        player_seats[p.player_id] = p.seat
+
+    def _seat_label(player_id: str) -> str:
+        seat = player_seats.get(player_id)
+        return f"{seat}号" if seat else player_id[:8]
 
     lines = ["【历史摘要】"]
     for s in summaries:
         lines.append(f"第{s.day}天：")
         for item in s.summary_items:
             lines.append(f"  - {item}")
-        # Include claims
+        # Format claims with seat numbers
         if s.claims:
             for claim in s.claims:
-                who = claim.get("player", claim.get("player_id", ""))
-                what = claim.get("role", claim.get("claim", ""))
-                if who and what:
-                    lines.append(f"  - {who} 声称自己是 {what}")
-        # Include vote summary
+                pid = claim.get("player_id", "")
+                role_name = claim.get("claim", "")
+                seat = claim.get("seat")
+                label = f"{seat}号" if seat else _seat_label(pid)
+                if role_name:
+                    lines.append(f"  - {label} 跳{role_name}")
+        # Vote summary
         if s.vote_summary:
-            exiled = s.vote_summary.get("exiled", "")
-            if exiled:
-                lines.append(f"  - 被放逐：{exiled}")
+            exiled_id = s.vote_summary.get("exiled", "")
+            if exiled_id:
+                exiled_label = _seat_label(exiled_id)
+                main_votes = s.vote_summary.get("main_votes", [])
+                if main_votes and main_votes[0].get("target") == exiled_id:
+                    voter_count = len(main_votes[0].get("voters", []))
+                    lines.append(f"  - 放逐投票：{voter_count}票出{exiled_label}")
+                else:
+                    lines.append(f"  - 被放逐：{exiled_label}")
 
     return "\n".join(lines)
 

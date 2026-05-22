@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from typing import Any
 
 from ai_werewolf.domain.game_state import PlayerPrivateInfo
@@ -21,21 +21,21 @@ _BAD_SPEECH_HINTS = ("自投", "摆烂", "不配合", "心态爆炸")
 
 
 def build_day_summary(session: GameSession) -> DaySummary:
-    """从当前白天公开事件压缩出一份摘要。
+    """Compress current-day public events into a structured summary.
 
-    这里先使用可解释的规则摘要，而不是再额外调用一次大模型。
-    后续如果要升级成 LLM 摘要器，也可以复用这个结构化输出。
+    Uses rule-based heuristics to extract key facts:
+    - Role claims (Seer checks, badge flow)
+    - Vote results (who was exiled, vote shape)
+    - Notable speech behavior (low-signal players, bad-speech markers)
     """
     day = session.state.day_count
     day_events = _current_day_events(session)
     summary_items: list[str] = []
     claims: list[dict[str, Any]] = []
-    conflicts: list[dict[str, Any]] = []
-    alliances: list[dict[str, Any]] = []
     low_signal_players: list[str] = []
 
-    attack_counts: Counter[tuple[int, int]] = Counter()
-    target_supporters: defaultdict[int, list[int]] = defaultdict(list)
+    # Track Seer claims for summary
+    seer_claim_seats: list[tuple[str, int]] = []  # (check_type, target_seat)
 
     for public_event in day_events:
         if public_event.get("event_type") != "speech":
@@ -46,6 +46,7 @@ def build_day_summary(session: GameSession) -> DaySummary:
         actor = session.state.player_by_id(actor_id)
         message = public_event.get("payload", {}).get("message", "")
 
+        # Detect role claims
         claim_match = _CLAIM_PATTERN.search(message)
         if claim_match:
             claims.append({
@@ -55,28 +56,41 @@ def build_day_summary(session: GameSession) -> DaySummary:
                 "status": "public_claim",
             })
 
-        mentioned_seats = [int(seat) for seat in _SUSPICION_PATTERN.findall(message)]
-        targeted_seats = [seat for seat in mentioned_seats if seat != actor.seat]
-        if targeted_seats and any(hint in message for hint in _AGGRESSIVE_HINTS):
-            target_seat = targeted_seats[0]
-            attack_counts[(actor.seat, target_seat)] += 1
-            target_supporters[target_seat].append(actor.seat)
+        # Track Seer check results for summary
+        if "预言家" in message:
+            check = _extract_check_result(message)
+            if check:
+                seer_claim_seats.append((check["result"], check["target_seat"]))
 
+        # Detect low-signal players
         if _looks_low_signal(message) and actor_id not in low_signal_players:
             low_signal_players.append(actor_id)
 
-    for (actor_seat, target_seat), count in attack_counts.items():
-        if count >= 1:
-            summary_items.append(f"{actor_seat}号持续攻击{target_seat}号")
+    # Build summary items
+    # 1) Seer check results (most important)
+    seen_results: set[str] = set()
+    for result_type, target_seat in seer_claim_seats:
+        key = f"{result_type}_{target_seat}"
+        if key not in seen_results:
+            seen_results.add(key)
+            summary_items.append(f"{target_seat}号被报{result_type}")
 
-    for target_seat, supporter_seats in target_supporters.items():
-        unique_supporters = sorted(set(supporter_seats))
-        if len(unique_supporters) >= 2:
-            label = "、".join(f"{seat}号" for seat in unique_supporters[:2])
-            alliances.append({
-                "players": unique_supporters[:2],
-                "reason": f"{label}围绕{target_seat}号形成共边",
-            })
+    # 2) Fallback: vote summary
+    if not summary_items:
+        vote_summary_temp = _build_vote_summary(session, day_events)
+        if vote_summary_temp["main_votes"]:
+            top = vote_summary_temp["main_votes"][0]
+            target_label = player_label(top["target"], session)
+            summary_items.append(f"投票焦点：{target_label}（{len(top['voters'])}票）")
+
+    # 3) Low-signal players (help identify who to watch)
+    if low_signal_players:
+        low_signal_ids = set(low_signal_players)
+        # Only report players who are still alive
+        alive_low = [pid for pid in low_signal_ids if session.state.player_by_id(pid).alive]
+        if alive_low:
+            labels = _seat_labels_from_ids(session, alive_low[:4])
+            summary_items.append(f"发言较少：{', '.join(labels)}")
 
     vote_summary = _build_vote_summary(session, day_events)
     situation_ledger = _build_situation_ledger(
@@ -85,19 +99,17 @@ def build_day_summary(session: GameSession) -> DaySummary:
         vote_summary=vote_summary,
         low_signal_players=low_signal_players,
     )
-    if not summary_items and vote_summary["main_votes"]:
-        top_vote = vote_summary["main_votes"][0]
-        voters = "、".join(_seat_labels_from_ids(session, top_vote["voters"]))
-        target_label = player_label(top_vote["target"], session)
-        summary_items.append(f"{voters}集中推动{target_label}")
+
+    if not summary_items:
+        summary_items.append("本日无明显焦点事件")
 
     return DaySummary(
         game_id=session.state.game_id,
         day=day,
         summary_items=summary_items,
         claims=claims,
-        conflicts=conflicts,
-        alliances=alliances,
+        conflicts=[],
+        alliances=[],
         vote_summary=vote_summary,
         low_signal_players=low_signal_players,
         situation_ledger=situation_ledger,

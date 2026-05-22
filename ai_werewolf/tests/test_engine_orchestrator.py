@@ -344,7 +344,8 @@ def test_check_win_or_next_night_saves_day_summary():
     assert isinstance(summary, DaySummary)
     assert summary.game_id == "g"
     assert summary.day == 1
-    assert "2号持续攻击4号" in summary.summary_items
+    assert any("投票焦点" in item for item in summary.summary_items)
+    assert any("发言较少" in item for item in summary.summary_items)
     assert summary.vote_summary["main_votes"]
 
 
