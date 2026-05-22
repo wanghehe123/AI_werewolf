@@ -10,7 +10,8 @@ from ai_werewolf.engine.helpers import display_name, event
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
-from ai_werewolf.llm.prompt_builder import build_last_words_prompt, format_private_info
+from ai_werewolf.llm.prompt_builder import build_hunter_shoot_prompt, format_private_info
+from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.llm.schemas import PlayerDecision
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ class HunterResolver:
         private_info_str = format_private_info(info, "hunter")
 
         try:
-            prompt = build_last_words_prompt(
+            prompt = build_hunter_shoot_prompt(
                 agent=agent,
                 role_key="hunter",
                 game_id=session.state.game_id,
@@ -99,6 +100,7 @@ class HunterResolver:
                 alive_players=[p.player_id for p in session.state.players if p.alive and p.player_id != player_id],
                 private_info=private_info_str,
             )
+            record_prompt_trace(session, player_id, "hunter_shoot", prompt)
             decider = build_decider_for_role(
                 "hunter",
                 self.model_registry,

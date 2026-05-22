@@ -340,6 +340,53 @@ def build_last_words_prompt(
     )
 
 
+def build_hunter_shoot_prompt(
+    agent: AgentProfile,
+    role_key: str = "hunter",
+    game_id: str = "",
+    round_info: str = "",
+    game_context: str = "",
+    alive_players: list[str] | None = None,
+    private_info: str = "",
+    board_context: str = "",
+    player_references: dict[str, str] | None = None,
+    enabled_role_keys: set[str] | None = None,
+    board_roles: dict[str, int] | None = None,
+    self_label: str = "",
+    strategy_provider: StrategyProvider | None = None,
+) -> str:
+    """构建猎人开枪阶段的 Prompt。
+
+    猎人死亡时可以开枪带走一名玩家。这个 prompt 告诉猎人
+    当前局势并询问是否开枪、带走谁。
+    """
+    action_hint = render_template(
+        "player/hunter_shoot_action_hint.st",
+        {
+            "alive_players": ", ".join(
+                _format_player_options(alive_players or [], player_references)
+            ),
+        },
+    )
+    return build_player_prompt(
+        agent=agent,
+        role_key=role_key,
+        phase="hunter_shoot",
+        game_id=game_id,
+        round_info=round_info,
+        game_context=game_context,
+        alive_players=alive_players or [],
+        action_hint=action_hint,
+        private_info=private_info,
+        board_context=board_context,
+        player_references=player_references,
+        enabled_role_keys=enabled_role_keys,
+        board_roles=board_roles,
+        self_label=self_label,
+        strategy_provider=strategy_provider,
+    )
+
+
 def build_night_action_prompt(
     agent: AgentProfile,
     role_key: str,
