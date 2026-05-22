@@ -60,7 +60,7 @@ class HunterResolver:
             return events
         else:
             # AI hunter: use LLM to decide
-            context = build_game_context(session)
+            context = build_game_context(session, player_id=dead_player_id)
             decision = self._get_ai_decision(session, dead_player_id, context)
             target_id = decision.target_id
             if target_id:

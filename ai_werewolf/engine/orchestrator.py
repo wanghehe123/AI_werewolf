@@ -334,7 +334,7 @@ class PhaseOrchestrator:
             if agent is None:
                 continue
             label = player_label(candidate_id, session)
-            current_game_context = build_game_context(session)
+            current_game_context = build_game_context(session, player_id=candidate_id, memory_store=self.memory_store)
             effective_private_info = self._effective_private_info_for_prompt(session, candidate_id)
             private_info_text = format_private_info(
                 effective_private_info,
@@ -916,7 +916,7 @@ class PhaseOrchestrator:
         for player in session.state.players:
             if player.is_human or not player.alive:
                 continue
-            context = build_game_context(session)
+            context = build_game_context(session, player_id=player.player_id, memory_store=self.memory_store)
             label = player_label(player.player_id, session)
             session.publish_stream_event(
                 "current_speaker_changed",
@@ -1064,7 +1064,7 @@ class PhaseOrchestrator:
         if agent is None:
             return "没有遗言。"
         try:
-            context = build_game_context(session)
+            context = build_game_context(session, player_id=player_id, memory_store=self.memory_store)
             tasks = self.scheduler.schedule(state=session.state, agents=session.agents, private_infos=session.private_infos, game_context=context, pending_last_words_player_id=player_id)
             task = next((t for t in tasks if t.player_id == player_id), None)
             if task is None:
