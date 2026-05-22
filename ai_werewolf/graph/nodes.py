@@ -46,3 +46,36 @@ def initialize_game_node(
         day_count=0,
         players=players,
     )
+
+
+def initialize_ai_game_node(
+    board: BoardConfig,
+    players: list[tuple[str, AgentProfile]],
+    seed: int | None = None,
+) -> GameState:
+    """Create an all-AI game state from database player ids and agent profiles."""
+    if len(players) != board.player_count:
+        raise ValueError("player count must match board seats")
+
+    player_ids = [player_id for player_id, _agent in players]
+    if len(set(player_ids)) != len(player_ids):
+        raise ValueError("player ids must be unique")
+
+    assigned = assign_roles(board, player_ids, seed=seed)
+    return GameState(
+        game_id="game_pending",
+        board_id=board.board_id,
+        phase=GamePhase.SETUP,
+        day_count=0,
+        players=[
+            PlayerState(
+                player_id=player_id,
+                agent_id=agent.agent_id,
+                seat=index,
+                role_key=assigned[player_id],
+                alive=True,
+                is_human=False,
+            )
+            for index, (player_id, agent) in enumerate(players, start=1)
+        ],
+    )

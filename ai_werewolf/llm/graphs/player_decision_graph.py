@@ -241,14 +241,28 @@ def _fallback_decide_strategy(state: PlayerDecisionGraphState) -> dict[str, Any]
             speech_intent=f"继续压{primary_target}的逻辑漏洞",
         )
     else:
-        strategy = PlayerStrategy(
-            strategy_type="observe",
-            primary_target=None,
-            secondary_target=None,
-            tone=state["speech_style"],
-            goal="继续观察局势",
-            supporting_fact=(analysis.get("key_facts") or ["目前信息还不够完整"])[0],
-        )
+        decision_kind = state.get("decision_kind", "")
+        # During speech-required phases, fall back to "attack" instead of
+        # "observe" so the LLM always produces substantive analysis.
+        if decision_kind in {"day_speech", "sheriff_speech", "last_words"}:
+            strategy = PlayerStrategy(
+                strategy_type="attack",
+                primary_target=None,
+                secondary_target=None,
+                tone=state["speech_style"],
+                goal="基于已知信息分析局势",
+                supporting_fact=(analysis.get("key_facts") or ["目前信息还不够完整，但需要尽力分析"])[0],
+                speech_intent="发表有逻辑的分析",
+            )
+        else:
+            strategy = PlayerStrategy(
+                strategy_type="observe",
+                primary_target=None,
+                secondary_target=None,
+                tone=state["speech_style"],
+                goal="继续观察局势",
+                supporting_fact=(analysis.get("key_facts") or ["目前信息还不够完整"])[0],
+            )
     return {"strategy": _normalize_strategy_for_state(strategy)}
 
 
@@ -458,7 +472,7 @@ def n4_decide_action(state: PlayerDecisionGraphState) -> dict[str, Any]:
     alive_targets = [player_id for player_id in state["alive_player_ids"] if player_id != state["player_id"]]
     checked_players = set(state.get("analysis", {}).get("checked_players", []))
     if decision_kind == "exile_vote":
-        target_id = primary_target or (alive_targets[0] if alive_targets else None)
+        target_id = primary_target
         result = {
             "action_draft": {
                 "action_type": "vote",
@@ -528,10 +542,13 @@ def _language_only_decision(state: PlayerDecisionGraphState, generated: Any) -> 
     action_draft = state.get("action_draft", {})
     expected_action = _expected_action_type(state)
     if isinstance(generated, PlayerDecision):
+        target_id = action_draft.get("target_id")
+        if state["decision_kind"] == "exile_vote" and _is_legal_vote_target(state, generated.target_id):
+            target_id = generated.target_id
         return PlayerDecision(
             speech=generated.speech,
             action_type=expected_action,
-            target_id=action_draft.get("target_id"),
+            target_id=target_id,
             public_reason=generated.public_reason or action_draft.get("public_reason"),
             private_memory_update=generated.private_memory_update or action_draft.get("private_memory_update"),
         )
@@ -561,6 +578,10 @@ def n6_validate_and_repair(state: PlayerDecisionGraphState) -> dict[str, Any]:
     )
     _log_decision_node(state, decision)
     return {"decision": decision, "error": state.get("error")}
+
+
+def _is_legal_vote_target(state: PlayerDecisionGraphState, target_id: str | None) -> bool:
+    return bool(target_id and target_id in state["alive_player_ids"] and target_id != state["player_id"])
 
 
 def build_player_speech_graph(

@@ -317,6 +317,34 @@ class TestRoleConsistencyConstraints:
         for prompt, name in [(speech, "speech"), (vote, "vote"), (night, "night"), (last, "last_words")]:
             assert "【你必须严格遵守的人格守则】" in prompt, f"Missing in {name}"
 
+    def test_witch_prompt_forbids_claiming_villager_when_hiding(self):
+        agent = _make_agent()
+        prompt = build_speech_prompt(
+            agent=agent,
+            role_key="witch",
+            game_id="g1",
+            round_info="day1",
+            game_context="",
+            alive_players=["p1", "p2"],
+            board_roles={"werewolf": 2, "seer": 1, "witch": 1, "villager": 2},
+        )
+
+        assert "不要明确声称自己是平民或村民" in prompt
+
+    def test_seer_prompt_forbids_inventing_first_day_check_reason(self):
+        agent = _make_agent()
+        prompt = build_speech_prompt(
+            agent=agent,
+            role_key="seer",
+            game_id="g1",
+            round_info="day1",
+            game_context="",
+            alive_players=["p1", "p2"],
+            board_roles={"werewolf": 2, "seer": 1, "witch": 1, "villager": 2},
+        )
+
+        assert "首日查验理由不能引用尚未发生的白天发言" in prompt
+
 
 # ===========================================================================
 # M2-T11: Enhanced format_private_info

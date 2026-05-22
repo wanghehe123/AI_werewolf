@@ -27,6 +27,7 @@ coverage/
 !/.gitignore
 !/frontend/
 !/ai_werewolf/
+!/skills/
 
 # But ignore these inside ai_werewolf
 ai_werewolf/docs/

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ai_werewolf.engine.helpers import player_label
 from ai_werewolf.engine.session import GameSession
+from ai_werewolf.llm.prompts.template_loader import render_template
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ def record_prompt_trace(
     *,
     response: object | None = None,
     metadata: dict[str, object] | None = None,
+    system_prompt: str | None = None,
 ) -> Path:
     """Write prompt/debug output to a trace file and log compact metadata."""
     player = session.state.player_by_id(player_id)
@@ -32,10 +34,13 @@ def record_prompt_trace(
         f"{_safe(prompt_kind)}_seat{player.seat}_{_safe(player_id)}.md"
     )
     path = trace_dir / filename
-    trace_text = _format_trace(prompt, response=response, metadata=metadata)
+    system_text = system_prompt if system_prompt is not None else _default_system_prompt()
+    trace_text = _format_trace(prompt, response=response, metadata=metadata, system_prompt=system_text)
     path.write_text(trace_text, encoding="utf-8")
 
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    full_prompt_text = _full_prompt_text(system_text, prompt)
+    full_digest = hashlib.sha256(full_prompt_text.encode("utf-8")).hexdigest()
     payload = {
         "event": "prompt_trace",
         "game_id": session.state.game_id,
@@ -48,6 +53,8 @@ def record_prompt_trace(
         "role_key": player.role_key,
         "prompt_chars": len(prompt),
         "prompt_sha256": digest,
+        "full_prompt_chars": len(full_prompt_text),
+        "full_prompt_sha256": full_digest,
         "path": str(path),
         "has_response": response is not None,
     }
@@ -61,15 +68,35 @@ def _safe(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "unknown"
 
 
-def _format_trace(prompt: str, *, response: object | None, metadata: dict[str, object] | None) -> str:
-    if response is None and not metadata:
+def _format_trace(
+    prompt: str,
+    *,
+    response: object | None,
+    metadata: dict[str, object] | None,
+    system_prompt: str | None,
+) -> str:
+    if response is None and not metadata and not system_prompt:
         return prompt
-    sections = ["## Prompt", prompt]
+    sections: list[str] = []
+    if system_prompt:
+        sections.extend(["## System Prompt", system_prompt, "", "## User Prompt", prompt])
+    else:
+        sections.extend(["## Prompt", prompt])
     if response is not None:
         sections.extend(["", "## LLM Output", _jsonish(response)])
     if metadata:
         sections.extend(["", "## Metadata", json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True)])
     return "\n".join(sections)
+
+
+def _default_system_prompt() -> str:
+    return render_template("system/decision_system_prompt.st", {})
+
+
+def _full_prompt_text(system_prompt: str | None, prompt: str) -> str:
+    if not system_prompt:
+        return prompt
+    return f"System:\n{system_prompt}\n\nUser:\n{prompt}"
 
 
 def _jsonish(value: object) -> str:

@@ -20,7 +20,10 @@ def test_record_prompt_trace_writes_prompt_file_and_logs_metadata_only(tmp_path,
 
     path = record_prompt_trace(session, player.player_id, "exile_vote", prompt)
 
-    assert path.read_text(encoding="utf-8") == prompt
+    text = path.read_text(encoding="utf-8")
+    assert "## System Prompt" in text
+    assert "## User Prompt" in text
+    assert prompt in text
     records = [record.message for record in caplog.records if record.message.startswith("prompt_trace ")]
     assert len(records) == 1
     payload = json.loads(records[0].removeprefix("prompt_trace "))
@@ -30,6 +33,30 @@ def test_record_prompt_trace_writes_prompt_file_and_logs_metadata_only(tmp_path,
     assert payload["prompt_chars"] == len(prompt)
     assert payload["path"] == str(path)
     assert prompt not in records[0]
+
+
+def test_record_prompt_trace_writes_full_chat_prompt_by_default(tmp_path, monkeypatch, caplog):
+    monkeypatch.chdir(tmp_path)
+    player = PlayerState(player_id="ai_1", agent_id="ai_1", seat=2, role_key="werewolf", alive=True, is_human=False)
+    state = GameState(game_id="g1", board_id="board", phase=GamePhase.EXILE_VOTE, day_count=1, players=[
+        PlayerState(player_id="human", agent_id=None, seat=1, role_key="seer", alive=True, is_human=True),
+        player,
+    ])
+    session = GameSession(state=state, agents={}, human_player_id="human", private_infos=build_private_infos(state.players))
+    prompt = "用户侧完整游戏状态 prompt"
+    caplog.set_level(logging.INFO, logger="ai_werewolf.engine.prompt_trace")
+
+    path = record_prompt_trace(session, player.player_id, "exile_vote", prompt)
+
+    text = path.read_text(encoding="utf-8")
+    assert "## System Prompt" in text
+    assert "你是一个狼人杀游戏的 AI 玩家" in text
+    assert "## User Prompt" in text
+    assert prompt in text
+    records = [record.message for record in caplog.records if record.message.startswith("prompt_trace ")]
+    payload = json.loads(records[0].removeprefix("prompt_trace "))
+    assert payload["prompt_chars"] == len(prompt)
+    assert payload["full_prompt_chars"] > payload["prompt_chars"]
 
 
 def test_record_prompt_trace_can_append_response_metadata(tmp_path, monkeypatch, caplog):
@@ -52,7 +79,8 @@ def test_record_prompt_trace_can_append_response_metadata(tmp_path, monkeypatch,
     )
 
     text = path.read_text(encoding="utf-8")
-    assert "## Prompt" in text
+    assert "## System Prompt" in text
+    assert "## User Prompt" in text
     assert "## LLM Output" in text
     assert '"chain_tier": "rule_engine"' in text
     records = [record.message for record in caplog.records if record.message.startswith("prompt_trace ")]

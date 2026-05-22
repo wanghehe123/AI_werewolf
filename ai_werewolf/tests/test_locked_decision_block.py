@@ -54,3 +54,24 @@ def test_locked_decision_block_keeps_historical_dead_seat_evidence():
     locked = append_locked_decision_block(prompt, state)
 
     assert "- public_reason: 2号曾经投给已出局的4号，所以票型需要解释" in locked
+
+
+def test_locked_decision_block_allows_vote_target_correction():
+    prompt = "存活玩家：Alice(1号) Bob(2号)\n请投票。"
+    state = {
+        "decision_kind": "exile_vote",
+        "role_key": "villager",
+        "strategy": {"strategy_type": "observe", "goal": "根据发言投票"},
+        "action_draft": {
+            "action_type": "vote",
+            "target_id": "Alice",
+            "public_reason": "信息不足",
+            "private_memory_update": None,
+        },
+    }
+
+    locked = append_locked_decision_block(prompt, state)
+
+    assert "target_id 是草稿" in locked
+    assert "如果你的最终推理指向另一个合法玩家，可以改写 target_id" in locked
+    assert "不能改变 action_type 或 target_id" not in locked

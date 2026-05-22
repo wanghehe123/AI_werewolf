@@ -123,8 +123,8 @@ def build_player_prompt(
     output_format = render_template(
         "player/output_format.st",
         {
-            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys)),
-            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys)),
+            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys, phase=phase)),
+            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys, phase=phase)),
         },
     )
     forbidden = render_template("player/forbidden_rules.st", {})
@@ -487,8 +487,8 @@ def build_sheriff_campaign_prompt(
     output_format = render_template(
         "player/output_format.st",
         {
-            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys)),
-            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys)),
+            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys, phase="sheriff_campaign")),
+            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys, phase="sheriff_campaign")),
         },
     )
 
@@ -624,8 +624,8 @@ def build_sheriff_vote_prompt(
     output_format = render_template(
         "player/output_format.st",
         {
-            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys)),
-            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys)),
+            "action_enum_lines": "\n".join(_action_enum_lines(enabled_role_keys, phase="sheriff_vote")),
+            "fewshot_lines": "\n".join(_fewshot_example_lines(enabled_role_keys, phase="sheriff_vote")),
         },
     )
 
@@ -741,9 +741,15 @@ def format_private_info(
                 lines.append(f"- {result.get('round')} 查验 {label(target) if target else target}：{camp}")
 
     if role_key == "witch" and private_info.witch_medicine:
-        save = "可用" if private_info.witch_medicine.get("save", False) else "已使用"
-        poison = "可用" if private_info.witch_medicine.get("poison", False) else "已使用"
-        lines.append(f"女巫药品：解药{save}，毒药{poison}")
+        save_avail = private_info.witch_medicine.get("save", False)
+        save_status = "可用" if save_avail else "已使用"
+        poison_avail = private_info.witch_medicine.get("poison", False)
+        poison_status = "可用" if poison_avail else "已使用"
+        lines.append(f"女巫药品：解药{save_status}，毒药{poison_status}")
+        if not save_avail:
+            lines.append("⚠ 解药已使用，你无法再救任何人。")
+        if not poison_avail:
+            lines.append("⚠ 毒药已使用，你无法再毒任何人。")
 
     if role_key in {"guard", "guardian"} and private_info.guard_history:
         lines.append(f"守卫历史：{', '.join(label(player_id) for player_id in private_info.guard_history)}")
@@ -814,9 +820,14 @@ def _build_board_role_constraints(board_roles: dict[str, int]) -> list[str]:
     ).splitlines()
 
 
-def _fewshot_example_lines(enabled_role_keys: set[str] | None = None) -> list[str]:
-    """按板子角色裁剪 few-shot，避免把不存在的角色知识塞进 prompt。"""
-    examples: list[tuple[set[str] | None, list[str]]] = [
+def _fewshot_example_lines(enabled_role_keys: set[str] | None = None, phase: str = "") -> list[str]:
+    """按板子角色和 phase 裁剪 few-shot，避免把不存在的角色/阶段知识塞进 prompt。"""
+    is_speech_phase = phase in _SPEECH_ONLY_PHASES
+    is_vote_phase = phase in _VOTE_ONLY_PHASES
+    is_night_phase = phase in _NIGHT_ONLY_PHASES
+    show_all = not phase or (not is_speech_phase and not is_vote_phase and not is_night_phase)
+
+    speech_examples: list[tuple[set[str] | None, list[str]]] = [
         (None, [
             "",
             "示例1 — 白天发言（村民视角）：",
@@ -850,6 +861,9 @@ def _fewshot_example_lines(enabled_role_keys: set[str] | None = None) -> list[st
             '    "private_memory_update": "我是狼人悍跳预言家，给了4号和7号金水来拉拢他们，查的都不是狼队友，逻辑上说得通"',
             "}",
         ]),
+    ]
+
+    vote_examples: list[tuple[set[str] | None, list[str]]] = [
         (None, [
             "",
             "示例3 — 投票阶段：",
@@ -872,6 +886,9 @@ def _fewshot_example_lines(enabled_role_keys: set[str] | None = None) -> list[st
             '    "private_memory_update": "这轮两个焦点位都说不清楚，先观望"',
             "}",
         ]),
+    ]
+
+    night_examples: list[tuple[set[str] | None, list[str]]] = [
         ({"seer"}, [
             "",
             "示例5 — 预言家夜晚查验：",
@@ -951,13 +968,23 @@ def _fewshot_example_lines(enabled_role_keys: set[str] | None = None) -> list[st
         ]),
     ]
 
+    def _include_examples(source: list[tuple[set[str] | None, list[str]]]) -> list[str]:
+        result: list[str] = []
+        for required_roles, example_lines in source:
+            if required_roles is None:
+                result.extend(example_lines)
+                continue
+            if enabled_role_keys is None or required_roles.intersection(enabled_role_keys):
+                result.extend(example_lines)
+        return result
+
     lines: list[str] = []
-    for required_roles, example_lines in examples:
-        if required_roles is None:
-            lines.extend(example_lines)
-            continue
-        if enabled_role_keys is None or required_roles.intersection(enabled_role_keys):
-            lines.extend(example_lines)
+    if is_speech_phase or show_all:
+        lines.extend(_include_examples(speech_examples))
+    if is_vote_phase or show_all:
+        lines.extend(_include_examples(vote_examples))
+    if is_night_phase or show_all:
+        lines.extend(_include_examples(night_examples))
     return lines
 
 
@@ -1083,29 +1110,51 @@ def _day_count_from_round_info(round_info: str) -> int:
     return int(match.group(1))
 
 
-def _action_enum_lines(enabled_role_keys: set[str] | None = None) -> list[str]:
-    lines = [
-        "- speak: 发言或遗言",
-        "- vote: 放逐投票",
-    ]
-    role_actions = [
-        ("werewolf", "- wolf_kill: 狼人夜晚击杀"),
-        ("seer", "- seer_check: 预言家查验"),
-        ("witch", "- witch_save: 女巫使用解药"),
-        ("witch", "- witch_poison: 女巫使用毒药"),
-        ("guard", "- guard: 守卫守护"),
-        ("guardian", "- guard: 守卫守护"),
-        ("hunter", "- hunter_shoot: 猎人开枪"),
-    ]
-    seen: set[str] = set()
-    for role_key, line in role_actions:
-        if enabled_role_keys is not None and role_key not in enabled_role_keys:
-            continue
-        if line in seen:
-            continue
-        seen.add(line)
-        lines.append(line)
-    lines.append("- no_action: 当前无需行动")
+_SPEECH_ONLY_PHASES = frozenset({"day_speech", "sheriff_speech", "sheriff_campaign", "last_words"})
+_VOTE_ONLY_PHASES = frozenset({"exile_vote", "sheriff_vote"})
+_NIGHT_ONLY_PHASES = frozenset({"night", "night_action"})
+
+
+def _action_enum_lines(enabled_role_keys: set[str] | None = None, phase: str = "") -> list[str]:
+    """生成 action_type 枚举说明，按 phase 过滤以避免夜晚操作在白天 prompt 中出现。
+
+    phase 参数说明：
+    - day_speech / sheriff_speech / sheriff_campaign / last_words: 只显示 speak/vote
+    - exile_vote / sheriff_vote: 只显示 vote
+    - night / night_action: 显示所有行动
+    - 默认（空字符串）: 兼容旧行为，显示所有
+    """
+    is_speech_phase = phase in _SPEECH_ONLY_PHASES
+    is_vote_phase = phase in _VOTE_ONLY_PHASES
+    is_night_phase = phase in _NIGHT_ONLY_PHASES
+    # Default: show all (backward compatible)
+    show_all = not phase or (not is_speech_phase and not is_vote_phase and not is_night_phase)
+
+    lines: list[str] = []
+    if is_speech_phase or is_vote_phase or show_all:
+        if is_speech_phase or show_all:
+            lines.append("- speak: 发言或遗言")
+        lines.append("- vote: 放逐投票")
+
+    if is_night_phase or show_all:
+        role_actions = [
+            ("werewolf", "- wolf_kill: 狼人夜晚击杀"),
+            ("seer", "- seer_check: 预言家查验"),
+            ("witch", "- witch_save: 女巫使用解药"),
+            ("witch", "- witch_poison: 女巫使用毒药"),
+            ("guard", "- guard: 守卫守护"),
+            ("guardian", "- guard: 守卫守护"),
+            ("hunter", "- hunter_shoot: 猎人开枪"),
+        ]
+        seen: set[str] = set()
+        for role_key, line in role_actions:
+            if enabled_role_keys is not None and role_key not in enabled_role_keys:
+                continue
+            if line in seen:
+                continue
+            seen.add(line)
+            lines.append(line)
+        lines.append("- no_action: 当前无需行动")
     return lines
 
 

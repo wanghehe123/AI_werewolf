@@ -136,6 +136,37 @@ class PhaseOrchestrator:
         else:
             raise HTTPException(status_code=400, detail=f"action {action_type} is not allowed in {state.phase.value}")
 
+    def advance_auto(self, session: GameSession) -> None:
+        """Advance one step for evaluation games with no human participant."""
+        state = session.state
+        if state.phase == GamePhase.SETUP:
+            self._start_game(session)
+        elif state.phase == GamePhase.NIGHT:
+            self._resolve_night(session, None)
+        elif state.phase == GamePhase.SHERIFF_ELECTION:
+            self._advance_ai_sheriff_election(session)
+        elif state.phase == GamePhase.SHERIFF_SPEECH:
+            self._generate_ai_sheriff_campaign_speeches(session)
+            self._maybe_open_sheriff_vote(session)
+        elif state.phase == GamePhase.SHERIFF_TRANSFER:
+            self._auto_resolve_sheriff_transfer(session)
+        elif state.phase == GamePhase.DAY_ANNOUNCEMENT:
+            self._enter_speech(session)
+        elif state.phase == GamePhase.DAY_SPEECH:
+            session.state.phase = GamePhase.EXILE_VOTE
+            session.append_public_event("phase_changed", "全 AI 评测局跳过人类发言，进入放逐投票。")
+            self._resolve_vote(session, self._auto_skip_action(session))
+        elif state.phase == GamePhase.EXILE_VOTE:
+            self._resolve_vote(session, self._auto_skip_action(session))
+        elif state.phase == GamePhase.LAST_WORDS:
+            self._finish_last_words(session)
+        elif state.phase == GamePhase.HUNTER_SHOOT:
+            self._auto_resolve_hunter_shoot(session)
+        elif state.phase == GamePhase.GAME_OVER:
+            return
+        else:
+            raise HTTPException(status_code=400, detail=f"auto advance is not allowed in {state.phase.value}")
+
     # ---- Phase handlers ----
 
     def _start_game(self, session: GameSession) -> None:
@@ -168,6 +199,22 @@ class PhaseOrchestrator:
         decided = set(session.sheriff_candidates) | set(session.sheriff_voters)
         if decided != alive_ids:
             return
+        if not session.sheriff_candidates:
+            session.append_public_event("phase_changed", "无人参加警长竞选，本局无警长。")
+            self._reveal_pending_first_night_result(session)
+            return
+        session.state.phase = GamePhase.SHERIFF_SPEECH
+        session.append_public_event("phase_changed", f"共有 {len(session.sheriff_candidates)} 位玩家竞选警长，请候选人依次发言。")
+        self._generate_ai_sheriff_campaign_speeches(session)
+        self._maybe_open_sheriff_vote(session)
+
+    def _advance_ai_sheriff_election(self, session: GameSession) -> None:
+        self._auto_fill_ai_sheriff_decisions(session)
+        alive_ids = {player.player_id for player in session.state.players if player.alive}
+        decided = set(session.sheriff_candidates) | set(session.sheriff_voters)
+        if decided != alive_ids:
+            missing = sorted(alive_ids - decided)
+            raise HTTPException(status_code=500, detail=f"AI sheriff decisions incomplete: {missing}")
         if not session.sheriff_candidates:
             session.append_public_event("phase_changed", "无人参加警长竞选，本局无警长。")
             self._reveal_pending_first_night_result(session)
@@ -1152,3 +1199,13 @@ class PhaseOrchestrator:
             return session.state.player_by_id(player_id)
         except StopIteration as exc:
             raise HTTPException(status_code=400, detail=f"unknown {field_name}: {player_id}") from exc
+
+    def _auto_skip_action(self, session: GameSession) -> dict[str, Any]:
+        return {
+            "actor_player_id": session.human_player_id,
+            "action_type": "abstain",
+            "target_player_id": None,
+            "content": None,
+            "client_action_id": "auto_ai_eval_skip",
+            "skip_human_vote": True,
+        }

@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from sqlmodel import Session
 
 from ai_werewolf.api.admin import router as admin_router
+from ai_werewolf.api.evaluations import router as evaluations_router
 from ai_werewolf.api.games import configure_game_repository, configure_model_registry, router as games_router
 from ai_werewolf.api.socketio_bridge import sio
 from ai_werewolf.api.llm_config import router as llm_config_router
@@ -193,6 +194,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)        # 后台管理
     app.include_router(llm_config_router)   # LLM 配置管理
     app.include_router(games_router)        # 游戏核心接口
+    app.include_router(evaluations_router)  # 自动评测接口
 
     # ---- 统一异常响应 ----
     @app.exception_handler(HTTPException)
