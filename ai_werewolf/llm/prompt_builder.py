@@ -414,12 +414,14 @@ def build_sheriff_campaign_prompt(
     player_label_text: str,
     tactic_hint: str = "",
     game_context: str = "",
+    private_info: str = "",
     alive_players: list[str] | None = None,
     board_context: str = "",
     player_references: dict[str, str] | None = None,
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     election_progress: str = "",
+    campaign_timeline: str = "",
     strategy_provider: StrategyProvider | None = None,
 ) -> str:
     """构建警长竞选发言阶段的完整 Prompt。
@@ -497,11 +499,11 @@ def build_sheriff_campaign_prompt(
         "你正在参加警长竞选发言环节。你需要发表竞选演讲来争取其他玩家的投票。",
         "",
         "你可以做以下事（根据你的身份做出合理选择）：",
-        "- 表明你竞选警长的动机和愿意",
+        "- 表明你竞选警长的动机和意愿",
         "- 展示你的带队能力和逻辑分析能力",
-        "- 如果你是好人（预言家/女巫/猎人/平民），可以以好人视角承诺公正带队、理性归票",
+        "- 如果你是非预言家好人，可以表达警上观察、投票标准和是否退水，但不能空喊要警徽",
         "- 如果你是预言家，通常应起跳预言家，公开真实查验并给出警徽流",
-        "- 如果你是狼人，通常应考虑悍跳预言家抢警徽，为自己和狼队友创造优势",
+        "- 如果你是狼人，狼人警长竞选默认优先考虑悍跳预言家抢警徽，为自己和狼队友创造优势",
         "- 你可以分析当前局面，表达自己的站边和判断",
         "",
         "发言要点（选择性地融入，不必逐条覆盖）：",
@@ -516,6 +518,11 @@ def build_sheriff_campaign_prompt(
         "- 不能贴脸、不能场外、不能把系统设定挂嘴边",
         "- 不能在发言中直接引用输出 JSON 格式或 action 枚举",
         "- 发言必须符合你的 agent 人设和身份视角",
+        "- 发言时间线必须真实：不能引用尚未发言玩家的发言内容、发言状态或票型",
+        "- 预言家验人理由只能来自夜晚决策时能知道的信息，不能事后用警上发言倒推首夜查验",
+        "- 警徽流不能引用尚未发言玩家的发言状态，只能基于座位、参选/未参选、覆盖关系和轮次收益",
+        "- 狼人悍跳预言家时必须补齐假查验、假验人理由、警徽流；如果不悍跳，不要空喊要警徽",
+        "- 非预言家好人不拍身份、不站边时，不要要求别人投你警长票；可以表明观察标准或选择退水",
     ])
 
     # 战术提示
@@ -546,7 +553,9 @@ def build_sheriff_campaign_prompt(
             "persona_guardrails_section": section("【你必须严格遵守的人格守则】", persona_guardrails),
             "current_state_section": section("【当前状态】", current_state),
             "alive_players_block": alive_block,
+            "private_info_section": section("【私有信息】", private_info) if private_info else "",
             "election_progress_section": section("【竞选情况】", election_progress) if election_progress else "",
+            "campaign_timeline_section": section("【警长竞选发言时间线】", campaign_timeline) if campaign_timeline else "",
             "game_history_section": section("【游戏历史】", game_context) if game_context else "",
             "action_requirements_section": section("【行动要求 — 警长竞选发言】", campaign_action_hint),
             "tactic_hint_section": tactic_hint_section,
@@ -823,9 +832,46 @@ def _build_board_role_constraints(board_roles: dict[str, int]) -> list[str]:
 def _fewshot_example_lines(enabled_role_keys: set[str] | None = None, phase: str = "") -> list[str]:
     """按板子角色和 phase 裁剪 few-shot，避免把不存在的角色/阶段知识塞进 prompt。"""
     is_speech_phase = phase in _SPEECH_ONLY_PHASES
+    is_sheriff_campaign_phase = phase in _SHERIFF_CAMPAIGN_PHASES
     is_vote_phase = phase in _VOTE_ONLY_PHASES
     is_night_phase = phase in _NIGHT_ONLY_PHASES
     show_all = not phase or (not is_speech_phase and not is_vote_phase and not is_night_phase)
+
+    sheriff_campaign_examples: list[tuple[set[str] | None, list[str]]] = [
+        ({"seer"}, [
+            "",
+            "示例 — 警长竞选（真预言家）：",
+            "{",
+            '    "speech": "我是预言家，昨晚验了3号，结果是好人。验3号不是因为今天发言，而是首夜我想从中置位开一张能连接前后置关系的牌；3号如果是好人，后面警上警下的站边我都能更好判断。我的警徽流先验8号，再验5号。8号在警上且位置靠后，拿到他的身份能帮助我判断竞选池；5号在警下负责投票，他的身份会影响我判断警徽票里有没有狼冲票。请大家听我这个真实查验和警徽流，不要只看谁发言更激动。",',
+            '    "action_type": "speak",',
+            '    "target_id": null,',
+            '    "public_reason": null,',
+            '    "private_memory_update": "真预言家起跳：报3号金水，验人理由基于首夜座位收益；警徽流8号、5号，理由不引用尚未发生的发言"',
+            "}",
+        ]),
+        ({"werewolf"}, [
+            "",
+            "示例 — 警长竞选（狼人悍跳预言家）：",
+            "{",
+            '    "speech": "我起跳预言家，昨晚验了4号，是好人。首夜验4号是因为他在警下中置位，警徽票会影响第一天归票方向，先摸清这张牌能帮我判断警下票型。我的警徽流先验8号，再验3号：8号在警上后置位，可能会决定警上真假预言家的站边；3号也在警上，身份能帮我看竞选池里有没有狼。这个板子警徽很重要，我会用查验链带队，不会让大家凭情绪归票。",',
+            '    "action_type": "speak",',
+            '    "target_id": null,',
+            '    "public_reason": null,',
+            '    "private_memory_update": "我是狼人悍跳预言家，假查验给4号金水；假验人理由、警徽流和带队逻辑要闭合，不能暴露狼队信息"',
+            "}",
+        ]),
+        ({"villager", "witch", "hunter", "guard", "guardian", "idiot", "grave_keeper", "knight"}, [
+            "",
+            "示例 — 警长竞选（非预言家好人）：",
+            "{",
+            '    "speech": "我是好人牌，上警主要是为了听信息和给出判断标准。这个环节警徽最好交给能报出真实查验、验人理由和警徽流的人；如果后面有预言家对跳，我会重点比较他们的查验逻辑是否来自夜晚信息、警徽流是否服务于排狼。我现在不拍强身份，也没有查验信息，所以我不要求大家把警徽票投给我，听完对跳后我会明确站边。",',
+            '    "action_type": "speak",',
+            '    "target_id": null,',
+            '    "public_reason": null,',
+            '    "private_memory_update": "非预言家好人警上不空要警徽，先表达听预言家的标准，避免被当成狼抢警徽"',
+            "}",
+        ]),
+    ]
 
     speech_examples: list[tuple[set[str] | None, list[str]]] = [
         (None, [
@@ -979,7 +1025,9 @@ def _fewshot_example_lines(enabled_role_keys: set[str] | None = None, phase: str
         return result
 
     lines: list[str] = []
-    if is_speech_phase or show_all:
+    if is_sheriff_campaign_phase:
+        lines.extend(_include_examples(sheriff_campaign_examples))
+    elif is_speech_phase or show_all:
         lines.extend(_include_examples(speech_examples))
     if is_vote_phase or show_all:
         lines.extend(_include_examples(vote_examples))
@@ -1110,6 +1158,7 @@ def _day_count_from_round_info(round_info: str) -> int:
     return int(match.group(1))
 
 
+_SHERIFF_CAMPAIGN_PHASES = frozenset({"sheriff_speech", "sheriff_campaign"})
 _SPEECH_ONLY_PHASES = frozenset({"day_speech", "sheriff_speech", "sheriff_campaign", "last_words"})
 _VOTE_ONLY_PHASES = frozenset({"exile_vote", "sheriff_vote"})
 _NIGHT_ONLY_PHASES = frozenset({"night", "night_action"})

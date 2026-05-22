@@ -29,7 +29,7 @@ from ai_werewolf.llm.memory.summary_builder import (
 from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_store
 from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
-from ai_werewolf.llm.prompt_builder import build_sheriff_campaign_prompt, build_sheriff_vote_prompt
+from ai_werewolf.llm.prompt_builder import build_sheriff_campaign_prompt, build_sheriff_vote_prompt, format_private_info
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import Winner, evaluate_winner
 from ai_werewolf.seeds.boards import default_boards
@@ -289,7 +289,6 @@ class PhaseOrchestrator:
 
     def _generate_ai_sheriff_campaign_speeches(self, session: GameSession) -> None:
         # Build shared context for all candidates
-        game_context = build_game_context(session)
         all_players = session.state.players
         alive_ids = [p.player_id for p in all_players if p.alive]
 
@@ -335,6 +334,15 @@ class PhaseOrchestrator:
             if agent is None:
                 continue
             label = player_label(candidate_id, session)
+            current_game_context = build_game_context(session)
+            effective_private_info = self._effective_private_info_for_prompt(session, candidate_id)
+            private_info_text = format_private_info(
+                effective_private_info,
+                role_key=candidate.role_key,
+                player_label=lambda player_id: references.get(player_id, player_id),
+                players=session.state.players,
+            )
+            campaign_timeline = self._build_sheriff_campaign_timeline(session, candidate_id, references)
 
             # Announce this candidate is about to speak so the frontend can show it
             session.publish_stream_event(
@@ -348,20 +356,21 @@ class PhaseOrchestrator:
                 actor_id=candidate_id,
             )
 
-            private_info = session.private_infos.get(candidate_id)
-            tactic_hint = private_info.wolf_tactic_hint if private_info else ""
+            tactic_hint = effective_private_info.wolf_tactic_hint
             prompt = build_sheriff_campaign_prompt(
                 agent=agent,
                 role_key=candidate.role_key,
                 player_label_text=label,
                 tactic_hint=(tactic_hint or ""),
-                game_context=game_context,
+                game_context=current_game_context,
+                private_info=private_info_text,
                 alive_players=alive_ids,
                 board_context=board_context,
                 player_references=references,
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
                 election_progress=election_progress,
+                campaign_timeline=campaign_timeline,
             )
             decider = build_decider_for_role(
                 candidate.role_key,
@@ -389,6 +398,71 @@ class PhaseOrchestrator:
 
             # Brief pause lets the SSE loop deliver this speech before the next one starts
             time.sleep(0.3)
+
+    def _effective_private_info_for_prompt(self, session: GameSession, player_id: str) -> PlayerPrivateInfo:
+        session_info = session.private_infos.get(player_id)
+        if session_info is not None and self._private_info_has_content(session_info):
+            return session_info
+
+        memory_info = self._private_info_from_memory(session, player_id)
+        if memory_info is not None and self._private_info_has_content(memory_info):
+            return memory_info
+        return session_info or PlayerPrivateInfo()
+
+    def _private_info_from_memory(self, session: GameSession, player_id: str) -> PlayerPrivateInfo | None:
+        try:
+            memory_context = self.memory_context_builder.build_for_player(session, player_id)
+        except Exception:
+            logger.exception("构建警长竞选私有记忆失败 player_id=%s", player_id)
+            return None
+
+        private_role_memory = memory_context.private_role_memory
+        payload = getattr(private_role_memory, "payload", None)
+        if not isinstance(payload, dict) or not payload:
+            return None
+        try:
+            return PlayerPrivateInfo.model_validate(payload)
+        except Exception:
+            logger.exception("解析警长竞选私有记忆失败 player_id=%s payload=%s", player_id, payload)
+            return None
+
+    def _private_info_has_content(self, private_info: PlayerPrivateInfo) -> bool:
+        return bool(private_info.model_dump(mode="json", exclude_defaults=True, exclude_none=True))
+
+    def _build_sheriff_campaign_timeline(
+        self,
+        session: GameSession,
+        current_candidate_id: str,
+        references: dict[str, str],
+    ) -> str:
+        candidates = list(session.sheriff_candidates)
+        order = " -> ".join(references.get(pid, pid) for pid in candidates) or "无"
+        lines = [
+            f"发言顺序：{order}",
+            f"当前轮到你发言：{references.get(current_candidate_id, current_candidate_id)}。",
+            "时间线规则：只能评价【已发生发言】里的具体内容；对【尚未发言候选人】只能基于座位、参选状态或警徽流覆盖关系分析，不能说他们发言含糊、逻辑差或站边摇摆。",
+        ]
+
+        spoken_items = [
+            (pid, session.sheriff_election_speeches[pid])
+            for pid in candidates
+            if pid in session.sheriff_election_speeches
+        ]
+        if spoken_items:
+            lines.append("已发生发言（可以评价这些具体发言）：")
+            for pid, speech in spoken_items:
+                lines.append(f"- {references.get(pid, pid)}：{speech}")
+        else:
+            lines.append("已发生发言（可以评价这些具体发言）：无。")
+
+        pending = [
+            references.get(pid, pid)
+            for pid in candidates
+            if pid != current_candidate_id and pid not in session.sheriff_election_speeches
+        ]
+        pending_text = "、".join(pending) if pending else "无"
+        lines.append(f"尚未发言候选人：{pending_text}。")
+        return "\n".join(lines)
 
     def _maybe_open_sheriff_vote(self, session: GameSession) -> None:
         if session.sheriff_vote_open:

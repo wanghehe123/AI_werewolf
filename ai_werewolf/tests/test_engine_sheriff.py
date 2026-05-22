@@ -7,6 +7,7 @@ from ai_werewolf.engine.helpers import allowed_actions
 from ai_werewolf.engine.orchestrator import PhaseOrchestrator
 from ai_werewolf.engine.session import GameSession
 from ai_werewolf.engine.vote import AIVoteResult, VoteResolver
+from ai_werewolf.llm.memory.models import PrivateRoleMemory
 from ai_werewolf.llm.schemas import PlayerDecision
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
@@ -363,6 +364,86 @@ def test_ai_sheriff_speech_publishes_one_structured_stream_event():
     assert len(speech_events) == 1
     assert speech_events[0]["payload"]["player_id"] == "s1"
     assert speech_events[0]["payload"]["speech"] == "我会竞选警长，明天给大家清晰视角。"
+
+
+def test_ai_sheriff_speech_prompt_includes_private_info_and_previous_campaign_speeches():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_SPEECH
+    session.state.day_count = 1
+    session.sheriff_candidates = ["w1", "s1"]
+    session.sheriff_voters = ["human", "v1"]
+    session.agents = {"w1": _agent("w1", "狼人"), "s1": _agent("s1", "预言家")}
+    session.private_infos["s1"] = PlayerPrivateInfo(
+        seer_results=[{"round": "night1", "target": "w1", "result": "werewolf"}]
+    )
+    session.sheriff_election_speeches = {
+        "w1": "我是预言家，昨晚查杀3号预言家。"
+    }
+    decider = MagicMock()
+    decider.decide.return_value = PlayerDecision(
+        speech="我是预言家，昨晚查验2号是狼人。",
+        action_type="speak",
+        target_id=None,
+        public_reason=None,
+        private_memory_update=None,
+    )
+
+    with (
+        patch("ai_werewolf.engine.orchestrator.build_decider_for_role", return_value=decider),
+        patch("ai_werewolf.engine.orchestrator.record_prompt_trace") as trace,
+    ):
+        orch._generate_ai_sheriff_campaign_speeches(session)
+
+    prompt = trace.call_args.args[3]
+    assert "【私有信息】" in prompt
+    assert "第 night1 晚：你查验 2号 狼人，结果为【狼人】" in prompt
+    assert "【警长竞选发言时间线】" in prompt
+    assert "已发生发言（可以评价这些具体发言）" in prompt
+    assert "2号 狼人：我是预言家，昨晚查杀3号预言家。" in prompt
+    assert "当前轮到你发言：3号 预言家。" in prompt
+    assert "尚未发言候选人：无。" in prompt
+
+
+def test_ai_sheriff_speech_prompt_uses_redis_private_role_memory_when_session_private_missing():
+    memory_store = MagicMock()
+    memory_store.get_day_summaries.return_value = []
+    memory_store.get_player_suspicion.return_value = None
+    memory_store.get_private_role_memory.return_value = PrivateRoleMemory(
+        game_id="g1",
+        player_id="s1",
+        payload={"seer_results": [{"round": "night1", "target": "w1", "result": "werewolf"}]},
+    )
+    orch = PhaseOrchestrator(
+        model_registry=MagicMock(),
+        role_registry=BuiltInRoleRegistry(),
+        role_model_bindings=[],
+        memory_store=memory_store,
+    )
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_SPEECH
+    session.state.day_count = 1
+    session.sheriff_candidates = ["s1"]
+    session.sheriff_voters = ["human", "w1", "v1"]
+    session.agents = {"s1": _agent("s1", "预言家")}
+    decider = MagicMock()
+    decider.decide.return_value = PlayerDecision(
+        speech="我是预言家，昨晚查验2号是狼人。",
+        action_type="speak",
+        target_id=None,
+        public_reason=None,
+        private_memory_update=None,
+    )
+
+    with (
+        patch("ai_werewolf.engine.orchestrator.build_decider_for_role", return_value=decider),
+        patch("ai_werewolf.engine.orchestrator.record_prompt_trace") as trace,
+    ):
+        orch._generate_ai_sheriff_campaign_speeches(session)
+
+    prompt = trace.call_args.args[3]
+    assert "【私有信息】" in prompt
+    assert "第 night1 晚：你查验 2号 w1，结果为【狼人】" in prompt
 
 
 def test_vote_resolver_streams_vote_events_before_exile_result():

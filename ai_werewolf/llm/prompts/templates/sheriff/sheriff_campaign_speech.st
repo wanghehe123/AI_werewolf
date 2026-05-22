@@ -14,7 +14,11 @@ ${current_state_section}
 
 ${alive_players_block}
 
+${private_info_section}
+
 ${election_progress_section}
+
+${campaign_timeline_section}
 
 ${game_history_section}
 
