@@ -503,3 +503,162 @@ def test_vote_resolver_counts_sheriff_vote_as_one_point_five():
     result = resolver.resolve(session, human_vote)
 
     assert result["exiled_player_id"] == "w1"
+
+
+# ── Sheriff election LLM decision tests ──
+
+
+def test_sheriff_election_decision_prompt_contains_strategy():
+    from ai_werewolf.llm.prompt_builder import build_sheriff_election_decision_prompt
+
+    agent = _agent("s1", "预言家甲")
+    prompt = build_sheriff_election_decision_prompt(
+        agent=agent,
+        role_key="seer",
+        player_label_text="3号 预言家甲",
+        private_info_text="查验结果：night1 查验 5号：好人阵营",
+        alive_labels="3号 预言家甲, 5号 小王, 7号 小明",
+    )
+    assert "警长竞选是公布查验结果" in prompt
+    assert "run_for_sheriff" in prompt
+    assert "私有信息" in prompt
+
+
+def test_sheriff_election_decision_prompt_for_wolf_includes_teammate_info():
+    from ai_werewolf.llm.prompt_builder import build_sheriff_election_decision_prompt
+
+    agent = _agent("w1", "狼人甲")
+    prompt = build_sheriff_election_decision_prompt(
+        agent=agent,
+        role_key="werewolf",
+        player_label_text="2号 狼人甲",
+        wolf_team_text="- 5号 狼人乙（未决定）\n- 8号 狼人丙（未决定）",
+        alive_labels="2号 狼人甲, 5号 狼人乙, 8号 狼人丙",
+    )
+    assert "狼队信息" in prompt
+    assert "狼人乙" in prompt
+    assert "狼队通常只有一名狼人上警" in prompt
+
+
+def test_auto_fill_sheriff_decisions_llm_falls_back_on_failure():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_ELECTION
+    # Set up agents so non-human players can be processed
+    session.agents = {
+        "w1": _agent("w1", "狼人甲"),
+        "s1": _agent("s1", "预言家甲"),
+        "v1": _agent("v1", "村民甲"),
+    }
+    session.private_infos["w1"] = PlayerPrivateInfo()
+    session.private_infos["s1"] = PlayerPrivateInfo()
+    session.private_infos["v1"] = PlayerPrivateInfo()
+
+    # LLM fails → falls back to hardcoded rule
+    orch._auto_fill_ai_sheriff_decisions(session)
+
+    # Seer and werewolf should be candidates (hardcoded fallback)
+    assert "s1" in session.sheriff_candidates
+    assert "w1" in session.sheriff_candidates
+    # Villager should be voter
+    assert "v1" in session.sheriff_voters
+
+
+def test_auto_fill_sheriff_decisions_with_mocked_llm():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_ELECTION
+    session.agents = {
+        "w1": _agent("w1", "狼人甲"),
+        "s1": _agent("s1", "预言家甲"),
+        "v1": _agent("v1", "村民甲"),
+    }
+    session.private_infos["w1"] = PlayerPrivateInfo()
+    session.private_infos["s1"] = PlayerPrivateInfo()
+    session.private_infos["v1"] = PlayerPrivateInfo()
+
+    # Mock LLM decision: seer runs, wolf skips, villager skips
+    def _mock_decision(self, session, player, prompt):
+        if player.role_key == "seer":
+            return True
+        return False
+
+    with patch.object(PhaseOrchestrator, "_ask_llm_sheriff_decision", _mock_decision):
+        orch._auto_fill_ai_sheriff_decisions(session)
+
+    assert "s1" in session.sheriff_candidates
+    assert "w1" in session.sheriff_voters
+    assert "v1" in session.sheriff_voters
+
+
+def test_auto_fill_sheriff_decisions_wolf_coordination():
+    """Two wolves: first one should run, second sees teammate already running and skips."""
+    orch = _orchestrator()
+    # Create session with 5 players (human + 2 wolves + seer + villager)
+    players = [
+        _player("human", 1, "villager", is_human=True),
+        _player("w1", 2, "werewolf"),
+        _player("w2", 3, "werewolf"),
+        _player("s1", 4, "seer"),
+        _player("v1", 5, "villager"),
+    ]
+    session = GameSession(
+        state=GameState(game_id="g1", board_id="board_8_standard", phase=GamePhase.SHERIFF_ELECTION, day_count=1, players=players),
+        agents={
+            "w1": _agent("w1", "狼人甲"),
+            "w2": _agent("w2", "狼人乙"),
+            "s1": _agent("s1", "预言家甲"),
+            "v1": _agent("v1", "村民甲"),
+        },
+        human_player_id="human",
+    )
+    session.private_infos["w1"] = PlayerPrivateInfo(wolf_teammates=["w2"])
+    session.private_infos["w2"] = PlayerPrivateInfo(wolf_teammates=["w1"])
+    session.private_infos["s1"] = PlayerPrivateInfo()
+    session.private_infos["v1"] = PlayerPrivateInfo()
+
+    # First wolf runs, second wolf sees teammate running → skips
+    def _mock_decision(self_captured, session, player, prompt):
+        if player.role_key == "seer":
+            return True
+        if player.role_key == "werewolf":
+            if player.player_id == "w1":
+                return True
+            return False
+        return False
+
+    with patch.object(PhaseOrchestrator, "_ask_llm_sheriff_decision", _mock_decision):
+        orch._auto_fill_ai_sheriff_decisions(session)
+
+    assert "s1" in session.sheriff_candidates
+    assert "w1" in session.sheriff_candidates
+    assert "w2" in session.sheriff_voters
+    assert "v1" in session.sheriff_voters
+
+
+def test_sheriff_election_decision_prompt_for_non_seer_non_wolf():
+    from ai_werewolf.llm.prompt_builder import build_sheriff_election_decision_prompt
+
+    agent = _agent("v1", "村民甲")
+    prompt = build_sheriff_election_decision_prompt(
+        agent=agent,
+        role_key="villager",
+        player_label_text="4号 村民甲",
+        alive_labels="4号 村民甲, 5号 小王",
+    )
+    assert "普通好人牌" in prompt
+    assert "run_for_sheriff" in prompt
+
+
+def test_sheriff_election_decision_prompt_for_witch():
+    from ai_werewolf.llm.prompt_builder import build_sheriff_election_decision_prompt
+
+    agent = _agent("wh1", "女巫甲")
+    prompt = build_sheriff_election_decision_prompt(
+        agent=agent,
+        role_key="witch",
+        player_label_text="5号 女巫甲",
+        alive_labels="5号 女巫甲, 6号 小明",
+    )
+    assert "强神" in prompt
+    assert "参选会暴露你是神职" in prompt

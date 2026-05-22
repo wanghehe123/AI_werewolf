@@ -686,6 +686,97 @@ def build_sheriff_vote_prompt(
     )
 
 
+def build_sheriff_election_decision_prompt(
+    *,
+    agent: AgentProfile,
+    role_key: str,
+    player_label_text: str,
+    private_info_text: str = "",
+    wolf_team_text: str = "",
+    alive_labels: str = "",
+    already_running: str = "",
+    already_skipped: str = "",
+) -> str:
+    """Build a focused prompt asking the AI whether to run for sheriff.
+
+    This is a simple yes/no decision before the speech phase. The response
+    is expected to be a compact JSON object (not a full PlayerDecision),
+    since no speech or action target is involved yet.
+    """
+    role_name = _role_display_name(role_key)
+    camp = _role_camp(role_key)
+    camp_name = "好人阵营" if camp == "good" else "狼人阵营"
+
+    persona_body = "\n".join(
+        filter(
+            None,
+            [
+                f"你的座位号：{player_label_text}",
+                f"玩家名称：{agent.name}",
+                f"性格特点：{agent.persona}",
+                f"发言风格：{agent.speech_style}",
+                f"推理能力：{agent.reasoning_level}/5",
+                f"伪装能力：{agent.deception_level}/5",
+                f"攻击性：{agent.aggression_level}/5",
+                f"合作性：{agent.cooperation_level}/5",
+                f"风险偏好：{_risk_preference_cn(agent.risk_preference.value)}",
+            ],
+        )
+    )
+    hidden_identity_body = "\n".join([
+        f"你的真实身份：{role_name}",
+        f"你的阵营：{camp_name}",
+    ])
+
+    strategy_lines = _sheriff_election_strategy_hints(role_key)
+    strategy_hint_body = "\n".join(strategy_lines) if strategy_lines else ""
+
+    return render_template(
+        "sheriff/sheriff_election_decision.st",
+        {
+            "persona_section": section("【人物设定】", persona_body),
+            "hidden_identity_section": section("【隐藏身份】", hidden_identity_body),
+            "private_info_section": section("【私有信息】", private_info_text) if private_info_text else "",
+            "wolf_team_section": section("【狼队信息】", wolf_team_text) if wolf_team_text else "",
+            "alive_players": alive_labels,
+            "already_running": already_running or "暂无",
+            "already_skipped": already_skipped or "暂无",
+            "strategy_hint_section": section("【策略提示】", strategy_hint_body) if strategy_hint_body else "",
+        },
+    )
+
+
+def _sheriff_election_strategy_hints(role_key: str) -> list[str]:
+    """Per-role strategy hints for the sheriff election decision phase."""
+    if role_key == "seer":
+        return [
+            "作为预言家，你应该参加警长竞选。警长竞选是公布查验结果、建立好人信息链的最佳时机。",
+            "不参选会让好人失去带队核心，狼队更容易抢到警徽。",
+        ]
+    if role_key in {"werewolf", "wolf_king", "wolf_beauty"}:
+        return [
+            "作为狼人，你需要判断是否悍跳预言家抢警徽。",
+            "狼队通常只有一名狼人上警悍跳，其余狼人应在警下投票（倒钩或冲锋）。",
+            "如果你的狼队友已经有人参选了，你应该放弃参选去警下投票。",
+            "考虑你的伪装能力和发言能力——如果你不擅长悍跳，让你的狼队友去做。",
+            "如果你决定参选，必须准备好悍跳预言家：给出假查验、验人理由和警徽流。",
+            "如果你不参选，在警下投票时要隐蔽自己的狼面。",
+        ]
+    if role_key in {"witch", "hunter", "guard", "guardian"}:
+        return [
+            "你是强神，可以参选警长争夺带队权，但参选会暴露你是神职的身份。",
+            "如果你参选，需要展示带队逻辑和判断标准，不能空喊要警徽。",
+            "如果你不参选，可以在警下投票并观察谁是真预言家。",
+            "平衡考虑：在目前已经有人参选的情况下，你作为神职是否真的需要上警？",
+        ]
+    return [
+        "你是一张普通好人牌。一般不参选警长，把警徽留给有查验信息的人。",
+        "如果你有明确的带队思路和较强的发言能力，也可以考虑上警发表观点。",
+        "如果你参选，必须解释你的带队价值——不能空喊要警徽。",
+        "最稳妥的做法是不参选，在警下认真听发言并投票。",
+    ]
+
+
 def format_private_info(
     private_info: PlayerPrivateInfo,
     role_key: str,

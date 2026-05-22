@@ -276,16 +276,154 @@ class PhaseOrchestrator:
             self._finalize_sheriff_election(session)
 
     def _auto_fill_ai_sheriff_decisions(self, session: GameSession) -> None:
+        """Let each AI player decide via LLM whether to run for sheriff.
+
+        Falls back to the old hardcoded rule (seer/werewolf run, others skip)
+        if the LLM call fails or returns an unparseable response.
+        """
+        from ai_werewolf.llm.prompt_builder import build_sheriff_election_decision_prompt
+
         decided = set(session.sheriff_candidates) | set(session.sheriff_voters)
-        for player in session.state.players:
-            if player.is_human or not player.alive or player.player_id in decided:
+        all_players = session.state.players
+        references: dict[str, str] = {}
+        for p in all_players:
+            agent = session.agents.get(p.player_id)
+            display = agent.name if agent else p.player_id
+            references[p.player_id] = f"{p.seat}号 {display}"
+
+        alive_players = [p for p in all_players if p.alive]
+
+        for player in alive_players:
+            if player.is_human or player.player_id in decided:
                 continue
-            if player.role_key in {"seer", "werewolf"}:
+
+            agent = session.agents.get(player.player_id)
+            if agent is None:
+                self._hardcoded_sheriff_decision(session, player)
+                continue
+
+            label = f"{player.seat}号 {agent.name}"
+
+            # Build private info for this player
+            info = session.private_infos.get(player.player_id, PlayerPrivateInfo())
+            private_info_text = format_private_info(
+                info,
+                role_key=player.role_key,
+                player_label=lambda pid: references.get(pid, pid),
+                players=all_players,
+            )
+
+            # Build wolf team info (only for wolves)
+            wolf_team_text = ""
+            if player.role_key in {"werewolf", "wolf_king", "wolf_beauty"} and info.wolf_teammates:
+                wolf_lines = ["以下是你的狼队友信息，用来帮助你们协调谁上警："]
+                for mate_id in info.wolf_teammates:
+                    mate = session.state.player_by_id(mate_id)
+                    if mate and mate.alive:
+                        mate_agent = session.agents.get(mate_id)
+                        mate_label = f"{mate.seat}号 {mate_agent.name if mate_agent else mate_id}"
+                        if mate_id in session.sheriff_candidates:
+                            mate_label += "（已参选）"
+                        elif mate_id in session.sheriff_voters:
+                            mate_label += "（已弃选）"
+                        else:
+                            mate_label += "（未决定）"
+                        wolf_lines.append(f"- {mate_label}")
+                wolf_team_text = "\n".join(wolf_lines)
+
+            # Current election status
+            already_running_list = [
+                references.get(pid, pid) for pid in session.sheriff_candidates
+            ]
+            already_skipped_list = [
+                references.get(pid, pid) for pid in session.sheriff_voters
+            ]
+            alive_labels = ", ".join(references.get(p.player_id, p.player_id) for p in alive_players)
+
+            # Build prompt and call LLM
+            prompt = build_sheriff_election_decision_prompt(
+                agent=agent,
+                role_key=player.role_key,
+                player_label_text=label,
+                private_info_text=private_info_text,
+                wolf_team_text=wolf_team_text,
+                alive_labels=alive_labels,
+                already_running=", ".join(already_running_list) if already_running_list else "",
+                already_skipped=", ".join(already_skipped_list) if already_skipped_list else "",
+            )
+
+            should_run = self._ask_llm_sheriff_decision(session, player, prompt)
+
+            if should_run:
                 session.sheriff_candidates.append(player.player_id)
-                session.append_public_event("sheriff_election", f"{player_label(player.player_id, session)} 参加警长竞选。", actor_id=player.player_id)
+                session.append_public_event(
+                    "sheriff_election",
+                    f"{label} 参加警长竞选。",
+                    actor_id=player.player_id,
+                )
             else:
                 session.sheriff_voters.append(player.player_id)
-                session.append_public_event("sheriff_election", f"{player_label(player.player_id, session)} 不参加警长竞选。", actor_id=player.player_id)
+                session.append_public_event(
+                    "sheriff_election",
+                    f"{label} 不参加警长竞选。",
+                    actor_id=player.player_id,
+                )
+
+    def _ask_llm_sheriff_decision(
+        self, session: GameSession, player: Any, prompt: str
+    ) -> bool:
+        """Call the LLM to decide whether to run for sheriff.
+
+        Returns True (run) or False (skip). Falls back to the hardcoded rule
+        on any error.
+        """
+        import json as _json
+        import re as _re
+
+        try:
+            decider = build_decider_for_role(
+                player.role_key,
+                self.model_registry,
+                self.role_model_bindings,
+                chain_config=self.chain_config,
+            )
+            record_prompt_trace(session, player.player_id, "sheriff_election_decision", prompt)
+            raw = decider.decide(prompt)
+            # Parse the response — model may return speech or private_memory_update
+            response_text = getattr(raw, "speech", "") or ""
+            if not response_text:
+                response_text = getattr(raw, "private_memory_update", "") or ""
+
+            # Strip markdown code fences if present
+            clean = _re.sub(r'^```(?:json)?\s*', '', response_text.strip())
+            clean = _re.sub(r'\s*```$', '', clean)
+            data = _json.loads(clean)
+            return bool(data.get("run_for_sheriff", False))
+        except Exception:
+            logger.debug(
+                "LLM sheriff election decision failed for %s, falling back to hardcoded rule",
+                player.player_id,
+                exc_info=True,
+            )
+            return player.role_key in {"seer", "werewolf"}
+
+    def _hardcoded_sheriff_decision(self, session: GameSession, player: Any) -> None:
+        """Fallback: hardcoded sheriff election decision."""
+        label = player_label(player.player_id, session)
+        if player.role_key in {"seer", "werewolf"}:
+            session.sheriff_candidates.append(player.player_id)
+            session.append_public_event(
+                "sheriff_election",
+                f"{label} 参加警长竞选。",
+                actor_id=player.player_id,
+            )
+        else:
+            session.sheriff_voters.append(player.player_id)
+            session.append_public_event(
+                "sheriff_election",
+                f"{label} 不参加警长竞选。",
+                actor_id=player.player_id,
+            )
 
     def _generate_ai_sheriff_campaign_speeches(self, session: GameSession) -> None:
         # Build shared context for all candidates
