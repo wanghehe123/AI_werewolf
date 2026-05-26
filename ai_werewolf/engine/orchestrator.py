@@ -522,6 +522,7 @@ class PhaseOrchestrator:
                 board_roles=board_roles,
                 election_progress=election_progress,
                 campaign_timeline=campaign_timeline,
+                strategy_provider=self.strategy_provider,
             )
             decider = build_decider_for_role(
                 candidate.role_key,
@@ -689,6 +690,7 @@ class PhaseOrchestrator:
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
                 election_progress=election_progress,
+                strategy_provider=self.strategy_provider,
             )
             decider = build_decider_for_role(
                 voter.role_key,

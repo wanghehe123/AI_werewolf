@@ -630,6 +630,7 @@ def build_sheriff_vote_prompt(
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     election_progress: str = "",
+    strategy_provider: StrategyProvider | None = None,
 ) -> str:
     """构建警长竞选投票阶段的完整 Prompt。
 
@@ -713,6 +714,19 @@ def build_sheriff_vote_prompt(
     if tactic_hint:
         tactic_hint_section = section("【狼队战术提示】", f"夜间狼队战术提示：{tactic_hint}")
 
+    provider = strategy_provider or StaticWerewolfStrategyProvider()
+    strategy_hint_section = render_strategy_hint_block(
+        provider.get_hints(
+            role_key=role_key,
+            phase="sheriff_vote",
+            day_count=1,
+            private_info=None,
+            public_context=game_context,
+            board_roles=board_roles or {},
+            alive_players=alive_players or [],
+        )
+    )
+
     return render_template(
         "sheriff/sheriff_vote.st",
         {
@@ -727,6 +741,7 @@ def build_sheriff_vote_prompt(
             "election_progress_section": section("【竞选情况】", election_progress) if election_progress else "",
             "candidate_speeches_section": section("【候选人发言】", candidate_speeches),
             "game_history_section": section("【游戏历史】", game_context) if game_context else "",
+            "strategy_hint_section": strategy_hint_section,
             "action_requirements_section": section("【行动要求 — 警长投票】", vote_action_hint),
             "tactic_hint_section": tactic_hint_section,
             "output_format_section": section("【输出格式】", output_format),

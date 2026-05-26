@@ -20,6 +20,8 @@ ${candidate_speeches_section}
 
 ${game_history_section}
 
+${strategy_hint_section}
+
 ${action_requirements_section}
 
 ${tactic_hint_section}

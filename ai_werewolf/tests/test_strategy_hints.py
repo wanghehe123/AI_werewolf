@@ -1,6 +1,12 @@
+from typing import Any
+
 from ai_werewolf.domain.agents import AgentProfile, RiskPreference
-from ai_werewolf.llm.prompt_builder import build_sheriff_campaign_prompt
-from ai_werewolf.llm.strategy_provider import StaticWerewolfStrategyProvider
+from ai_werewolf.llm.prompt_builder import build_sheriff_campaign_prompt, build_sheriff_vote_prompt
+from ai_werewolf.llm.strategy_provider import (
+    StaticWerewolfStrategyProvider,
+    StrategyHintBundle,
+    StrategyProvider,
+)
 
 
 def _agent(name: str = "策略测试") -> AgentProfile:
@@ -96,3 +102,83 @@ def test_sheriff_campaign_prompt_warns_non_seers_not_to_ask_for_badge_without_id
 
     assert "不拍身份、不站边时，不要要求别人投你警长票" in prompt
     assert "示例 — 警长竞选（非预言家好人）" in prompt
+
+
+class _CustomStrategyProvider:
+    """A custom StrategyProvider that returns known, deterministic hints."""
+
+    def get_hints(
+        self,
+        *,
+        role_key: str,
+        phase: str,
+        day_count: int,
+        private_info: Any,
+        public_context: str,
+        board_roles: dict[str, int],
+        alive_players: list[str],
+    ) -> StrategyHintBundle:
+        return StrategyHintBundle(
+            hints=["CUSTOM_HINT_ALPHA", "CUSTOM_HINT_BETA"],
+            source="test",
+        )
+
+
+def test_sheriff_campaign_accepts_external_strategy_provider():
+    provider = _CustomStrategyProvider()
+    prompt = build_sheriff_campaign_prompt(
+        agent=_agent(),
+        role_key="seer",
+        player_label_text="2号 策略测试",
+        game_context="第一夜结束，准备警上发言。",
+        alive_players=["p1", "p2", "p3"],
+        board_context="角色构成：预言家1，狼人2，平民3",
+        player_references={"p1": "1号 A", "p2": "2号 策略测试", "p3": "3号 C"},
+        enabled_role_keys={"seer", "werewolf", "villager"},
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        strategy_provider=provider,
+    )
+
+    assert "CUSTOM_HINT_ALPHA" in prompt
+    assert "CUSTOM_HINT_BETA" in prompt
+    # Custom hints appear in the strategy hint block, not the default static ones
+    assert "警长竞选是预言家公开真实查验" not in prompt
+
+
+def test_sheriff_vote_prompt_accepts_external_strategy_provider():
+    provider = _CustomStrategyProvider()
+    prompt = build_sheriff_vote_prompt(
+        agent=_agent(),
+        role_key="seer",
+        player_label_text="2号 策略测试",
+        candidate_speeches="1号 A：我竞选警长。",
+        candidate_ids=["p1"],
+        game_context="第一夜结束，准备投票。",
+        alive_players=["p1", "p2", "p3"],
+        board_context="角色构成：预言家1，狼人2，平民3",
+        player_references={"p1": "1号 A", "p2": "2号 策略测试", "p3": "3号 C"},
+        enabled_role_keys={"seer", "werewolf", "villager"},
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        strategy_provider=provider,
+    )
+
+    assert "CUSTOM_HINT_ALPHA" in prompt
+    assert "CUSTOM_HINT_BETA" in prompt
+
+
+def test_sheriff_vote_prompt_includes_strategy_hints_by_default():
+    prompt = build_sheriff_vote_prompt(
+        agent=_agent(),
+        role_key="werewolf",
+        player_label_text="2号 策略测试",
+        candidate_speeches="1号 A：我竞选警长。",
+        candidate_ids=["p1"],
+        game_context="第一夜结束，准备投票。",
+        alive_players=["p1", "p2", "p3"],
+        board_context="角色构成：预言家1，狼人2，平民3",
+        player_references={"p1": "1号 A", "p2": "2号 策略测试", "p3": "3号 C"},
+        enabled_role_keys={"seer", "werewolf", "villager"},
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+    )
+
+    assert "【可选策略参考】" in prompt
