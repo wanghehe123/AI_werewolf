@@ -70,8 +70,6 @@ class RagStrategyProvider:
             ).hints
 
         merged = _limit_hints([*rag_hints, *static_hints], max_chars=self.max_hint_chars)
-        if not merged:
-            return StrategyHintBundle(hints=[], source="rag+static")
         return StrategyHintBundle(hints=merged, source="rag+static")
 
 

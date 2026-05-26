@@ -1,3 +1,4 @@
+from ai_werewolf.llm.strategy_memory.provider import RagStrategyProvider, provider_to_graph_strategy_hint_provider
 from ai_werewolf.llm.strategy_memory.retriever import InMemoryStrategyRetriever, NullStrategyRetriever
 from ai_werewolf.llm.strategy_memory.schemas import RagHit, RagQuery, StrategyDocumentMetadata
 
@@ -27,9 +28,6 @@ def test_in_memory_retriever_filters_role_and_phase():
 # ---------------------------------------------------------------------------
 # RagStrategyProvider & graph-adapter tests
 # ---------------------------------------------------------------------------
-
-from ai_werewolf.llm.strategy_memory.provider import RagStrategyProvider, provider_to_graph_strategy_hint_provider
-from ai_werewolf.llm.strategy_memory.schemas import RagHit, StrategyDocumentMetadata
 
 
 class RecordingRetriever:
