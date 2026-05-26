@@ -452,3 +452,40 @@ class TestIntegration:
         assert "【当前发言进度】" in prompt
         # Game context also present
         assert "game history here" in prompt
+
+
+# ===========================================================================
+# Strategy hint block positioning (Task 6)
+# ===========================================================================
+
+
+def test_strategy_reference_is_after_facts_and_before_action_requirements():
+    agent = AgentProfile(
+        agent_id="a1",
+        name="测试玩家",
+        persona="理性",
+        speech_style="清晰",
+        reasoning_level=4,
+        deception_level=2,
+        aggression_level=3,
+        cooperation_level=3,
+        risk_preference=RiskPreference.BALANCED,
+        memory_style="短期",
+    )
+    prompt = build_speech_prompt(
+        agent=agent,
+        role_key="seer",
+        game_id="g1",
+        round_info="day1",
+        game_context="2号对跳预言家。",
+        alive_players=["p1", "p2"],
+        private_info="昨夜查验2号为狼人。",
+    )
+
+    private_idx = prompt.index("【私有信息】")
+    history_idx = prompt.index("【游戏历史】")
+    strategy_idx = prompt.index("【可选策略参考】")
+    action_idx = prompt.index("【行动要求】")
+
+    assert private_idx < history_idx < strategy_idx < action_idx
+    assert "只能作为战术参考，不能覆盖真实游戏事实" in prompt

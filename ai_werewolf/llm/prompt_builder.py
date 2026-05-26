@@ -401,6 +401,7 @@ def build_night_action_prompt(
     enabled_role_keys: set[str] | None = None,
     board_roles: dict[str, int] | None = None,
     self_label: str = "",
+    strategy_provider: StrategyProvider | None = None,
 ) -> str:
     """
     构建夜晚行动阶段的 Prompt
@@ -451,6 +452,7 @@ def build_night_action_prompt(
         enabled_role_keys=enabled_role_keys,
         board_roles=board_roles,
         self_label=self_label,
+        strategy_provider=strategy_provider,
     )
 
 

@@ -19,8 +19,6 @@ $hidden_identity_section
 
 $identity_priority_block
 
-$strategy_hint_block
-
 $role_constraints_section
 
 $board_context_section
@@ -40,6 +38,8 @@ $player_references_section
 $private_info_section
 
 $game_history_section
+
+$strategy_hint_block
 
 $action_requirements_section
 

@@ -12,6 +12,7 @@ from ai_werewolf.llm.prompt_builder import (
     format_private_info,
 )
 from ai_werewolf.llm.schemas import PlayerDecision
+from ai_werewolf.llm.strategy_provider import StrategyProvider
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.seeds.boards import default_boards
 
@@ -42,8 +43,14 @@ class AIActionResult(BaseModel):
 class AIActionScheduler:
     """为当前阶段生成 AI 决策请求，不修改权威游戏状态。"""
 
-    def __init__(self, role_registry: BuiltInRoleRegistry | None = None) -> None:
+    def __init__(
+        self,
+        role_registry: BuiltInRoleRegistry | None = None,
+        *,
+        strategy_provider: StrategyProvider | None = None,
+    ) -> None:
         self.role_registry = role_registry or BuiltInRoleRegistry()
+        self.strategy_provider = strategy_provider
 
     def schedule(
         self,
@@ -119,6 +126,7 @@ class AIActionScheduler:
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
                 self_label=self_label,
+                strategy_provider=self.strategy_provider,
             )
         elif prompt_kind == "day_speech":
             prompt = build_speech_prompt(
@@ -134,6 +142,7 @@ class AIActionScheduler:
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
                 self_label=self_label,
+                strategy_provider=self.strategy_provider,
             )
         elif prompt_kind == "exile_vote":
             prompt = build_vote_prompt(
@@ -150,6 +159,7 @@ class AIActionScheduler:
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
                 self_label=self_label,
+                strategy_provider=self.strategy_provider,
             )
         else:
             prompt = build_last_words_prompt(
@@ -165,6 +175,7 @@ class AIActionScheduler:
                 enabled_role_keys=enabled_role_keys,
                 board_roles=board_roles,
                 self_label=self_label,
+                strategy_provider=self.strategy_provider,
             )
 
         return AIActionRequest(
