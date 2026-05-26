@@ -90,3 +90,19 @@ def _split_long_paragraph(paragraph: str, *, max_chars: int) -> list[str]:
         parts.append(paragraph[start:end])
         start = end
     return parts
+
+
+def main() -> None:
+    from ai_werewolf.config.application import load_application_config
+    from ai_werewolf.llm.strategy_memory.retriever import ChromaStrategyRetriever
+
+    package_root = Path(__file__).resolve().parents[2]
+    config = load_application_config()
+    knowledge_dir = package_root / config.strategy_memory.knowledge_dir
+    retriever = ChromaStrategyRetriever(config=config.strategy_memory, package_root=package_root)
+    count = retriever.ingest_directory(knowledge_dir)
+    print(f"ingested {count} strategy chunks into {config.strategy_memory.collection_name}")
+
+
+if __name__ == "__main__":
+    main()
