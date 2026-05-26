@@ -88,8 +88,22 @@ class DatabaseConfig(BaseModel):
         )
 
 
+class StrategyMemoryConfig(BaseModel):
+    enabled: bool = False
+    knowledge_dir: str = "knowledge"
+    persist_dir: str = "data/chroma"
+    collection_name: str = "werewolf_strategy"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_base_url: str = "https://api.siliconflow.cn/v1"
+    embedding_api_key_env: str = "SILICONFLOW_API_KEY"
+    top_k: int = 3
+    max_hint_chars: int = 1800
+    fallback_static: bool = True
+
+
 class ApplicationConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    strategy_memory: StrategyMemoryConfig = Field(default_factory=StrategyMemoryConfig)
 
     @classmethod
     def default(cls) -> "ApplicationConfig":
@@ -113,10 +127,16 @@ def load_application_config(path: str | Path | None = None) -> ApplicationConfig
         raise ValueError("application config 'app' section must be a YAML mapping")
 
     config = ApplicationConfig(**app_section)
-    return _apply_database_env_overrides(config)
+    return _apply_env_overrides(config)
 
 
-def _apply_database_env_overrides(config: ApplicationConfig) -> ApplicationConfig:
+def _env_int(value: str | None) -> int | None:
+    if value is None or not value.strip():
+        return None
+    return int(value)
+
+
+def _apply_env_overrides(config: ApplicationConfig) -> ApplicationConfig:
     database_values = config.database.model_dump(by_alias=True)
     env_enabled = _env_bool(os.getenv("AI_WEREWOLF_DATABASE_ENABLED"))
     if env_enabled is not None:
@@ -133,7 +153,35 @@ def _apply_database_env_overrides(config: ApplicationConfig) -> ApplicationConfi
         if value:
             database_values[key] = value
 
-    return ApplicationConfig(database=DatabaseConfig(**database_values))
+    strategy_values = config.strategy_memory.model_dump()
+    strategy_enabled = _env_bool(os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_ENABLED"))
+    if strategy_enabled is not None:
+        strategy_values["enabled"] = strategy_enabled
+    strategy_env_map = {
+        "knowledge_dir": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_KNOWLEDGE_DIR"),
+        "persist_dir": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_PERSIST_DIR"),
+        "collection_name": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_COLLECTION"),
+        "embedding_model": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_EMBEDDING_MODEL"),
+        "embedding_base_url": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_EMBEDDING_BASE_URL"),
+        "embedding_api_key_env": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_EMBEDDING_API_KEY_ENV"),
+    }
+    for key, value in strategy_env_map.items():
+        if value:
+            strategy_values[key] = value
+    top_k = _env_int(os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_TOP_K"))
+    if top_k is not None:
+        strategy_values["top_k"] = top_k
+    max_hint_chars = _env_int(os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_MAX_HINT_CHARS"))
+    if max_hint_chars is not None:
+        strategy_values["max_hint_chars"] = max_hint_chars
+    fallback_static = _env_bool(os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_FALLBACK_STATIC"))
+    if fallback_static is not None:
+        strategy_values["fallback_static"] = fallback_static
+
+    return ApplicationConfig(
+        database=DatabaseConfig(**database_values),
+        strategy_memory=StrategyMemoryConfig(**strategy_values),
+    )
 
 
 def configured_database_url(config: ApplicationConfig | None = None) -> str:

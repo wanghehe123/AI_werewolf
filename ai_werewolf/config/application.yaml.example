@@ -1,0 +1,27 @@
+# AI 狼人杀应用配置（示例模板）
+# ==================================
+# 复制本文件为 config/application.yaml 并根据环境修改。
+#
+# 数据库配置支持 PostgreSQL 和 MySQL。
+# 环境变量 DATABASE_URL 会覆盖此文件中的配置。
+
+app:
+  database:
+    enabled: true
+    username: postgres
+    password: postgres
+    url: jdbc:postgresql://127.0.0.1:5432/
+    database: ai_werewolf
+    schema: public
+    echo: false
+  strategy_memory:
+    enabled: false
+    knowledge_dir: knowledge
+    persist_dir: data/chroma
+    collection_name: werewolf_strategy
+    embedding_model: BAAI/bge-m3
+    embedding_base_url: https://api.siliconflow.cn/v1
+    embedding_api_key_env: SILICONFLOW_API_KEY
+    top_k: 3
+    max_hint_chars: 1800
+    fallback_static: true
