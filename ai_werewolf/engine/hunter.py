@@ -13,6 +13,7 @@ from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_hunter_shoot_prompt, format_private_info
 from ai_werewolf.engine.prompt_trace import record_prompt_trace
 from ai_werewolf.llm.schemas import PlayerDecision
+from ai_werewolf.llm.strategy_provider import StrategyProvider
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,12 @@ class HunterResolver:
         role_model_bindings: list,
         *,
         chain_config: list[dict] | None = None,
+        strategy_provider: StrategyProvider | None = None,
     ) -> None:
         self.model_registry = model_registry
         self.role_model_bindings = role_model_bindings
         self.chain_config = chain_config
+        self.strategy_provider = strategy_provider
 
     def try_shoot(self, session: GameSession, dead_player_id: str, death_cause: str = "night_kill") -> list[dict[str, Any]]:
         """Try to trigger hunter shoot.
@@ -99,6 +102,7 @@ class HunterResolver:
                 game_context=context,
                 alive_players=[p.player_id for p in session.state.players if p.alive and p.player_id != player_id],
                 private_info=private_info_str,
+                strategy_provider=self.strategy_provider,
             )
             record_prompt_trace(session, player_id, "hunter_shoot", prompt)
             decider = build_decider_for_role(

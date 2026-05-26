@@ -30,6 +30,9 @@ from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_st
 from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.prompt_builder import build_sheriff_campaign_prompt, build_sheriff_vote_prompt, format_private_info
+from ai_werewolf.llm.strategy_memory.factory import build_strategy_provider
+from ai_werewolf.llm.strategy_memory.provider import provider_to_graph_strategy_hint_provider
+from ai_werewolf.llm.strategy_provider import StrategyProvider
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 from ai_werewolf.rules.win_conditions import Winner, evaluate_winner
 from ai_werewolf.seeds.boards import default_boards
@@ -62,18 +65,22 @@ class PhaseOrchestrator:
         *,
         memory_store: MemoryStore | None = None,
         chain_config: list[dict] | None = None,
+        strategy_provider: StrategyProvider | None = None,
     ) -> None:
         self.model_registry = model_registry
         self.role_registry = role_registry
         self.role_model_bindings = role_model_bindings
         self.chain_config = chain_config
         self.memory_store = memory_store or get_shared_redis_memory_store()
+        self.strategy_provider = strategy_provider or build_strategy_provider()
+        self.graph_strategy_hint_provider = provider_to_graph_strategy_hint_provider(self.strategy_provider)
         self.night = NightResolver(
             model_registry,
             role_model_bindings,
             role_registry,
             memory_store=self.memory_store,
             chain_config=chain_config,
+            strategy_provider=self.strategy_provider,
         )
         self.vote = VoteResolver(
             model_registry,
@@ -81,9 +88,15 @@ class PhaseOrchestrator:
             role_registry,
             memory_store=self.memory_store,
             chain_config=chain_config,
+            strategy_provider=self.strategy_provider,
         )
-        self.hunter = HunterResolver(model_registry, role_model_bindings, chain_config=chain_config)
-        self.scheduler = AIActionScheduler(role_registry)
+        self.hunter = HunterResolver(
+            model_registry,
+            role_model_bindings,
+            chain_config=chain_config,
+            strategy_provider=self.strategy_provider,
+        )
+        self.scheduler = AIActionScheduler(role_registry, strategy_provider=self.strategy_provider)
         self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
 
     def advance(self, session: GameSession, action: dict) -> None:
@@ -1285,6 +1298,7 @@ class PhaseOrchestrator:
             speech_generator=speech_generator,
             semantic_decider=decider,
             semantic_nodes=configured_semantic_nodes(),
+            strategy_hint_provider=self.graph_strategy_hint_provider,
         )
         self._persist_player_memories(session, player_id, result)
         self.memory_store.append_decision_trace(

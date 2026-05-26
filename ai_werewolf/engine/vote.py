@@ -25,6 +25,8 @@ from ai_werewolf.llm.memory.store import MemoryStore, get_shared_redis_memory_st
 from ai_werewolf.llm.model_registry import build_decider_for_role
 from ai_werewolf.llm.player_decider import PlayerDecider
 from ai_werewolf.llm.schemas import PlayerDecision
+from ai_werewolf.llm.strategy_memory.provider import provider_to_graph_strategy_hint_provider
+from ai_werewolf.llm.strategy_provider import StrategyProvider
 from ai_werewolf.rules.role_registry import BuiltInRoleRegistry
 
 logger = logging.getLogger(__name__)
@@ -94,11 +96,18 @@ class VoteResolver:
         *,
         memory_store: MemoryStore | None = None,
         chain_config: list[dict] | None = None,
+        strategy_provider: StrategyProvider | None = None,
     ) -> None:
         self.model_registry = model_registry
         self.role_model_bindings = role_model_bindings
         self.role_registry = role_registry
-        self.scheduler = AIActionScheduler(role_registry)
+        self.strategy_provider = strategy_provider
+        self.graph_strategy_hint_provider = (
+            provider_to_graph_strategy_hint_provider(strategy_provider)
+            if strategy_provider is not None
+            else None
+        )
+        self.scheduler = AIActionScheduler(role_registry, strategy_provider=strategy_provider)
         self.memory_store = memory_store or get_shared_redis_memory_store()
         self.memory_context_builder = MemoryContextBuilder(store=self.memory_store)
         self.chain_config = chain_config
@@ -307,6 +316,7 @@ class VoteResolver:
                 decision_generator=decision_generator,
                 semantic_decider=decider,
                 semantic_nodes=configured_semantic_nodes(),
+                strategy_hint_provider=self.graph_strategy_hint_provider,
                 alive_player_ids=session.state.alive_player_ids(),
             )
             decision = result["decision"]
