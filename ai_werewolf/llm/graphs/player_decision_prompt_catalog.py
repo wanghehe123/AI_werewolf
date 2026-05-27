@@ -54,6 +54,41 @@ _NODE_TEMPLATE_BY_NAME: dict[str, str] = {
     "n5": "fragments/node_responsibility_n5.st",
 }
 
+_OBSERVATION_HINT_KEYWORDS = (
+    "身份账本",
+    "轮次账本",
+    "票型账本",
+    "前置发言",
+    "信息链",
+    "局势变化",
+    "局势梳理",
+    "复盘发言",
+)
+_JUDGMENT_HINT_KEYWORDS = (
+    "身份判断",
+    "狼收益",
+    "狼面",
+    "查杀",
+    "金水",
+    "对跳",
+    "站边",
+    "悍跳",
+    "真女巫",
+)
+_ACTION_HINT_KEYWORDS = (
+    "归票",
+    "归票路线",
+    "归票落点",
+    "主归票",
+    "备选归票",
+    "施压",
+    "投票",
+    "冲票",
+    "带队",
+    "警徽流",
+    "出票",
+)
+
 
 def role_display_name(role_key: str) -> str:
     return ROLE_DISPLAY_NAMES.get(role_key, role_key)
@@ -95,13 +130,58 @@ def render_node_responsibility_block(node_name: str) -> str:
     )
 
 
-def render_strategy_hint_block(strategy_hints: list[dict[str, Any]] | None) -> str:
+def _hint_bucket(hint: dict[str, Any]) -> str:
+    haystack = f'{hint.get("title") or ""}\n{hint.get("content") or ""}'.lower()
+    matches: set[str] = set()
+    if any(keyword in haystack for keyword in _OBSERVATION_HINT_KEYWORDS):
+        matches.add("observation")
+    if any(keyword in haystack for keyword in _JUDGMENT_HINT_KEYWORDS):
+        matches.add("judgment")
+    if any(keyword in haystack for keyword in _ACTION_HINT_KEYWORDS):
+        matches.add("action")
+
+    if len(matches) == 1:
+        return next(iter(matches))
+    return "generic"
+
+
+def _select_strategy_hints_for_node(
+    strategy_hints: list[dict[str, Any]],
+    node_name: str | None,
+) -> list[dict[str, Any]]:
+    hints = strategy_hints
+    if not hints or node_name not in {"n1", "n2", "n3"}:
+        return hints
+
+    target_bucket_by_node = {
+        "n1": "observation",
+        "n2": "judgment",
+        "n3": "action",
+    }
+    target_bucket = target_bucket_by_node[node_name]
+
+    selected = [hint for hint in hints if _hint_bucket(hint) == target_bucket]
+    if selected:
+        return selected
+
+    generic_hints = [hint for hint in hints if _hint_bucket(hint) == "generic"]
+    if generic_hints:
+        return generic_hints
+
+    return hints[:1]
+
+
+def render_strategy_hint_block(
+    strategy_hints: list[dict[str, Any]] | None,
+    *,
+    node_name: str | None = None,
+) -> str:
     hints = strategy_hints or []
     if not hints:
         return render_template("fragments/strategy_hint_block_empty.st", {})
 
     lines: list[str] = []
-    for index, hint in enumerate(hints[:5], start=1):
+    for index, hint in enumerate(_select_strategy_hints_for_node(hints, node_name)[:5], start=1):
         title = str(hint.get("title") or "未命名策略")
         content = str(hint.get("content") or "").strip()
         source = str(hint.get("source") or "unknown")

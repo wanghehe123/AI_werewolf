@@ -10,6 +10,7 @@ AI 狼人杀 FastAPI 应用入口
 4. 所有 API 路由
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -43,10 +44,28 @@ from ai_werewolf.storage.repositories import LLMConfigRepository
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan context: close Redis clients on shutdown."""
+    """FastAPI lifespan context: start cleanup task and close Redis clients on shutdown."""
+    # Start periodic cleanup task
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
     yield
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     from ai_werewolf.infra.redis_client import close_clients
     await close_clients()
+
+
+async def _periodic_cleanup():
+    """Periodically clean up expired games."""
+    while True:
+        await asyncio.sleep(3600)  # Run every hour
+        try:
+            from ai_werewolf.api.games import cleanup_expired_games
+            cleanup_expired_games()
+        except Exception:
+            logger.warning("Failed to cleanup expired games", exc_info=True)
 
 # 配置日志
 logging.basicConfig(

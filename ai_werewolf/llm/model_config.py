@@ -20,7 +20,7 @@ from typing import Any
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LLMProviderConfig(BaseModel):
@@ -58,6 +58,23 @@ class LLMProviderConfig(BaseModel):
     raise_on_error: bool = False
 
 
+class EmbeddingConfig(BaseModel):
+    """
+    Embedding 模型配置，用于 RAG 策略记忆系统的向量检索
+
+    Attributes:
+        model:      Embedding 模型名称，如 "BAAI/bge-m3"
+        base_url:   Embedding API 地址，如 "https://api.siliconflow.cn/v1"
+        api_key_env: 存放 API Key 的环境变量名
+        api_key:    直接指定 API Key 值（优先于 api_key_env）
+    """
+
+    model: str = "BAAI/bge-m3"
+    base_url: str = "https://api.siliconflow.cn/v1"
+    api_key_env: str = "SILICONFLOW_API_KEY"
+    api_key: str | None = None
+
+
 class RoleModelBinding(BaseModel):
     """
     游戏角色与 LLM Provider 的绑定关系
@@ -84,12 +101,14 @@ class LLMConfig(BaseModel):
         providers:       所有可用的 LLM Provider 列表
         role_bindings:   角色与 Provider 的绑定列表
         default_provider: 当角色未在 role_bindings 中配置时使用的默认 Provider ID
+        embedding:       Embedding 模型配置（用于 RAG 策略记忆）
     """
 
     providers: list[LLMProviderConfig]
     role_bindings: list[RoleModelBinding]
     default_provider: str = "fake"
     chains: dict[str, list[dict[str, Any]]] = {}
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
 
 
 def default_provider_configs() -> list[LLMProviderConfig]:
@@ -217,9 +236,14 @@ def load_llm_config_from_yaml(path: str | Path | None = None) -> LLMConfig:
     if not providers:
         providers = default_provider_configs()
 
+    # 解析 embedding 配置
+    raw_embedding = raw.get("embedding", {})
+    embedding_config = EmbeddingConfig(**raw_embedding) if raw_embedding else EmbeddingConfig()
+
     return LLMConfig(
         providers=providers,
         role_bindings=role_bindings,
         default_provider=raw.get("default_provider", "default"),
         chains=raw.get("chains", {}),
+        embedding=embedding_config,
     )

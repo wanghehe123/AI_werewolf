@@ -183,7 +183,7 @@ export function VoteTally({ game }: VoteTallyProps) {
     <AnimatePresence mode="wait">
       <motion.div
         key={`${game.phase}-${totalVoted}`}
-        className="mt-3 w-full max-h-[220px] overflow-y-auto"
+        className="mt-5 w-full max-h-[220px] overflow-y-auto rounded-[22px] border border-[#dfe7f8] bg-white/60 p-4"
         initial={{ opacity: 0, scaleY: 0.5 }}
         animate={{ opacity: 1, scaleY: 1 }}
         exit={{ opacity: 0, scaleY: 0.5 }}
@@ -191,11 +191,11 @@ export function VoteTally({ game }: VoteTallyProps) {
       >
         {/* Title + progress */}
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-[var(--color-gold)]">
+          <span className="text-xs font-black text-[var(--color-wolf-blue)]">
             {phaseTitle}
           </span>
           <motion.span
-            className="text-[10px] text-[var(--color-text-dim)]"
+            className="text-[11px] font-bold text-[var(--color-wolf-muted)]"
             key={totalVoted}
             animate={{ scale: [1, 1.2, 1] }}
             transition={{ duration: 0.3 }}
@@ -217,26 +217,26 @@ export function VoteTally({ game }: VoteTallyProps) {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <span className="text-[11px] w-24 text-right text-[var(--color-text-dim)] truncate">
+                  <span className="w-24 truncate text-right text-[11px] text-[var(--color-wolf-muted)]">
                     {item.targetLabel}
                   </span>
-                  <div className="flex-1 bg-[var(--color-warm-border)]/30 rounded-full h-4 overflow-hidden relative">
+                  <div className="relative h-4 flex-1 overflow-hidden rounded-full bg-[#e8eefb]">
                     <motion.div
-                      className="h-full rounded-full bg-[var(--color-gold)]/80"
+                      className="h-full rounded-full bg-[var(--color-wolf-blue)]/80"
                       animate={{
                         width: `${Math.min((item.count / Math.max(totalVoted, 1)) * 100, 100)}%`,
                       }}
                       transition={{ duration: 0.4, type: "spring", stiffness: 150 }}
                     >
                       <motion.div
-                        className="absolute inset-0 rounded-full bg-[var(--color-gold)]/30"
+                        className="absolute inset-0 rounded-full bg-white/30"
                         animate={{ opacity: [0, 0.3, 0] }}
                         transition={{ duration: 1, repeat: Infinity }}
                       />
                     </motion.div>
                   </div>
                   <motion.span
-                    className="text-[11px] font-bold text-[var(--color-gold)] w-5 text-right"
+                    className="w-5 text-right text-[11px] font-black text-[var(--color-wolf-blue)]"
                     key={item.count}
                     animate={{ scale: [1, 1.3, 1] }}
                     transition={{ duration: 0.3 }}
@@ -248,7 +248,7 @@ export function VoteTally({ game }: VoteTallyProps) {
           </div>
         ) : (
           <motion.p
-            className="text-[10px] text-[var(--color-text-muted)] text-center py-2"
+            className="py-2 text-center text-[11px] text-[var(--color-wolf-muted)]"
             animate={{ opacity: [0.5, 1, 0.5] }}
             transition={{ duration: 2, repeat: Infinity }}
           >
@@ -259,14 +259,14 @@ export function VoteTally({ game }: VoteTallyProps) {
         {/* Voter details */}
         {entries.length > 0 && (
           <motion.div
-            className="mt-2 text-[10px] text-[var(--color-text-muted)] space-y-0.5"
+            className="mt-2 space-y-0.5 text-[11px] text-[var(--color-wolf-muted)]"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
           >
             {tally.map((item) => (
               <div key={item.targetId}>
-                <span className="text-[var(--color-text-dim)]">{item.targetLabel}：</span>
+                <span className="text-[#526188]">{item.targetLabel}：</span>
                 {item.voters.map((v, i) => (
                   <motion.span
                     key={v}
@@ -285,12 +285,12 @@ export function VoteTally({ game }: VoteTallyProps) {
         {/* Pending voters */}
         {pending.length > 0 && (
           <motion.div
-            className="mt-1.5 text-[10px] text-[var(--color-text-muted)]"
+            className="mt-1.5 text-[11px] text-[var(--color-wolf-muted)]"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3 }}
           >
-            <span className="text-[var(--color-text-dim)]">待投票：</span>
+            <span className="text-[#526188]">待投票：</span>
             {pending.join("、")}
           </motion.div>
         )}

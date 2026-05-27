@@ -10,6 +10,9 @@ import hashlib
 import io
 import json
 import logging
+import os
+import secrets
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -59,13 +62,16 @@ class SubmitActionRequest(BaseModel):
 
 router = APIRouter(prefix="/games", tags=["games"])
 _games: dict[str, GameSession] = {}
+_game_locks: dict[str, asyncio.Lock] = {}
 _role_registry = BuiltInRoleRegistry()
 _game_repository: Any | None = None
 
 _model_registry = ModelProviderRegistry()
 _role_model_bindings: list = []
 _default_chain_config: list[dict[str, Any]] | None = None
-_tts_generation_lock = asyncio.Lock()
+_tts_locks: dict[str, asyncio.Lock] = {}
+_tts_cache_dir = "data/tts_cache"
+_tts_max_length = 300
 
 # 从 config/llm.yaml 加载 LLM 配置（优先）；若 YAML 不可用则注册 fake 回退
 try:
@@ -92,9 +98,40 @@ _orchestrator = PhaseOrchestrator(
 
 
 async def synthesize_tts_audio(text: str, voice: str | None = None) -> bytes:
-    """Generate TTS audio. Uses Edge-TTS (free) to conserve MiniMax quota."""
-    async with _tts_generation_lock:
-        return await synthesize_with_edge_tts(text)
+    """Generate TTS audio with caching and per-text locking."""
+    # Check cache first
+    tts_key = hashlib.sha256(f"{voice}:{text}".encode()).hexdigest()
+    cache_path = f"{_tts_cache_dir}/{tts_key}.mp3"
+
+    try:
+        if os.path.exists(cache_path):
+            with open(cache_path, "rb") as f:
+                return f.read()
+    except Exception:
+        pass
+
+    # Use per-text lock to avoid blocking other texts
+    lock = _tts_locks.setdefault(tts_key, asyncio.Lock())
+    async with lock:
+        # Double-check after acquiring lock
+        try:
+            if os.path.exists(cache_path):
+                with open(cache_path, "rb") as f:
+                    return f.read()
+        except Exception:
+            pass
+
+        audio = await synthesize_with_edge_tts(text)
+
+        # Save to cache
+        try:
+            os.makedirs(_tts_cache_dir, exist_ok=True)
+            with open(cache_path, "wb") as f:
+                f.write(audio)
+        except Exception:
+            logger.warning("Failed to save TTS cache", exc_info=True)
+
+        return audio
 
 
 async def synthesize_with_edge_tts(text: str, voice: str = "zh-CN-YunxiNeural") -> bytes:
@@ -118,9 +155,30 @@ async def synthesize_with_edge_tts(text: str, voice: str = "zh-CN-YunxiNeural") 
 
 # ==================== 配置接口 ====================
 
+GAME_EXPIRATION_SECONDS = 6 * 3600  # 6 hours
+
+
 def configure_game_repository(repository: Any | None) -> None:
     global _game_repository
     _game_repository = repository
+
+
+def cleanup_expired_games() -> int:
+    """Remove games that haven't been updated in GAME_EXPIRATION_SECONDS.
+
+    Returns the number of removed games.
+    """
+    now = time.time()
+    expired = [
+        game_id for game_id, session in _games.items()
+        if now - session.updated_at > GAME_EXPIRATION_SECONDS
+    ]
+    for game_id in expired:
+        _games.pop(game_id, None)
+        _game_locks.pop(game_id, None)
+    if expired:
+        logger.info("Cleaned up %d expired games", len(expired))
+    return len(expired)
 
 
 def configure_model_registry(
@@ -149,6 +207,14 @@ def _get_session(game_id: str) -> GameSession:
         raise HTTPException(status_code=404, detail=f"unknown game: {game_id}") from exc
 
 
+def _require_room_token(session: GameSession, token: str | None) -> None:
+    """Validate room token for game actions."""
+    if not token:
+        raise HTTPException(status_code=401, detail="X-Room-Token header is required")
+    if not secrets.compare_digest(session.room_token, token):
+        raise HTTPException(status_code=403, detail="invalid room token")
+
+
 def _player_model_bindings(state: GameState) -> dict[str, str]:
     return {
         player.player_id: _model_registry.provider_for_role(player.role_key, _role_model_bindings).config.provider_id
@@ -164,6 +230,11 @@ def _human_player_id_for_request(raw_player_id: str, display_name: str | None) -
         return player_id or "human"
     digest = hashlib.sha1(display_name.encode("utf-8")).hexdigest()[:12]
     return f"player_{digest}"
+
+
+async def advance_session_action(session: GameSession, action: dict[str, Any]) -> None:
+    """Run sync game progression outside the event loop so SSE stays responsive."""
+    await asyncio.to_thread(_orchestrator.advance, session, action)
 
 
 # ==================== API 端点 ====================
@@ -214,7 +285,9 @@ def create_game(request: CreateGameRequest):
     if _game_repository is not None:
         _game_repository.save_game(state, human_player_id, _player_model_bindings(state))
 
-    return success_response(data=frontend_state(session, _model_registry, _role_model_bindings))
+    response_data = frontend_state(session, _model_registry, _role_model_bindings)
+    response_data["room_token"] = session.room_token
+    return success_response(data=response_data)
 
 
 @router.get("/{game_id}")
@@ -223,11 +296,20 @@ def get_game(game_id: str):
 
 
 @router.post("/{game_id}/actions")
-def submit_action(game_id: str, action: SubmitActionRequest):
+async def submit_action(
+    game_id: str,
+    action: SubmitActionRequest,
+    x_room_token: str | None = Header(default=None, alias="X-Room-Token"),
+):
     session = _get_session(game_id)
-    _orchestrator.advance(session, action.model_dump())
-    data = frontend_state(session, _model_registry, _role_model_bindings)
-    session.publish_stream_event("state_snapshot", {"game_state": data})
+    _require_room_token(session, x_room_token)
+
+    lock = _game_locks.setdefault(game_id, asyncio.Lock())
+    async with lock:
+        session.updated_at = time.time()
+        await advance_session_action(session, action.model_dump())
+        data = frontend_state(session, _model_registry, _role_model_bindings)
+        session.publish_stream_event("state_snapshot", {"game_state": data})
     return success_response(data=data)
 
 
@@ -244,6 +326,12 @@ async def tts_speech(game_id: str, request: Request):
 
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
+
+    if len(text) > _tts_max_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"text too long (max {_tts_max_length} characters)"
+        )
 
     try:
         audio = await synthesize_tts_audio(text, voice)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ai_werewolf.llm.strategy_memory.query import build_rag_query
@@ -69,7 +70,10 @@ class RagStrategyProvider:
                 alive_players=alive_players,
             ).hints
 
-        merged = _limit_hints([*rag_hints, *static_hints], max_chars=self.max_hint_chars)
+        merged = _limit_hints(
+            _dedupe_hints([*rag_hints, *static_hints]),
+            max_chars=self.max_hint_chars,
+        )
         return StrategyHintBundle(hints=merged, source="rag+static")
 
 
@@ -125,3 +129,43 @@ def _limit_hints(hints: list[str], *, max_chars: int) -> list[str]:
         result.append(clean)
         used += len(clean)
     return result
+
+
+def _dedupe_hints(hints: list[str]) -> list[str]:
+    unique_hints: list[str] = []
+    normalized_seen: list[str] = []
+    for hint in hints:
+        clean = " ".join(hint.split())
+        if not clean:
+            continue
+        normalized = _normalize_hint_for_dedupe(clean)
+        if normalized and any(_is_obvious_overlap(normalized, seen) for seen in normalized_seen):
+            continue
+        unique_hints.append(clean)
+        normalized_seen.append(normalized)
+    return unique_hints
+
+
+def _normalize_hint_for_dedupe(hint: str) -> str:
+    core_hint = _strip_rag_source_prefix(hint)
+    normalized = core_hint.lower()
+    normalized = normalized.replace("然后", "再")
+    normalized = normalized.replace("给出", "给")
+    # Keep punctuation like "-" when it can change concrete tactical targets such as seat ranges.
+    normalized = re.sub(r"[\s，。；：、,.!?！？;:()（）\"'`·]+", "", normalized)
+    return normalized
+
+
+def _strip_rag_source_prefix(hint: str) -> str:
+    source, separator, remainder = hint.partition("：")
+    if separator and _looks_like_rag_source_label(source):
+        return remainder
+    return hint
+
+
+def _is_obvious_overlap(left: str, right: str) -> bool:
+    return bool(left) and left == right
+
+
+def _looks_like_rag_source_label(source: str) -> bool:
+    return bool(re.fullmatch(r"[a-z0-9_./-]+", source.strip(), re.IGNORECASE))

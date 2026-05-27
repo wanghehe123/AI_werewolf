@@ -59,6 +59,49 @@ def test_static_strategy_provider_pushes_werewolf_to_fake_claim_seer_on_sheriff_
     assert any("假查验" in hint for hint in bundle.hints)
 
 
+def test_static_strategy_provider_trims_sheriff_fallback_to_guardrails_that_change_play():
+    provider = StaticWerewolfStrategyProvider()
+
+    seer_bundle = provider.get_hints(
+        role_key="seer",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"werewolf": 2, "seer": 1, "villager": 3},
+        alive_players=["s1", "w1", "v1"],
+    )
+    wolf_bundle = provider.get_hints(
+        role_key="werewolf",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"werewolf": 2, "seer": 1, "villager": 3},
+        alive_players=["w1", "s1", "v1"],
+    )
+    villager_bundle = provider.get_hints(
+        role_key="villager",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"werewolf": 2, "seer": 1, "villager": 3},
+        alive_players=["v1", "s1", "w1"],
+    )
+
+    assert len(seer_bundle.hints) == 2
+    assert any("公开真实查验" in hint for hint in seer_bundle.hints)
+    assert any("警徽流" in hint for hint in seer_bundle.hints)
+
+    assert len(wolf_bundle.hints) == 3
+    assert any("悍跳预言家" in hint for hint in wolf_bundle.hints)
+    assert any("假查验" in hint for hint in wolf_bundle.hints)
+
+    assert len(villager_bundle.hints) == 3
+    assert any("不拍身份、不站边时，不要要求别人投你警长票" in hint for hint in villager_bundle.hints)
+
+
 def test_sheriff_campaign_prompt_includes_role_strategy_without_exposing_business_api():
     prompt = build_sheriff_campaign_prompt(
         agent=_agent(),
@@ -182,3 +225,42 @@ def test_sheriff_vote_prompt_includes_strategy_hints_by_default():
     )
 
     assert "【可选策略参考】" in prompt
+
+
+def test_static_strategy_provider_keeps_sheriff_guidance_compact_and_role_specific():
+    provider = StaticWerewolfStrategyProvider()
+
+    seer_bundle = provider.get_hints(
+        role_key="seer",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        alive_players=["p1", "p2", "p3"],
+    )
+    wolf_bundle = provider.get_hints(
+        role_key="werewolf",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        alive_players=["p1", "p2", "p3"],
+    )
+    villager_bundle = provider.get_hints(
+        role_key="villager",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        alive_players=["p1", "p2", "p3"],
+    )
+
+    assert len(seer_bundle.hints) <= 2
+    assert len(wolf_bundle.hints) <= 3
+    assert len(villager_bundle.hints) <= 3
+    assert any("公开真实查验" in hint for hint in seer_bundle.hints)
+    assert any("假查验" in hint for hint in wolf_bundle.hints)
+    assert any("不要要求别人投你警长票" in hint for hint in villager_bundle.hints)

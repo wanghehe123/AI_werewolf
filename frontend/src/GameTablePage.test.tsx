@@ -12,6 +12,8 @@ describe("GameTable", () => {
     render(<GameTable game={mockGame()} onSubmitAction={submitAction} pending={false} />);
 
     expect(screen.getByRole("heading", { name: "准备开局", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "发言" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "事件" })).toBeInTheDocument();
     expect(screen.getByText("1号")).toBeInTheDocument();
     expect(screen.getAllByText("房间已创建").length).toBeGreaterThanOrEqual(1);
 
@@ -44,6 +46,28 @@ describe("GameTable", () => {
     expect(screen.getByText("实时发言")).toBeInTheDocument();
     expect(screen.getByText("2号 小明：")).toBeInTheDocument();
     expect(screen.getByText("我正在实时发言")).toBeInTheDocument();
+  });
+
+  it("uses the compact speech bar when the human player can speak", async () => {
+    const submitAction = vi.fn().mockResolvedValue(undefined);
+    render(
+      <GameTable
+        game={mockGame({
+          phase: "day_speech",
+          allowed_actions: [{ action_type: "speech", label: "发言" }],
+        })}
+        onSubmitAction={submitAction}
+        pending={false}
+      />
+    );
+
+    expect(screen.getByPlaceholderText("输入你想说的话...")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(submitAction).toHaveBeenCalledWith({
+      action_type: "speech",
+      content: "我先听发言，今天重点看谁的逻辑变化。",
+    });
   });
 
   it("renders sheriff election actions and submits the correct choice", async () => {
@@ -226,6 +250,30 @@ describe("GameTable", () => {
     expect(screen.getByLabelText("游戏桌面区域").className).toContain("overflow-hidden");
     expect(screen.getByLabelText("当前事件摘要").className).toContain("overflow-y-auto");
     expect(screen.getByLabelText("发言内容")).toBeInTheDocument();
+  });
+
+  it("shows empty seats up to seat 12 for a 9-player room", () => {
+    render(
+      <GameTable
+        game={mockGame({
+          players: Array.from({ length: 9 }, (_, index) =>
+            mockPlayer({
+              player_id: index === 0 ? "human" : `agent_${index}`,
+              seat: index + 1,
+              display_name: index === 0 ? "你" : `AI玩家${index}`,
+              is_human: index === 0,
+            })
+          ),
+        })}
+        onSubmitAction={vi.fn()}
+        pending={false}
+      />
+    );
+
+    expect(screen.getByText("10号")).toBeInTheDocument();
+    expect(screen.getByText("11号")).toBeInTheDocument();
+    expect(screen.getByText("12号")).toBeInTheDocument();
+    expect(screen.getAllByText("空位")).toHaveLength(3);
   });
 });
 

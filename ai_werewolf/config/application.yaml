@@ -9,3 +9,15 @@ app:
     database: ai_werewolf
     schema: public
     echo: false
+
+  # ==================== RAG 策略记忆配置 ====================
+  # 基于向量检索的知识库，为 AI 玩家提供上下文相关的策略提示
+  # Embedding 模型配置在 config/llm.yaml 的 embedding 部分
+  strategy_memory:
+    enabled: true                                    # 是否启用 RAG 策略记忆
+    knowledge_dir: knowledge                         # 知识文档目录（相对于包根目录）
+    persist_dir: data/chroma                         # ChromaDB 持久化目录
+    collection_name: werewolf_strategy               # ChromaDB 集合名称
+    top_k: 3                                         # 检索返回的最大结果数
+    max_hint_chars: 1000                             # 策略提示最大字符数
+    fallback_static: true                            # 检索失败时是否降级到静态策略

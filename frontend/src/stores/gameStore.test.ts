@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useGameStore } from "./gameStore";
 import type { GameStateDto, GameStreamEventDto, StateSnapshotPayload, SpeechDeltaPayload } from "../types";
 
 describe("gameStore", () => {
   beforeEach(() => {
+    sessionStorage.clear();
+    vi.unstubAllGlobals();
     useGameStore.getState().reset();
   });
 
@@ -305,6 +307,28 @@ describe("gameStore", () => {
 
       const [, init] = fetchMock.mock.calls[0];
       expect(JSON.parse(init.body)).toMatchObject({ actor_player_id: "player_abc" });
+    });
+
+    it("restores a remembered room token after reset and sends it on the first action", async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ code: 0, data: { ...mockGame(), game_id: "game_1" } })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ code: 0, data: { ...mockGame(), game_id: "game_1" } })
+        });
+      vi.stubGlobal("fetch", fetchMock);
+
+      useGameStore.getState().rememberRoomToken("game_1", "room-token-123");
+      useGameStore.getState().reset();
+
+      await useGameStore.getState().loadGame("game_1");
+      await useGameStore.getState().submitAction("game_1", { action_type: "start_game" });
+
+      const [, submitInit] = fetchMock.mock.calls[1];
+      expect(submitInit.headers).toMatchObject({ "X-Room-Token": "room-token-123" });
     });
   });
 

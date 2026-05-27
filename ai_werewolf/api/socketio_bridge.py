@@ -92,7 +92,7 @@ async def on_player_action(sid, data):
 
     try:
         session = games_api._get_session(game_id)
-        games_api._orchestrator.advance(session, data)
+        await games_api.advance_session_action(session, data)
         result = frontend_state(
             session,
             games_api._model_registry,

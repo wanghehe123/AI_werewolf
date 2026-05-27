@@ -11,6 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from ai_werewolf.config.application import ApplicationConfig, StrategyMemoryConfig
+from ai_werewolf.llm.model_config import EmbeddingConfig, LLMConfig
 from ai_werewolf.llm.strategy_memory.factory import build_strategy_provider
 from ai_werewolf.llm.strategy_memory.provider import RagStrategyProvider
 from ai_werewolf.llm.strategy_memory.retriever import (
@@ -48,6 +49,11 @@ def _make_config(*, enabled: bool, fallback_static: bool = True) -> ApplicationC
     )
 
 
+def _make_llm_config() -> LLMConfig:
+    """Create a minimal LLMConfig with default embedding config."""
+    return LLMConfig(providers=[], role_bindings=[])
+
+
 # ---------------------------------------------------------------------------
 # 1. build_strategy_provider returns StaticWerewolfStrategyProvider when disabled
 # ---------------------------------------------------------------------------
@@ -76,11 +82,16 @@ def test_build_strategy_provider_falls_back_to_static_on_chroma_failure():
     """When ChromaStrategyRetriever.__init__ raises and fallback_static=True
     the factory must return a StaticWerewolfStrategyProvider."""
     config = _make_config(enabled=True, fallback_static=True)
+    llm_config = _make_llm_config()
 
     with (
         patch(
             "ai_werewolf.llm.strategy_memory.factory.load_application_config",
             return_value=config,
+        ),
+        patch(
+            "ai_werewolf.llm.strategy_memory.factory.load_llm_config_from_yaml",
+            return_value=llm_config,
         ),
         patch(
             "ai_werewolf.llm.strategy_memory.factory.ChromaStrategyRetriever.__init__",
@@ -102,11 +113,16 @@ def test_build_strategy_provider_falls_back_to_null_retriever_when_no_fallback()
     """When ChromaStrategyRetriever.__init__ raises and fallback_static=False
     the factory must return a RagStrategyProvider wrapping a NullStrategyRetriever."""
     config = _make_config(enabled=True, fallback_static=False)
+    llm_config = _make_llm_config()
 
     with (
         patch(
             "ai_werewolf.llm.strategy_memory.factory.load_application_config",
             return_value=config,
+        ),
+        patch(
+            "ai_werewolf.llm.strategy_memory.factory.load_llm_config_from_yaml",
+            return_value=llm_config,
         ),
         patch(
             "ai_werewolf.llm.strategy_memory.factory.ChromaStrategyRetriever.__init__",

@@ -252,6 +252,7 @@ class PhaseOrchestrator:
             label=label,
             speech=content,
         )
+        self._generate_ai_sheriff_campaign_speeches(session)
         self._maybe_open_sheriff_vote(session)
 
     def _handle_sheriff_vote(self, session: GameSession, action: dict) -> None:
@@ -478,9 +479,13 @@ class PhaseOrchestrator:
         election_progress = "\n".join(election_progress_parts)
 
         for candidate_id in list(session.sheriff_candidates):
-            candidate = session.state.player_by_id(candidate_id)
-            if candidate.is_human or candidate_id in session.sheriff_election_speeches:
+            if candidate_id in session.sheriff_election_speeches:
                 continue
+
+            candidate = session.state.player_by_id(candidate_id)
+            if candidate.is_human:
+                break
+
             agent = session.agents.get(candidate_id)
             if agent is None:
                 continue

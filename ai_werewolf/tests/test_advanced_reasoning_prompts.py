@@ -1,6 +1,7 @@
 from ai_werewolf.domain.agents import AgentProfile, RiskPreference
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
 from ai_werewolf.engine.session import GameSession
+from ai_werewolf.llm.graphs.player_decision_prompt_catalog import build_strategy_hint_block
 from ai_werewolf.llm.graphs.player_decision_prompts import (
     build_strategy_prompt,
     build_situation_analysis_prompt,
@@ -54,6 +55,21 @@ def _session() -> GameSession:
     session.append_public_event("vote", "7号投票给了8号。", actor_id="p7", target_id="p8", publish_stream=False)
     session.append_public_event("vote", "10号投票给了8号。", actor_id="p10", target_id="p8", publish_stream=False)
     return session
+
+
+def _extract_strategy_section(prompt: str) -> str:
+    marker = "【可选策略参考】"
+    after_marker = prompt.split(marker, 1)[1]
+    return marker + after_marker.split("\n\n", 1)[0]
+
+
+def _hint(title: str, content: str, *, source: str = "test", weight: float = 1.0) -> dict[str, object]:
+    return {
+        "title": title,
+        "content": content,
+        "source": source,
+        "weight": weight,
+    }
 
 
 def test_day_summary_builds_situation_ledger_for_claims_votes_and_bad_speech():
@@ -113,8 +129,51 @@ def test_strategy_provider_returns_phase_and_role_specific_advanced_hints():
 
     assert any("两个逻辑理由" in hint for hint in hunter_bundle.hints)
     assert any("情绪" in hint for hint in hunter_bundle.hints)
+    assert len(hunter_bundle.hints) == 2
+    assert not any("身份账本" in hint for hint in hunter_bundle.hints)
+    assert not any("不要只复述前置发言" in hint for hint in hunter_bundle.hints)
     assert any("对跳" in hint and "收益" in hint for hint in witch_bundle.hints)
+    assert len(witch_bundle.hints) == 2
+    assert not any("身份账本" in hint for hint in witch_bundle.hints)
     assert any("发言差" in hint and "狼收益" in hint for hint in villager_bundle.hints)
+    assert len(villager_bundle.hints) == 2
+    assert not any("不要只复述前置发言" in hint for hint in villager_bundle.hints)
+
+
+def test_strategy_provider_keeps_sheriff_and_general_bundles_compact():
+    provider = StaticWerewolfStrategyProvider()
+
+    seer_bundle = provider.get_hints(
+        role_key="seer",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        alive_players=["p1", "p2", "p3"],
+    )
+    wolf_bundle = provider.get_hints(
+        role_key="werewolf",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        alive_players=["p1", "p2", "p3"],
+    )
+    villager_bundle = provider.get_hints(
+        role_key="villager",
+        phase="sheriff_speech",
+        day_count=1,
+        private_info=None,
+        public_context="",
+        board_roles={"seer": 1, "werewolf": 2, "villager": 3},
+        alive_players=["p1", "p2", "p3"],
+    )
+
+    assert len(seer_bundle.hints) <= 2
+    assert len(wolf_bundle.hints) <= 3
+    assert len(villager_bundle.hints) <= 3
 
 
 def test_day_speech_and_vote_prompts_include_strategy_structure():
@@ -188,3 +247,126 @@ def test_semantic_graph_prompts_request_ledgers_and_route_profit_analysis():
     assert "狼收益" in build_suspicion_update_prompt(state)
     assert "最后一狼" in build_strategy_prompt(state)
     assert "票型" in build_strategy_prompt(state)
+
+
+def test_semantic_graph_prompts_render_node_sensitive_strategy_hints():
+    memory_context = {
+        "phase": "day_speech",
+        "day": 3,
+        "recent_events": [{"event_type": "speech", "actor_id": "p8", "target_id": None, "message": "8号起跳女巫"}],
+        "day_summaries": [],
+        "private_role_memory": None,
+        "suspicion_memory": None,
+    }
+    state = {
+        "game_id": "g",
+        "player_id": "p1",
+        "role_key": "villager",
+        "decision_kind": "day_speech",
+        "alive_player_ids": ["p1", "p3", "p4", "p8"],
+        "memory_context": memory_context,
+        "speech_style": "结构化",
+        "analysis": {},
+        "suspicion_update": {},
+        "strategy_hints": [
+            {
+                "title": "局势观察",
+                "content": "先整理身份账本、轮次账本与票型账本，再判断谁的发言形成了新的局势变化。",
+                "source": "test-observe",
+                "weight": 1.0,
+            },
+            {
+                "title": "身份判断",
+                "content": "比较对跳、查杀与狼收益，更新谁更像悍跳狼、谁更像被拉拢的好人。",
+                "source": "test-judge",
+                "weight": 0.9,
+            },
+            {
+                "title": "行动策略",
+                "content": "确定今天要不要归票、施压或给出备选归票路线，让行动目标与发言收束一致。",
+                "source": "test-action",
+                "weight": 0.8,
+            },
+        ],
+    }
+
+    n1_section = _extract_strategy_section(build_situation_analysis_prompt(state))
+    n2_section = _extract_strategy_section(build_suspicion_update_prompt(state))
+    n3_section = _extract_strategy_section(build_strategy_prompt(state))
+
+    assert "【可选策略参考】" in n1_section
+    assert "【可选策略参考】" in n2_section
+    assert "【可选策略参考】" in n3_section
+
+    assert "局势观察" in n1_section
+    assert "身份账本" in n1_section
+    assert "行动策略" not in n1_section
+
+    assert "身份判断" in n2_section
+    assert "狼收益" in n2_section
+    assert "局势观察" not in n2_section
+
+    assert "行动策略" in n3_section
+    assert "归票" in n3_section
+    assert "局势观察" not in n3_section
+    assert "身份判断" not in n3_section
+
+    assert len({n1_section, n2_section, n3_section}) == 3
+
+
+def test_strategy_hint_block_falls_back_to_generic_when_node_has_no_match():
+    section = build_strategy_hint_block(
+        [
+            _hint("通用提醒", "发言要自然连贯，不要为了凑逻辑把没有把握的结论说满。"),
+            _hint("行动方案", "如果今天要推动出局，必须提前给出归票路线和备选落点。"),
+        ],
+        node_name="n2",
+    )
+
+    assert "通用提醒" in section
+    assert "发言要自然连贯" in section
+    assert "行动方案" not in section
+
+
+def test_strategy_hint_block_treats_multi_bucket_hint_as_generic_fallback():
+    section = build_strategy_hint_block(
+        [
+            _hint("通用提醒", "先把自己的逻辑说清楚，别急着把所有人一口气打死。"),
+            _hint("复盘提醒", "如果既要回看前置发言又要马上给出归票路线，先说明证据再落行动。"),
+        ],
+        node_name="n2",
+    )
+
+    assert "通用提醒" in section
+    assert "复盘提醒" in section
+
+
+def test_strategy_hint_block_unknown_node_keeps_default_rendering_behavior():
+    section = build_strategy_hint_block(
+        [
+            _hint("局势观察", "先梳理前置发言，再看谁在关键轮次突然改变站位。"),
+            _hint("身份判断", "重点比较对跳双方的查杀与金水是否能闭合。"),
+            _hint("行动方案", "确定今天是否要归票，以及给不给备选落点。"),
+        ],
+        node_name="n9",
+    )
+
+    assert "局势观察" in section
+    assert "身份判断" in section
+    assert "行动方案" in section
+
+
+def test_strategy_hint_block_routes_realistic_hint_wording_without_labeled_titles():
+    section = build_strategy_hint_block(
+        [
+            _hint("复盘摘录", "先把前置发言和身份账本梳理清楚，再看谁在关键轮次突然改口。"),
+            _hint("复盘摘录", "比较对跳双方的查杀、金水和狼队收益，别只看谁说话更硬。"),
+            _hint("复盘摘录", "决定要不要给出票型落点时，先讲主归票和备选归票。"),
+        ],
+        node_name="n3",
+    )
+
+    assert "主归票" in section
+    assert "备选归票" in section
+    assert "身份账本" not in section
+    assert "狼队收益" not in section

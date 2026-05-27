@@ -22,7 +22,7 @@ export function SpeechBubbleLayer({ players, streamingSpeeches }: SpeechBubbleLa
           return (
             <motion.div
               key={playerId}
-              className="absolute max-w-[220px] p-3 rounded-xl bg-[var(--color-warm-card)]/95 border border-[var(--color-gold)]/30 shadow-lg text-sm text-[var(--color-text)]"
+              className="absolute max-w-[240px] rounded-[20px] border border-[#dfe7f8] bg-white/90 p-3 text-sm text-[#17213d] shadow-[0_16px_40px_rgba(83,105,160,0.18)] backdrop-blur"
               style={{
                 top: player.seat <= 3 ? "20%" : "55%",
                 left: player.seat <= 2 ? "8%" : player.seat <= 4 ? "38%" : "68%",
@@ -32,8 +32,8 @@ export function SpeechBubbleLayer({ players, streamingSpeeches }: SpeechBubbleLa
               exit={{ opacity: 0, scale: 0.95, y: -8 }}
               transition={{ duration: 0.3 }}
             >
-              <p className="text-xs font-semibold text-[var(--color-gold)] mb-1">{speech.label}</p>
-              <p className="max-h-[80px] overflow-y-auto text-xs leading-relaxed">{speech.speech}</p>
+              <p className="mb-1 text-xs font-black text-[var(--color-wolf-blue)]">{speech.label}</p>
+              <p className="max-h-[80px] overflow-y-auto text-xs leading-relaxed text-[var(--color-wolf-muted)]">{speech.speech}</p>
             </motion.div>
           );
         })}

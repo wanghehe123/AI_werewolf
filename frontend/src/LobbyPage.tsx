@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { avatarFor } from "./game-ui/defaultAvatars";
 import type { AgentProfile, BoardConfig, CreateGameRequest, GameStateDto } from "./types";
 
 interface LobbyPageProps {
@@ -58,93 +59,187 @@ export function LobbyPage({ boards, agents, createGame }: LobbyPageProps) {
   }
 
   return (
-    <main className="flex flex-col items-center gap-8 max-w-[1180px] mx-auto px-4 py-8">
-      <section className="min-h-[28vh] grid content-end text-center py-[38px]">
-        <p className="text-[0.78rem] tracking-[0.12em] uppercase text-[var(--color-gold)] font-extrabold mb-2">AI WEREWOLF</p>
-        <h1 className="text-[clamp(2rem,5vw,4.5rem)] leading-none">今晚，一个人开一桌狼人杀</h1>
-        <p className="max-w-[680px] text-[var(--color-text-dim)] text-[1.05rem]">选择后台配置好的板子和 AI 玩家，进入第一版 MVP 对局闭环。</p>
-      </section>
+    <main className="wolf-page">
+      <section className="wolf-content mx-auto grid min-h-screen w-full max-w-[1480px] grid-rows-[auto_1fr] gap-6 px-8 py-8">
+        <header className="grid grid-cols-[280px_1fr_280px] items-start gap-6">
+          <div>
+            <div className="flex items-end gap-3">
+              <h2 className="text-[2.8rem] font-black leading-none tracking-[0.02em] text-[#24304f]">狼人杀</h2>
+              <span className="pb-1 text-sm font-bold uppercase tracking-[0.15em] text-[#9aa8db]">Werewolf</span>
+            </div>
+            <p className="mt-3 text-[var(--color-wolf-muted)]">和 AI 玩家推理对局</p>
+          </div>
 
-      <section className="grid grid-cols-[1fr_1.25fr_0.85fr] gap-[18px] w-full max-md:grid-cols-1">
-        <div className="p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
-          <div className="mb-3.5 text-[#f0d9ab] font-extrabold">选择板子</div>
-          <div className="flex flex-col gap-2.5">
-            {boards.map((board) => (
+          <div className="text-center">
+            <h1 className="text-[3rem] font-black leading-tight tracking-[0.04em] text-[#17213d]">今晚，找一桌狼人杀</h1>
+            <p className="mt-3 text-base text-[var(--color-wolf-muted)]">选择板子、配置身份，和 AI 玩家一起开始推理。</p>
+            <div className="wolf-glass mx-auto mt-6 inline-flex items-center gap-6 rounded-full px-8 py-3 text-sm font-semibold text-[#526188]">
+              <span>在线 AI <strong className="ml-2 text-[#17213d]">{agents.length}</strong></span>
+              <span className="h-4 w-px bg-[var(--color-wolf-line)]" />
+              <span>可用板子 <strong className="ml-2 text-[#17213d]">{boards.length}</strong></span>
+              <span className="h-4 w-px bg-[var(--color-wolf-line)]" />
+              <span>快速配置 AI 对局</span>
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <div className="wolf-glass flex items-center gap-3 rounded-[22px] px-4 py-3">
+              <img className="h-12 w-12 rounded-full shadow-lg" src={avatarFor(null, humanPlayerName || "guest")} alt="" />
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-[#263251]">{humanPlayerName.trim() || "未命名玩家"}</p>
+                <p className="text-xs text-[var(--color-wolf-muted)]">Lv.12</p>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section className="grid grid-cols-[280px_minmax(0,1fr)_340px] gap-5">
+          <aside className="grid content-start gap-4">
+            <div className="wolf-glass rounded-[24px] p-5">
+              <p className="mb-4 text-base font-black text-[#1e2948]">快速开始</p>
               <button
-                className={`grid gap-1.5 p-[15px] rounded-lg border cursor-pointer transition-all w-full text-left border-white/[0.09] bg-white/[0.045] text-[var(--color-text)] ${board.board_id === selectedBoard?.board_id ? "!border-[var(--color-gold)] opacity-80 bg-[rgba(148,44,32,0.24)]" : ""}`}
-                key={board.board_id}
-                onClick={() => {
-                  setBoardId(board.board_id);
-                  setSelectedAgentIds(agents.slice(0, Math.max(board.player_count - 1, 0)).map((agent) => agent.agent_id));
-                  setHumanRoleKey("random");
-                }}
+                className="grid w-full grid-cols-[52px_1fr_auto] items-center gap-4 rounded-[18px] border border-[#dbe5fb] bg-white/60 px-4 py-4 text-left transition hover:border-[#9eb2ff] hover:bg-white"
+                type="button"
               >
-                <strong>{board.name}</strong>
-                <span className="text-[#b9aa92]">{board.player_count} 人局 · {board.sheriff_enabled ? "有警长" : "无警长"}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
-          <label className="mb-3.5 text-[#f0d9ab] font-extrabold block" htmlFor="human-player-name">玩家名称</label>
-          <input
-            id="human-player-name"
-            aria-label="玩家名称"
-            className="w-full min-h-[42px] border border-white/[0.14] rounded-lg px-3 bg-white/[0.06] text-[var(--color-text)]"
-            value={humanPlayerName}
-            onChange={(event) => setHumanPlayerName(event.target.value)}
-            placeholder="输入你在本局里的名字"
-            maxLength={18}
-          />
-          <p className="text-[#b9aa92] mt-2 mb-5">AI 会用这个名字称呼你，避免把真人玩家识别成 human。</p>
-          <label className="mb-3.5 text-[#f0d9ab] font-extrabold block" htmlFor="human-role-select">选择你的职业</label>
-          <p className="text-[#b9aa92]">默认随机；选择具体职业可方便测试夜晚技能和发言视角。</p>
-          <select
-            id="human-role-select"
-            className="w-full min-h-[42px] border border-white/[0.14] rounded-lg px-3 bg-white/[0.06] text-[var(--color-text)]"
-            aria-label="选择你的职业"
-            value={humanRoleKey}
-            onChange={(event) => setHumanRoleKey(event.target.value)}
-          >
-            <option value="random">随机身份</option>
-            {roleOptions.map((role) => (
-              <option key={role.role_key} value={role.role_key}>
-                {roleLabel(role.role_key)} x{role.count}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
-          <div className="mb-3.5 text-[#f0d9ab] font-extrabold">选择 AI 玩家</div>
-          <p className="text-[#b9aa92]">需要选择 {requiredAgents} 位 AI 玩家</p>
-          <div className="flex flex-col gap-2.5 max-h-[300px] overflow-y-auto">
-            {agents.map((agent) => (
-              <label
-                className={`grid grid-cols-[auto_42px_1fr] items-center gap-2.5 p-[11px] rounded-lg border cursor-pointer transition-all w-full border-white/[0.09] bg-white/[0.045] text-[var(--color-text)] ${selectedAgentIds.includes(agent.agent_id) ? "!border-[var(--color-gold)] opacity-80 bg-[rgba(148,44,32,0.24)]" : ""}`}
-                key={agent.agent_id}
-              >
-                <input type="checkbox" checked={selectedAgentIds.includes(agent.agent_id)} onChange={() => toggleAgent(agent.agent_id)} className="accent-[var(--color-gold)]" />
-                <span className="grid place-items-center w-[42px] h-[42px] rounded-full bg-linear-to-br from-[#31201a] to-[#a53829] text-[#ffe1a8] font-black">{agent.name.slice(0, 1)}</span>
-                <span className="grid gap-[3px]">
-                  <strong>{agent.name}</strong>
-                  <em className="text-[#b9aa92] not-italic">{agent.persona}</em>
+                <span className="grid h-12 w-12 place-items-center rounded-full bg-white text-2xl shadow-md">⚡</span>
+                <span>
+                  <strong className="block text-[#1e2948]">快速匹配</strong>
+                  <span className="text-sm text-[var(--color-wolf-muted)]">自动选择推荐配置</span>
                 </span>
-              </label>
-            ))}
-          </div>
-        </div>
+                <span className="text-xl text-[#6c7bb4]">›</span>
+              </button>
+            </div>
 
-        <aside className="grid content-start gap-3.5 p-[18px] rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-card)]">
-          <div className="mb-3.5 text-[#f0d9ab] font-extrabold">开局确认</div>
-          <p>{selectedBoard?.name ?? "暂无板子"}</p>
-          <strong>{selectedAgentIds.length}/{requiredAgents} AI 已选择</strong>
-          {error && <p className="text-[#ff9b8e]">{error}</p>}
-          <button className="px-6 py-3 rounded-lg bg-linear-to-br from-[#e0b866] to-[var(--color-red-werewolf)] text-[var(--color-warm-bg)] font-extrabold disabled:opacity-50" disabled={!canStart} onClick={handleCreateGame}>
-            开局
-          </button>
-        </aside>
+            <div className="wolf-glass rounded-[24px] p-5">
+              <p className="mb-4 text-base font-black text-[#1e2948]">选择板子</p>
+              <div className="grid gap-3">
+                {boards.map((board) => (
+                  <button
+                    className={`grid w-full grid-cols-[46px_1fr] items-center gap-3 rounded-[18px] border px-4 py-3 text-left transition ${
+                      board.board_id === selectedBoard?.board_id
+                        ? "border-[#8ba1ff] bg-[#eef3ff] shadow-[0_12px_28px_rgba(93,119,255,0.14)]"
+                        : "border-[#dfe7f8] bg-white/55 hover:border-[#b4c3ff]"
+                    }`}
+                    key={board.board_id}
+                    onClick={() => {
+                      setBoardId(board.board_id);
+                      setSelectedAgentIds(agents.slice(0, Math.max(board.player_count - 1, 0)).map((agent) => agent.agent_id));
+                      setHumanRoleKey("random");
+                    }}
+                  >
+                    <span className="grid h-11 w-11 place-items-center rounded-full bg-white text-xl shadow-sm">{board.sheriff_enabled ? "♛" : "☀"}</span>
+                    <span>
+                      <strong className="block text-[#1e2948]">{board.name}</strong>
+                      <span className="text-sm text-[var(--color-wolf-muted)]">{board.player_count} 人局 · {board.sheriff_enabled ? "有警长" : "无警长"}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
+
+          <section className="wolf-glass rounded-[28px] p-6">
+            <div className="mb-5 flex items-end justify-between border-b border-[var(--color-wolf-line)] pb-4">
+              <div>
+                <p className="text-sm font-bold text-[var(--color-wolf-blue)]">房间配置</p>
+                <h2 className="mt-1 text-2xl font-black text-[#17213d]">配置你的房间</h2>
+              </div>
+              <span className="rounded-full bg-[#eef3ff] px-4 py-2 text-sm font-bold text-[#526188]">
+                {selectedAgentIds.length}/{requiredAgents} AI
+              </span>
+            </div>
+
+            <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5">
+              <div className="grid content-start gap-5">
+                <label className="grid gap-2 text-sm font-bold text-[#33415f]" htmlFor="human-player-name">
+                  玩家名称
+                  <input
+                    id="human-player-name"
+                    aria-label="玩家名称"
+                    className="min-h-[48px] rounded-[18px] border border-[#dce5f8] bg-white/70 px-4 text-[#17213d] outline-none transition placeholder:text-[#a5b2cf] focus:border-[#8198ff] focus:bg-white"
+                    value={humanPlayerName}
+                    onChange={(event) => setHumanPlayerName(event.target.value)}
+                    placeholder="输入你在本局里的名字"
+                    maxLength={18}
+                  />
+                </label>
+
+                <label className="grid gap-2 text-sm font-bold text-[#33415f]" htmlFor="human-role-select">
+                  选择你的职业
+                  <select
+                    id="human-role-select"
+                    className="min-h-[48px] rounded-[18px] border border-[#dce5f8] bg-white/70 px-4 text-[#17213d] outline-none transition focus:border-[#8198ff] focus:bg-white"
+                    aria-label="选择你的职业"
+                    value={humanRoleKey}
+                    onChange={(event) => setHumanRoleKey(event.target.value)}
+                  >
+                    <option value="random">随机身份</option>
+                    {roleOptions.map((role) => (
+                      <option key={role.role_key} value={role.role_key}>
+                        {roleLabel(role.role_key)} x{role.count}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="rounded-[22px] border border-[#dce5f8] bg-white/50 p-4">
+                  <p className="text-sm font-black text-[#263251]">身份构成</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {roleOptions.map((role) => (
+                      <span className={`wolf-role-badge role-${role.role_key}`} key={role.role_key}>{roleLabel(role.role_key)} x{role.count}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid content-start gap-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-black text-[#263251]">选择 AI 玩家</p>
+                  <span className="text-sm text-[var(--color-wolf-muted)]">需要选择 {requiredAgents} 位 AI 玩家</span>
+                </div>
+                <div className="grid max-h-[460px] gap-3 overflow-y-auto pr-1">
+                  {agents.map((agent, index) => (
+                    <label
+                      className={`grid cursor-pointer grid-cols-[auto_52px_1fr] items-center gap-3 rounded-[18px] border px-3 py-3 transition ${
+                        selectedAgentIds.includes(agent.agent_id)
+                          ? "border-[#8ba1ff] bg-[#eef3ff]"
+                          : "border-[#dfe7f8] bg-white/55 hover:border-[#b4c3ff]"
+                      }`}
+                      key={agent.agent_id}
+                    >
+                      <input type="checkbox" checked={selectedAgentIds.includes(agent.agent_id)} onChange={() => toggleAgent(agent.agent_id)} className="accent-[var(--color-wolf-blue)]" />
+                      <img className="h-12 w-12 rounded-full shadow-md" src={avatarFor(agent.avatar_url, agent.agent_id || index)} alt="" />
+                      <span className="min-w-0">
+                        <strong className="block text-[#1e2948]">{agent.name}</strong>
+                        <em className="block truncate text-sm not-italic text-[var(--color-wolf-muted)]">{agent.persona}</em>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <aside className="grid content-start gap-5">
+            <section className="wolf-glass rounded-[24px] p-5">
+              <p className="mb-4 text-base font-black text-[#1e2948]">开局确认</p>
+              <div className="grid gap-3 rounded-[20px] bg-white/55 p-4">
+                <p className="font-black text-[#17213d]">{selectedBoard?.name ?? "暂无板子"}</p>
+                <p className="text-sm text-[var(--color-wolf-muted)]">{selectedBoard?.player_count ?? 0} 人局 · {selectedBoard?.sheriff_enabled ? "有警长" : "无警长"}</p>
+                <strong className="text-[#526188]">{selectedAgentIds.length}/{requiredAgents} AI 已选择</strong>
+              </div>
+              {error && <p className="mt-3 text-sm font-bold text-[var(--color-wolf-red)]">{error}</p>}
+              <button className="wolf-primary mt-5 min-h-[56px] w-full rounded-[20px] px-6 py-3 text-base font-black disabled:cursor-not-allowed disabled:opacity-50" disabled={!canStart} onClick={handleCreateGame}>
+                开局
+              </button>
+            </section>
+
+            <section className="wolf-glass rounded-[24px] p-5">
+              <p className="text-base font-black text-[#1e2948]">对局提示</p>
+              <p className="mt-3 text-sm leading-6 text-[var(--color-wolf-muted)]">这是一个极简 AI 对局大厅。创建后会进入你的专属房间，房间令牌会自动保存到当前浏览器会话。</p>
+            </section>
+          </aside>
+        </section>
       </section>
     </main>
   );

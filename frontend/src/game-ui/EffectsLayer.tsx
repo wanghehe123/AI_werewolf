@@ -18,7 +18,7 @@ export function EffectsLayer({ game, seerOverlay, onDismissOverlay }: EffectsLay
       <AnimatePresence>
         {isNight && (
           <motion.div
-            className="fixed inset-0 pointer-events-none z-10 bg-[var(--color-night-fog)]/40"
+            className="pointer-events-none fixed inset-0 z-10 bg-[#6078d8]/10"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -43,7 +43,7 @@ export function EffectsLayer({ game, seerOverlay, onDismissOverlay }: EffectsLay
       <AnimatePresence>
         {seerOverlay && (
           <motion.div
-            className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-[#173057]/30 backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -51,10 +51,10 @@ export function EffectsLayer({ game, seerOverlay, onDismissOverlay }: EffectsLay
             onClick={onDismissOverlay}
           >
             <motion.div
-              className={`p-8 rounded-2xl text-center min-w-[280px] backdrop-blur ${
+              className={`min-w-[280px] rounded-[28px] p-8 text-center shadow-[0_24px_70px_rgba(83,105,160,0.26)] ${
                 seerOverlay.camp === "good"
-                  ? "bg-[var(--color-green-bg)]/90 border-2 border-[var(--color-green-seer)]"
-                  : "bg-[var(--color-red-bg)]/90 border-2 border-red-400"
+                  ? "border-2 border-[#9be7bd] bg-[#ecfff4]"
+                  : "border-2 border-[#ffb4b4] bg-[#fff0f0]"
               }`}
               initial={{ scale: 0.5, opacity: 0, rotateY: 90 }}
               animate={{ scale: 1, opacity: 1, rotateY: 0 }}
@@ -62,9 +62,9 @@ export function EffectsLayer({ game, seerOverlay, onDismissOverlay }: EffectsLay
               transition={{ type: "spring", stiffness: 300, damping: 20 }}
               style={{ animation: "card-reveal 0.5s ease-out" }}
             >
-              <p className="text-sm text-[var(--color-text-dim)] mb-2">查验结果</p>
-              <h2 className="text-2xl font-bold mb-2">{seerOverlay.targetLabel}</h2>
-              <p className={`text-lg font-semibold ${seerOverlay.camp === "good" ? "text-[var(--color-green-seer)]" : "text-red-400"}`}>
+              <p className="mb-2 text-sm text-[var(--color-wolf-muted)]">查验结果</p>
+              <h2 className="mb-2 text-2xl font-black text-[#17213d]">{seerOverlay.targetLabel}</h2>
+              <p className={`text-lg font-black ${seerOverlay.camp === "good" ? "text-[#168552]" : "text-[#be3a45]"}`}>
                 {seerOverlay.camp === "good" ? "好人阵营" : "狼人阵营"}
               </p>
             </motion.div>

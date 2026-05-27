@@ -78,12 +78,16 @@ export function fetchGame(gameId: string, baseUrl?: string): Promise<GameStateDt
   return requestJson<GameStateDto>(`/games/${gameId}`, undefined, baseUrl);
 }
 
-export function submitGameAction(gameId: string, payload: SubmitActionInput, actorPlayerId = "human", baseUrl?: string): Promise<GameStateDto> {
+export function submitGameAction(gameId: string, payload: SubmitActionInput, actorPlayerId = "human", roomToken?: string, baseUrl?: string): Promise<GameStateDto> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (roomToken) {
+    headers["X-Room-Token"] = roomToken;
+  }
   return requestJson<GameStateDto>(
     `/games/${gameId}/actions`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         actor_player_id: actorPlayerId,
         client_action_id: `web-${Date.now()}-${Math.random().toString(16).slice(2)}`,

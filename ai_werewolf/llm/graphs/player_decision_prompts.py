@@ -27,7 +27,7 @@ def _common_blocks(state: dict[str, Any], node_name: str) -> str:
             ),
             build_phase_focus_block(state["decision_kind"]),
             build_node_responsibility_block(node_name),
-            build_strategy_hint_block(state.get("strategy_hints", [])),
+            build_strategy_hint_block(state.get("strategy_hints", []), node_name=node_name),
         ]
     )
 

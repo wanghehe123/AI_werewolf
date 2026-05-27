@@ -366,6 +366,51 @@ def test_ai_sheriff_speech_publishes_one_structured_stream_event():
     assert speech_events[0]["payload"]["speech"] == "我会竞选警长，明天给大家清晰视角。"
 
 
+def test_ai_sheriff_speech_waits_when_human_candidate_is_next_to_speak():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_SPEECH
+    session.sheriff_candidates = ["human", "s1"]
+    session.sheriff_voters = ["w1", "v1"]
+    session.agents = {"s1": _agent("s1", "预言家")}
+    decider = MagicMock()
+
+    with patch("ai_werewolf.engine.orchestrator.build_decider_for_role", return_value=decider):
+        orch._generate_ai_sheriff_campaign_speeches(session)
+
+    assert session.sheriff_election_speeches == {}
+    decider.decide.assert_not_called()
+
+
+def test_human_sheriff_speech_triggers_following_ai_candidate_speeches():
+    orch = _orchestrator()
+    session = _session("board_8_standard")
+    session.state.phase = GamePhase.SHERIFF_SPEECH
+    session.sheriff_candidates = ["human", "s1"]
+    session.sheriff_voters = ["w1", "v1"]
+    session.agents = {"s1": _agent("s1", "预言家")}
+    decider = MagicMock()
+    decider.decide.return_value = PlayerDecision(
+        speech="我会给大家一个清晰视角。",
+        action_type="speak",
+        target_id=None,
+        public_reason=None,
+        private_memory_update=None,
+    )
+
+    with (
+        patch("ai_werewolf.engine.orchestrator.build_decider_for_role", return_value=decider),
+        patch("ai_werewolf.engine.orchestrator.time.sleep"),
+    ):
+        orch._handle_sheriff_speech(session, {"actor_player_id": "human", "action_type": "speech", "content": "我先上警，说清楚思路。"})
+
+    assert session.sheriff_election_speeches == {
+        "human": "我先上警，说清楚思路。",
+        "s1": "我会给大家一个清晰视角。",
+    }
+    assert decider.decide.called
+
+
 def test_ai_sheriff_speech_prompt_includes_private_info_and_previous_campaign_speeches():
     orch = _orchestrator()
     session = _session("board_8_standard")

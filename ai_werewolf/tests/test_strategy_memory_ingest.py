@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from ai_werewolf.llm.strategy_memory.ingest import iter_markdown_chunks, parse_markdown_document
+from ai_werewolf.llm.strategy_memory.ingest import (
+    _split_by_markdown_structure,
+    iter_markdown_chunks,
+    parse_markdown_document,
+)
 from ai_werewolf.llm.strategy_memory.query import build_rag_query
 
 
@@ -57,3 +61,92 @@ def test_build_rag_query_uses_short_summary():
     assert "角色：werewolf" in text
     assert "任务：选择夜晚行动目标" in text
     assert len(text) < 260
+
+
+# ---------------------------------------------------------------------------
+# _split_by_markdown_structure tests
+# ---------------------------------------------------------------------------
+
+
+def test_split_by_markdown_structure_keeps_small_doc_intact():
+    """A short document with headings should remain a single chunk."""
+    content = "## 开局\n\n几句话。\n\n## 结尾\n\n结束。"
+    parts = _split_by_markdown_structure(content, max_chars=1000)
+    assert len(parts) == 1
+    assert "## 开局" in parts[0]
+    assert "## 结尾" in parts[0]
+
+
+def test_split_by_markdown_structure_splits_at_heading2():
+    """Long document should split at ## boundaries."""
+    content = (
+        "## 第一章\n\n" + "A" * 800 + "\n\n"
+        "## 第二章\n\n" + "B" * 800
+    )
+    parts = _split_by_markdown_structure(content, max_chars=1000)
+    assert len(parts) == 2
+    assert "## 第一章" in parts[0]
+    assert "A" * 800 in parts[0]
+    assert "## 第二章" in parts[1]
+    assert "B" * 800 in parts[1]
+
+
+def test_split_by_markdown_structure_splits_at_heading3():
+    """Should also split at ### boundaries."""
+    content = (
+        "### 小节A\n\n" + "X" * 500 + "\n\n"
+        "### 小节B\n\n" + "Y" * 500
+    )
+    parts = _split_by_markdown_structure(content, max_chars=600)
+    assert len(parts) == 2
+    assert "### 小节A" in parts[0]
+    assert "### 小节B" in parts[1]
+
+
+def test_split_by_markdown_structure_merges_small_sections():
+    """Multiple small sections under max_chars should be merged into one chunk."""
+    content = (
+        "## 小节1\n\n短文本。\n\n"
+        "## 小节2\n\n也是短文本。\n\n"
+        "## 小节3\n\n还是短文本。"
+    )
+    parts = _split_by_markdown_structure(content, max_chars=1000)
+    assert len(parts) == 1
+    assert "## 小节1" in parts[0]
+    assert "## 小节3" in parts[0]
+
+
+def test_split_by_markdown_structure_falls_back_to_paragraph_split():
+    """A single section exceeding max_chars should be split by paragraphs."""
+    content = (
+        "## 大章节\n\n"
+        + "段落一。" * 100 + "\n\n"
+        + "段落二。" * 100 + "\n\n"
+        + "段落三。" * 100
+    )
+    parts = _split_by_markdown_structure(content, max_chars=600)
+    assert len(parts) >= 2
+    # First chunk should still carry the heading
+    assert "## 大章节" in parts[0]
+    for part in parts:
+        assert len(part) <= 650
+
+
+def test_split_by_markdown_structure_no_headings():
+    """Content with no headings should fall back to paragraph splitting."""
+    content = "段落一。\n\n" + "段落二。" * 200
+    parts = _split_by_markdown_structure(content, max_chars=500)
+    assert len(parts) >= 2
+
+
+def test_split_by_markdown_structure_preserves_heading_hierarchy():
+    """Nested headings (## then ###) should stay together when small enough."""
+    content = (
+        "## 策略\n\n"
+        "### 警徽流\n\n具体描述。\n\n"
+        "### 验人理由\n\n具体描述。"
+    )
+    parts = _split_by_markdown_structure(content, max_chars=1000)
+    assert len(parts) == 1
+    assert "### 警徽流" in parts[0]
+    assert "### 验人理由" in parts[0]

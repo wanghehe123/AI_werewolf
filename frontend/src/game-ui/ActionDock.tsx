@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import type { GameStateDto, PlayerActionOptionDto, SubmitActionInput } from "../types";
 import { currentActionKind, selectablePlayerIds, phaseLabel } from "./gameVisuals";
@@ -25,12 +25,6 @@ export function ActionDock({
 
   // Speech state
   const [speech, setSpeech] = useState("我先听发言，今天重点看谁的逻辑变化。");
-  // Vote target
-  const aliveTargets = useMemo(
-    () => game.players.filter((p) => p.alive && !p.is_human),
-    [game.players]
-  );
-
   // Sync selected target with action changes
   useEffect(() => {
     const selectable = selectablePlayerIds(game);
@@ -47,12 +41,11 @@ export function ActionDock({
     const canSkip = game.allowed_actions.some((a) => a.action_type === "skip_election");
     return (
       <DockWrapper>
-        <p className="text-xs tracking-[0.15em] uppercase text-[var(--color-gold)] mb-2">SHERIFF</p>
-        <h3 className="text-base font-bold mb-2">警长竞选报名</h3>
-        <p className="text-sm text-[var(--color-text-dim)] mb-3">
+        <ActionSummary eyebrow="SHERIFF" title="警长竞选报名" />
+        <p className="text-sm text-[var(--color-wolf-muted)]">
           这一轮先决定是否上警。候选人稍后会依次发言，其他人负责投票。
         </p>
-        <div className="flex gap-3">
+        <div className="flex gap-3 justify-end">
           <DockButton
             disabled={pending || !canRun}
             onClick={() => onSubmitAction({ action_type: "run_for_sheriff" })}
@@ -60,7 +53,7 @@ export function ActionDock({
             参加竞选
           </DockButton>
           <button
-            className="px-4 py-2 rounded-lg border border-[var(--color-warm-border)] bg-transparent text-[var(--color-text)] text-sm hover:bg-[var(--color-warm-card)] disabled:opacity-50"
+            className="rounded-[18px] border border-[#dbe5fb] bg-white/70 px-5 py-3 text-sm font-bold text-[#526188] hover:bg-white disabled:opacity-50"
             disabled={pending || !canSkip}
             onClick={() => onSubmitAction({ action_type: "skip_election" })}
           >
@@ -75,7 +68,7 @@ export function ActionDock({
   if (game.phase === "setup") {
     return (
       <DockWrapper>
-        <p className="text-sm text-[var(--color-text-dim)] mb-3">座位和身份已由后端分配。点击开始后，房间进入第一夜。</p>
+        <ActionSummary eyebrow="READY" title="座位和身份已由后端分配" detail="点击开始后，房间进入第一夜。" />
         <DockButton disabled={pending} onClick={() => onSubmitAction({ action_type: "start_game" })}>
           开始游戏
         </DockButton>
@@ -87,7 +80,7 @@ export function ActionDock({
   if (actionKind === "observer") {
     return (
       <DockWrapper>
-        <p className="text-sm text-[var(--color-text-dim)]">
+        <p className="text-sm font-bold text-[var(--color-wolf-muted)]">
           {isAlive ? "等待其他玩家行动中..." : "你已出局，正在旁观。"}
         </p>
       </DockWrapper>
@@ -98,7 +91,7 @@ export function ActionDock({
   if (actionKind === "night_start") {
     return (
       <DockWrapper night>
-        <p className="text-sm text-[var(--color-text-dim)] mb-3">你是女巫。夜晚降临，点击开始后决定是否使用药水。</p>
+        <ActionSummary eyebrow="NIGHT" title="你是女巫" detail="夜晚降临，点击开始后决定是否使用药水。" />
         <DockButton disabled={pending} onClick={() => onSubmitAction({ action_type: "night_start" })}>
           开始夜晚
         </DockButton>
@@ -123,9 +116,8 @@ export function ActionDock({
   if (actionKind === "night_target") {
     return (
       <DockWrapper night>
-        <p className="text-xs tracking-[0.15em] uppercase text-[var(--color-blue-night)] mb-2">NIGHT</p>
-        <h3 className="text-base font-bold mb-3">{primaryAction?.label ?? "夜晚行动"}</h3>
-        <p className="text-sm text-[var(--color-text-dim)] mb-3">
+        <ActionSummary eyebrow="NIGHT" title={primaryAction?.label ?? "夜晚行动"} />
+        <p className="text-sm font-bold text-[var(--color-wolf-muted)]">
           {selectedTargetId
             ? `目标：${game.players.find((p) => p.player_id === selectedTargetId)?.seat ?? ""}号 ${game.players.find((p) => p.player_id === selectedTargetId)?.display_name ?? ""}`
             : "点击座位选择目标"}
@@ -145,15 +137,15 @@ export function ActionDock({
     const isSheriffSpeech = actionKind === "sheriff_speech";
     return (
       <DockWrapper>
-        <p className="text-xs text-[var(--color-gold)] mb-1">{isSheriffSpeech ? "你正在竞选发言" : "你正在发言"}</p>
-        <textarea
+        <ActionSummary eyebrow="SPEECH" title={isSheriffSpeech ? "你正在竞选发言" : "你正在发言"} />
+        <input
           aria-label="发言内容"
-          className="w-full p-3 rounded-lg border border-[var(--color-warm-border)] bg-[var(--color-warm-bg)] text-[var(--color-text)] resize-y min-h-[80px] text-sm"
+          className="min-h-[58px] flex-1 rounded-full border border-[#dbe5fb] bg-white/70 px-6 text-[#17213d] outline-none placeholder:text-[#9faed0] focus:border-[#8198ff] focus:bg-white"
           value={speech}
           onChange={(e) => setSpeech(e.target.value)}
-          rows={3}
+          placeholder="输入你想说的话..."
         />
-        <div className="flex gap-2 mt-2">
+        <div className="flex gap-2">
           {isSheriffSpeech ? (
             <>
               <QuickTemplate label="我来带队" onClick={() => setSpeech("我愿意上警带队，把发言和票型梳理清楚。")} />
@@ -170,7 +162,7 @@ export function ActionDock({
           disabled={pending || speech.trim().length === 0}
           onClick={() => onSubmitAction({ action_type: "speech", content: speech })}
         >
-          {isSheriffSpeech ? "提交竞选发言" : "提交发言"}
+          发送
         </DockButton>
       </DockWrapper>
     );
@@ -182,19 +174,18 @@ export function ActionDock({
     const isSheriffVote = actionKind === "sheriff_vote";
     return (
       <DockWrapper>
-        <p className="text-xs tracking-[0.15em] uppercase text-[var(--color-gold)] mb-2">VOTE</p>
-        <h3 className="text-base font-bold mb-2">{isSheriffVote ? "警长投票" : "放逐投票"}</h3>
-        <p className="text-sm text-[var(--color-text-dim)] mb-3">
+        <ActionSummary eyebrow="VOTE" title={isSheriffVote ? "警长投票" : "放逐投票"} />
+        <p className="text-sm font-bold text-[var(--color-wolf-muted)]">
           {targetPlayer
             ? `你将投给：${targetPlayer.seat}号 ${targetPlayer.display_name}`
             : `点击座位选择${isSheriffVote ? "警长候选人" : "投票目标"}`}
         </p>
-        <div className="flex gap-3">
+        <div className="flex gap-3 justify-end">
           <DockButton disabled={pending || !selectedTargetId || !canVote} onClick={() => onSubmitAction({ action_type: "vote", target_player_id: selectedTargetId! })}>
             {isSheriffVote ? "投给他" : "投票"}
           </DockButton>
           <button
-            className="px-4 py-2 rounded-lg border border-[var(--color-warm-border)] bg-transparent text-[var(--color-text)] text-sm hover:bg-[var(--color-warm-card)] disabled:opacity-50"
+            className="rounded-[18px] border border-[#dbe5fb] bg-white/70 px-5 py-3 text-sm font-bold text-[#526188] hover:bg-white disabled:opacity-50"
             disabled={pending || !canAbstain}
             onClick={() => onSubmitAction({ action_type: "abstain" })}
           >
@@ -208,9 +199,7 @@ export function ActionDock({
   // ── Continue (generic) ──
   return (
     <DockWrapper>
-      <p className="text-sm text-[var(--color-text-dim)] mb-3">
-        {game.public_events.at(-1)?.payload.message ?? `${phaseLabel(game.phase)}阶段`}
-      </p>
+      <ActionSummary eyebrow="NEXT" title={phaseLabel(game.phase)} detail={game.public_events.at(-1)?.payload.message ?? `${phaseLabel(game.phase)}阶段`} />
       <DockButton disabled={pending} onClick={() => onSubmitAction({ action_type: primaryAction?.action_type ?? "continue" })}>
         {primaryAction?.label ?? "继续"}
       </DockButton>
@@ -256,38 +245,37 @@ function WitchActionDock({
 
   return (
     <DockWrapper night>
-      <p className="text-xs tracking-[0.15em] uppercase text-[var(--color-purple-llm)] mb-2">NIGHT — 女巫</p>
-      <h3 className="text-base font-bold mb-2">夜晚行动</h3>
+      <ActionSummary eyebrow="NIGHT — 女巫" title="夜晚行动" />
 
       {killInfo && (
-        <div className="p-3 rounded-lg bg-red-900/20 border border-red-800/40 mb-3">
-          <p className="text-sm font-semibold text-red-300">
+        <div className="rounded-[18px] border border-[#ffd1d1] bg-[#fff0f0] p-3">
+          <p className="text-sm font-semibold text-[#be3a45]">
             今晚 {killInfo.target_label} 被狼人击杀。
           </p>
           {!killInfo.can_save && killInfo.reason && (
-            <p className="text-xs text-red-400 mt-1">{killInfo.reason}</p>
+            <p className="mt-1 text-xs text-[#be3a45]">{killInfo.reason}</p>
           )}
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
         {saveAction && killInfo?.can_save && (
-          <label className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-sm transition-colors ${selectedAction === "save" ? "border-green-500 bg-green-900/20" : "border-[var(--color-warm-border)] bg-[var(--color-warm-bg)]"}`}>
+          <label className={`flex cursor-pointer items-center gap-2 rounded-[18px] border px-4 py-3 text-sm font-bold transition-colors ${selectedAction === "save" ? "border-[#32c77a] bg-[#ecfff4] text-[#168552]" : "border-[#dbe5fb] bg-white/70 text-[#526188]"}`}>
             <input type="radio" name="witch-action" checked={selectedAction === "save"} onChange={() => setSelectedAction("save")} />
-            <span className="text-green-400">使用解药救活 {killInfo.target_label}</span>
+            <span>使用解药救活 {killInfo.target_label}</span>
           </label>
         )}
 
         {poisonAction && (
-          <div className={`p-2 rounded-lg border transition-colors ${selectedAction === "poison" ? "border-purple-500 bg-purple-900/20" : "border-[var(--color-warm-border)] bg-[var(--color-warm-bg)]"}`}>
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <div className={`rounded-[18px] border px-4 py-3 transition-colors ${selectedAction === "poison" ? "border-[#8d77ff] bg-[#f0edff] text-[#6953d7]" : "border-[#dbe5fb] bg-white/70 text-[#526188]"}`}>
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-bold">
               <input type="radio" name="witch-action" checked={selectedAction === "poison"} onChange={() => setSelectedAction("poison")} />
-              <span className="text-purple-400">使用毒药</span>
+              <span>使用毒药</span>
             </label>
             {selectedAction === "poison" && poisonTargets.length > 0 && (
-              <div className="grid grid-cols-2 gap-1 mt-2 ml-5">
+              <div className="mt-2 grid grid-cols-2 gap-1">
                 {poisonTargets.map((target) => (
-                  <label key={target.player_id} className={`flex items-center gap-1 p-1.5 rounded border cursor-pointer text-xs ${poisonTarget === target.player_id ? "border-purple-500 bg-purple-900/10" : "border-[var(--color-warm-border)]"}`}>
+                  <label key={target.player_id} className={`flex cursor-pointer items-center gap-1 rounded border p-1.5 text-xs ${poisonTarget === target.player_id ? "border-[#8d77ff] bg-white" : "border-[#dbe5fb]"}`}>
                     <input type="radio" name="poison-target" value={target.player_id} checked={poisonTarget === target.player_id} onChange={() => setPoisonTarget(target.player_id)} />
                     <span>{target.label}</span>
                   </label>
@@ -298,7 +286,7 @@ function WitchActionDock({
         )}
 
         {noAction && (
-          <label className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-sm transition-colors ${selectedAction === "none" ? "border-[var(--color-gold)] bg-[var(--color-warm-card)]" : "border-[var(--color-warm-border)] bg-[var(--color-warm-bg)]"}`}>
+          <label className={`flex cursor-pointer items-center gap-2 rounded-[18px] border px-4 py-3 text-sm font-bold transition-colors ${selectedAction === "none" ? "border-[#8ba1ff] bg-[#eef3ff] text-[var(--color-wolf-blue)]" : "border-[#dbe5fb] bg-white/70 text-[#526188]"}`}>
             <input type="radio" name="witch-action" checked={selectedAction === "none"} onChange={() => setSelectedAction("none")} />
             <span>{noAction.label}</span>
           </label>
@@ -317,13 +305,13 @@ function WitchActionDock({
 function DockWrapper({ children, night }: { children: React.ReactNode; night?: boolean }) {
   return (
     <motion.section
-      className={`relative z-20 shrink-0 p-4 rounded-xl border ${night ? "border-[var(--color-blue-night)]/30 bg-[var(--color-warm-card)]" : "border-[var(--color-warm-border)] bg-[var(--color-warm-card)]"}`}
+      className={`wolf-glass relative z-20 shrink-0 rounded-[32px] px-7 py-5 ${night ? "ring-1 ring-[#97a8ff]/30" : ""}`}
       layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
     >
-      <div className="flex flex-col gap-3">{children}</div>
+      <div className="flex items-center gap-4">{children}</div>
     </motion.section>
   );
 }
@@ -331,7 +319,7 @@ function DockWrapper({ children, night }: { children: React.ReactNode; night?: b
 function DockButton({ children, disabled, onClick }: { children: React.ReactNode; disabled: boolean; onClick: () => void }) {
   return (
     <button
-      className="px-5 py-2.5 rounded-lg bg-[var(--color-gold)] text-[var(--color-warm-bg)] font-semibold text-sm hover:bg-[var(--color-gold-dim)] disabled:opacity-50 transition-colors"
+      className="wolf-primary min-h-[52px] rounded-[20px] px-7 py-3 text-sm font-black transition disabled:opacity-50"
       disabled={disabled}
       onClick={onClick}
     >
@@ -343,10 +331,20 @@ function DockButton({ children, disabled, onClick }: { children: React.ReactNode
 function QuickTemplate({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
-      className="text-xs px-2.5 py-1 rounded border border-[var(--color-warm-border)] text-[var(--color-text-dim)] hover:border-[var(--color-gold)] hover:text-[var(--color-text)] transition-colors"
+      className="rounded-full border border-[#dbe5fb] bg-white/60 px-3 py-1.5 text-xs font-bold text-[#6b7aa4] transition-colors hover:border-[#8ba1ff] hover:text-[var(--color-wolf-blue)]"
       onClick={onClick}
     >
       {label}
     </button>
+  );
+}
+
+function ActionSummary({ eyebrow, title, detail }: { eyebrow: string; title: string; detail?: string }) {
+  return (
+    <div className="min-w-[220px]">
+      <p className="text-xs font-black uppercase tracking-[0.18em] text-[var(--color-wolf-blue)]">{eyebrow}</p>
+      <h3 className="mt-1 text-base font-black text-[#17213d]">{title}</h3>
+      {detail && <p className="mt-1 text-sm text-[var(--color-wolf-muted)]">{detail}</p>}
+    </div>
   );
 }

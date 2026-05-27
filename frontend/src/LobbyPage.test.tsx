@@ -48,6 +48,8 @@ describe("LobbyPage", () => {
       </MemoryRouter>
     );
 
+    expect(screen.getByRole("heading", { name: "今晚，找一桌狼人杀" })).toBeInTheDocument();
+    expect(screen.getByText("快速配置 AI 对局")).toBeInTheDocument();
     expect(screen.getAllByText("6人新手局")).toHaveLength(2);
     expect(screen.getByText("AI玩家1")).toBeInTheDocument();
 

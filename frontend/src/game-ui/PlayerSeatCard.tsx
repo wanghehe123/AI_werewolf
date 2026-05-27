@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import type { PlayerVisualState } from "./gameVisualTypes";
+import { avatarFor } from "./defaultAvatars";
 import handRaiseIcon from "../icon/举手.png";
 
 interface PlayerSeatCardProps {
@@ -26,18 +27,19 @@ export function PlayerSeatCard({ player, onClick }: PlayerSeatCardProps) {
   } = player;
 
   const isInteractive = selectable && alive;
+  const roleKeyClass = role === "狼人" ? "role-werewolf" : role === "预言家" ? "role-seer" : role === "女巫" ? "role-witch" : role === "猎人" ? "role-hunter" : "";
 
   return (
     <motion.article
       className={`
-        relative flex flex-col items-center gap-1 p-3 rounded-xl border transition-all
-        ${!alive ? "border-[var(--color-dead-ink)] bg-[var(--color-dead-ink)]/40 opacity-60" : ""}
-        ${alive && visualTone === "normal" ? "border-[var(--color-warm-border)] bg-[var(--color-warm-card)]" : ""}
-        ${visualTone === "self" ? "border-[var(--color-green-seer)]/40 bg-[var(--color-green-bg)]/20" : ""}
-        ${visualTone === "speaking" ? "border-[var(--color-gold)] bg-[var(--color-warm-card)]" : ""}
-        ${visualTone === "selectable" ? "border-[var(--color-blue-night)]/50 bg-[var(--color-warm-card)] cursor-pointer hover:border-[var(--color-blue-night)]" : ""}
-        ${visualTone === "selected" ? "border-[var(--color-gold)] bg-[var(--color-gold)]/10 cursor-pointer" : ""}
-        ${isSheriffCandidate ? "border-[var(--color-amber)] bg-[var(--color-amber-bg)]/20" : ""}
+        relative grid min-h-[86px] grid-cols-[36px_70px_1fr_28px] items-center gap-3 rounded-[22px] border px-3 py-2 transition-all
+        ${!alive ? "border-[#d8dfef] bg-white/38 opacity-60 grayscale" : ""}
+        ${alive && visualTone === "normal" ? "border-[var(--color-wolf-border)] bg-white/68" : ""}
+        ${visualTone === "self" ? "border-[#8ba1ff] bg-[#eef3ff]" : ""}
+        ${visualTone === "speaking" ? "border-[#8ba1ff] bg-white shadow-[0_16px_38px_rgba(91,118,255,0.2)]" : ""}
+        ${visualTone === "selectable" ? "border-[#8ba1ff] bg-white/80 cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_14px_30px_rgba(91,118,255,0.18)]" : ""}
+        ${visualTone === "selected" ? "border-[var(--color-wolf-blue)] bg-[#edf2ff] cursor-pointer shadow-[0_16px_38px_rgba(91,118,255,0.22)]" : ""}
+        ${isSheriffCandidate ? "border-[var(--color-wolf-amber)] bg-[#fff8e9]" : ""}
         ${isInteractive ? "cursor-pointer" : ""}
       `}
       onClick={isInteractive ? onClick : undefined}
@@ -73,13 +75,15 @@ export function PlayerSeatCard({ player, onClick }: PlayerSeatCardProps) {
         </motion.div>
       )}
 
-      {/* Avatar */}
+      <span className={`grid h-8 w-8 place-items-center rounded-full text-sm font-black text-white shadow-sm ${seat === 1 ? "bg-gradient-to-br from-[#f8c35a] to-[#e5a84d]" : "bg-[#9caad0]"}`}>
+        {seat}
+      </span>
+
       <div className="relative">
-        <div className="w-10 h-10 rounded-full bg-[var(--color-warm-border)] flex items-center justify-center text-sm font-bold text-[var(--color-text-dim)] overflow-hidden">
-          {avatarUrl ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" /> : displayName.slice(0, 1)}
+        <div className="h-16 w-16 overflow-hidden rounded-full bg-[#edf3ff] shadow-[0_10px_24px_rgba(95,119,176,0.2)]">
+          <img src={avatarFor(avatarUrl, player.playerId || seat)} alt="" className="h-full w-full object-cover" />
         </div>
 
-        {/* Speaking ripple */}
         {speaking && (
           <>
             <div className="absolute inset-0 rounded-full border-2 border-[var(--color-gold)] animate-[ripple-voice_1.5s_ease-out_infinite]" />
@@ -88,33 +92,38 @@ export function PlayerSeatCard({ player, onClick }: PlayerSeatCardProps) {
         )}
       </div>
 
-      {/* Name & seat */}
-      <div className="text-center">
-        <div className="flex items-center gap-1 justify-center">
-          <span className="text-xs text-[var(--color-text-muted)]">{seat}号</span>
-          <strong className="text-sm leading-tight">{displayName}</strong>
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-sm font-bold text-[var(--color-wolf-muted)]">{seat}号</span>
+          <strong className="truncate text-base leading-tight text-[#17213d]">{displayName}</strong>
+          {role && <span className={`wolf-role-badge ${roleKeyClass}`}>{role}</span>}
         </div>
-      </div>
-
-      {/* Status badges */}
-      <div className="flex flex-wrap gap-0.5 justify-center">
-        {isSelf && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-green-bg)] text-[var(--color-green-seer)]">你</span>}
-        {isSheriff && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-amber-bg)] text-[var(--color-amber)]">警长</span>}
-        {isSheriffCandidate && !isSheriff && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-amber-bg)]/60 text-[var(--color-amber)]">参选</span>}
-        {role && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-warm-border)]">{role}</span>}
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--color-wolf-muted)]">
+          <span className="wolf-online-dot" />
+          <span>{alive ? "在线" : "离线"}</span>
+          {isSelf && <span className="rounded-full bg-[#e8f0ff] px-2 py-0.5 text-xs font-bold text-[var(--color-wolf-blue)]">你</span>}
+          {isSheriff && <span className="rounded-full bg-[#fff3d4] px-2 py-0.5 text-xs font-bold text-[#c88724]">警长</span>}
+          {isSheriffCandidate && !isSheriff && <span className="rounded-full bg-[#fff3d4] px-2 py-0.5 text-xs font-bold text-[#c88724]">参选</span>}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
         {!alive && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-red-bg)] text-red-400 animate-[stamp-in_0.4s_ease-out]">
+          <span className="rounded-full bg-[#ffe5e5] px-2 py-0.5 text-xs font-bold text-[var(--color-wolf-red)] animate-[stamp-in_0.4s_ease-out]">
             出局
           </span>
         )}
-        {voted && alive && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-blue-bg)] text-[var(--color-blue-night)]">已投</span>}
+        {voted && alive && <span className="rounded-full bg-[#e8f0ff] px-2 py-0.5 text-xs font-bold text-[var(--color-wolf-blue)]">已投</span>}
         {checkedCamp && (
-          <span className={`text-[10px] px-1.5 py-0.5 rounded ${checkedCamp === "good" ? "bg-[var(--color-green-bg)] text-[var(--color-green-seer)]" : "bg-[var(--color-red-bg)] text-red-400"}`}>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${checkedCamp === "good" ? "bg-[#ddfbea] text-[#17925a]" : "bg-[#ffe5e5] text-[var(--color-wolf-red)]"}`}>
             {checkedCamp === "good" ? "好人" : "狼人"}
           </span>
         )}
-        {selected && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-gold)]/20 text-[var(--color-gold)]">目标</span>}
+        {selected && <span className="rounded-full bg-[#e8f0ff] px-2 py-0.5 text-xs font-bold text-[var(--color-wolf-blue)]">目标</span>}
+        </div>
       </div>
+
+      <span aria-hidden="true" className="wolf-sound-bars justify-self-end">
+        <i /><i /><i /><i />
+      </span>
     </motion.article>
   );
 }

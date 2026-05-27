@@ -102,3 +102,11 @@ chains:
       provider: rule_engine
       timeout_ms: 50
       max_retries: 0
+
+
+# ==================== Embedding 模型配置 ====================
+# 用于 RAG 策略记忆系统的向量检索
+embedding:
+  model: BAAI/bge-m3                                # Embedding 模型名称
+  base_url: https://api.siliconflow.cn/v1            # Embedding API 地址
+  api_key_env: SILICONFLOW_API_KEY                   # API Key 环境变量名

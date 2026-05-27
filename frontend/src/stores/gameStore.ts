@@ -16,6 +16,7 @@ import type {
 export interface GameStore {
   // --- State ---
   game: GameStateDto | null;
+  roomToken: string | null;
   streamingSpeeches: Record<string, StreamingSpeechDto>;
   seerResults: Record<string, SeerCheckResult>;
   audioAnnouncements: AudioAnnouncement[];
@@ -24,6 +25,8 @@ export interface GameStore {
 
   // --- Actions ---
   setGame: (game: GameStateDto | null) => void;
+  setRoomToken: (token: string | null) => void;
+  rememberRoomToken: (gameId: string, token: string | null) => void;
   setPending: (pending: boolean) => void;
   setError: (error: string | null) => void;
   applySseEvent: (event: GameStreamEventDto) => void;
@@ -35,15 +38,42 @@ export interface GameStore {
   reset: () => void;
 }
 
+const ROOM_TOKEN_KEY_PREFIX = "ai_werewolf_room_token_";
+
 function initialState() {
   return {
     game: null,
+    roomToken: null,
     streamingSpeeches: {},
     seerResults: {},
     audioAnnouncements: [],
     pending: false,
     error: null
   };
+}
+
+function saveRoomToken(gameId: string, token: string) {
+  try {
+    sessionStorage.setItem(`${ROOM_TOKEN_KEY_PREFIX}${gameId}`, token);
+  } catch {
+    // sessionStorage may be unavailable
+  }
+}
+
+function loadRoomToken(gameId: string): string | null {
+  try {
+    return sessionStorage.getItem(`${ROOM_TOKEN_KEY_PREFIX}${gameId}`);
+  } catch {
+    return null;
+  }
+}
+
+function clearRoomToken(gameId: string) {
+  try {
+    sessionStorage.removeItem(`${ROOM_TOKEN_KEY_PREFIX}${gameId}`);
+  } catch {
+    // sessionStorage may be unavailable
+  }
 }
 
 // Track signatures of public events already announced via SSE, so that
@@ -54,7 +84,32 @@ let sseAnnouncedSignatures = new Set<string>();
 export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState(),
 
-  setGame: (game) => set({ game, error: null }),
+  setGame: (game) => {
+    set({ game, error: null });
+    // If game has room_token, save it to sessionStorage
+    if (game?.game_id && game.room_token) {
+      saveRoomToken(game.game_id, game.room_token);
+      set({ roomToken: game.room_token });
+    }
+  },
+
+  setRoomToken: (token) => {
+    set({ roomToken: token });
+    // Also save to sessionStorage if game_id is available
+    const gameId = get().game?.game_id;
+    if (gameId && token) {
+      saveRoomToken(gameId, token);
+    }
+  },
+
+  rememberRoomToken: (gameId, token) => {
+    set({ roomToken: token });
+    if (!token) {
+      clearRoomToken(gameId);
+      return;
+    }
+    saveRoomToken(gameId, token);
+  },
 
   setPending: (pending) => set({ pending }),
 
@@ -215,7 +270,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   loadGame: async (gameId) => {
     try {
       const game = await fetchGame(gameId);
-      set({ game, error: null });
+      const savedToken = loadRoomToken(gameId);
+      set({ game, roomToken: savedToken, error: null });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "加载游戏失败" });
     }
@@ -225,7 +281,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ pending: true, error: null });
     try {
       const actorPlayerId = get().game?.human_player_id ?? "human";
-      const game = await submitGameAction(gameId, action, actorPlayerId);
+      const roomToken = get().roomToken ?? undefined;
+      const game = await submitGameAction(gameId, action, actorPlayerId, roomToken);
       // Announcements are generated from SSE events, not here.
       // state_snapshot (always the last SSE event) handles
       // public_events that lack an SSE counterpart (e.g. exile).
@@ -241,6 +298,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   clearError: () => set({ error: null }),
 
   reset: () => {
+    const gameId = get().game?.game_id;
+    if (gameId) {
+      clearRoomToken(gameId);
+    }
     sseAnnouncedSignatures = new Set();
     set(initialState());
   }

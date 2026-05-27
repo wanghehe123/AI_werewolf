@@ -2,6 +2,8 @@
 """GameSession - runtime state for a single game instance."""
 from __future__ import annotations
 
+import secrets
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -19,6 +21,9 @@ class GameSession:
         state:                     Current game state (phase, players, winner).
         agents:                    AI player profiles keyed by agent_id.
         human_player_id:           Human player's player_id.
+        room_token:                Token for authenticating game actions.
+        created_at:                Timestamp when the session was created.
+        updated_at:                Timestamp when the session was last updated.
         public_events:             Public event log, in chronological order.
         voted_player_ids:          Set of players who have voted (for frontend display).
         night_actions:             Night action records (for night resolution).
@@ -31,6 +36,9 @@ class GameSession:
     state: GameState
     agents: dict[str, AgentProfile]
     human_player_id: str
+    room_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
     public_events: list[dict[str, Any]] = field(default_factory=list)
     voted_player_ids: set[str] = field(default_factory=set)
     night_actions: list[dict[str, Any]] = field(default_factory=list)

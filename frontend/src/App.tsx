@@ -54,6 +54,7 @@ import type {
   AdminRoleDto,
   AgentProfile,
   BoardConfig,
+  CreateGameRequest,
   GameStateDto,
   SubmitActionInput
 } from "./types";
@@ -86,6 +87,7 @@ function LobbyRoute() {
   const [boards, setBoards] = useState<BoardConfig[]>([]);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const store = useGameStore();
 
   useEffect(() => {
     Promise.all([fetchBoards(), fetchAgents()])
@@ -96,13 +98,24 @@ function LobbyRoute() {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "加载大厅失败"));
   }, []);
 
+  // Wrap createGame to capture room_token
+  async function handleCreateGame(payload: CreateGameRequest): Promise<Pick<GameStateDto, "game_id">> {
+    const game = await createGame(payload);
+    // Bind room token to the created game before routing, so GameRoute can
+    // restore it after reset() + loadGame(gameId).
+    if (game.room_token) {
+      store.rememberRoomToken(game.game_id, game.room_token);
+    }
+    return game;
+  }
+
   if (error) {
     return <StatusScreen title="大厅加载失败" detail={error} />;
   }
   if (boards.length === 0 || agents.length === 0) {
     return <StatusScreen title="正在整理牌桌" detail="正在读取后端板子和 AI 玩家。" />;
   }
-  return <LobbyPage boards={boards} agents={agents} createGame={createGame} />;
+  return <LobbyPage boards={boards} agents={agents} createGame={handleCreateGame} />;
 }
 
 function GameRoute() {

@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from openai import OpenAI
 
 from ai_werewolf.config.application import StrategyMemoryConfig
+from ai_werewolf.llm.model_config import EmbeddingConfig
 from ai_werewolf.llm.strategy_memory.ingest import iter_markdown_chunks, stable_chunk_id
 from ai_werewolf.llm.strategy_memory.schemas import RagHit, RagQuery, StrategyDocumentMetadata
 
@@ -40,24 +41,49 @@ class OpenAIEmbeddingFunction:
     def __init__(self, *, base_url: str, api_key: str, model: str) -> None:
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.model = model
+        self._name = f"openai-compatible/{model}"
 
-    def __call__(self, input: list[str]) -> list[list[float]]:
-        response = self.client.embeddings.create(model=self.model, input=input)
+    def name(self) -> str:
+        """Return a stable identifier for this embedding function.
+
+        ChromaDB uses this to detect embedding function mismatches when
+        calling ``get_or_create_collection``.
+        """
+        return self._name
+
+    def __call__(self, input: list[str] | str) -> list[list[float]]:
+        response = self.client.embeddings.create(
+            model=self.model,
+            input=_normalize_embedding_input(input),
+        )
         return [item.embedding for item in response.data]
+
+    def embed_query(self, input: list[str] | str) -> list[list[float]]:
+        return self(input=input)
 
 
 class ChromaStrategyRetriever:
-    def __init__(self, *, config: StrategyMemoryConfig, package_root: Path) -> None:
+    def __init__(
+        self,
+        *,
+        config: StrategyMemoryConfig,
+        embedding_config: EmbeddingConfig | None = None,
+        package_root: Path,
+    ) -> None:
         import chromadb
 
-        api_key = os.getenv(config.embedding_api_key_env)
+        # 兼容旧代码：如果没有传 embedding_config，使用默认值
+        if embedding_config is None:
+            embedding_config = EmbeddingConfig()
+
+        api_key = embedding_config.api_key or os.getenv(embedding_config.api_key_env)
         if not api_key:
-            raise RuntimeError(f"{config.embedding_api_key_env} is required for strategy memory embeddings")
+            raise RuntimeError(f"{embedding_config.api_key_env} is required for strategy memory embeddings")
         persist_dir = _resolve_path(package_root, config.persist_dir)
         self._embedding = OpenAIEmbeddingFunction(
-            base_url=config.embedding_base_url,
+            base_url=embedding_config.base_url,
             api_key=api_key,
-            model=config.embedding_model,
+            model=embedding_config.model,
         )
         self._client = chromadb.PersistentClient(path=str(persist_dir))
         self._collection = self._client.get_or_create_collection(
@@ -104,3 +130,9 @@ def _resolve_path(package_root: Path, path: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return package_root / candidate
+
+
+def _normalize_embedding_input(input: list[str] | str) -> list[str]:
+    if isinstance(input, str):
+        return [input]
+    return list(input)

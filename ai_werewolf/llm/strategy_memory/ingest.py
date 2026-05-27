@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,93 @@ def _split_content(content: str, *, max_chars: int) -> list[str]:
     compact = content.strip()
     if len(compact) <= max_chars:
         return [compact]
+    return _split_by_markdown_structure(compact, max_chars=max_chars)
+
+
+# Markdown heading pattern: lines starting with 1-6 '#' followed by a space
+_HEADING_RE = re.compile(r"^(#{1,6})\s+", re.MULTILINE)
+
+
+def _split_by_markdown_structure(content: str, *, max_chars: int) -> list[str]:
+    """Split markdown content preferring heading boundaries.
+
+    Strategy:
+    1. Split into sections at heading lines (## / ### / etc.)
+    2. Merge consecutive small sections up to max_chars
+    3. If a single section exceeds max_chars, fall back to paragraph splitting
+    """
+    sections = _split_at_headings(content)
+    if len(sections) <= 1:
+        # No headings found — fall back to paragraph splitting
+        return _split_by_paragraphs(content, max_chars=max_chars)
+
+    # Merge small sections into chunks up to max_chars
+    return _merge_sections(sections, max_chars=max_chars)
+
+
+def _split_at_headings(content: str) -> list[str]:
+    """Split content at markdown heading lines.
+
+    Each returned item starts with a heading line (or is the preamble before
+    the first heading).  The heading line is included as the first line of
+    its section.
+    """
+    lines = content.split("\n")
+    sections: list[str] = []
+    current: list[str] = []
+
+    for line in lines:
+        if _HEADING_RE.match(line):
+            if current:
+                sections.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        sections.append("\n".join(current))
+
+    return [s.strip() for s in sections if s.strip()]
+
+
+def _merge_sections(sections: list[str], *, max_chars: int) -> list[str]:
+    """Merge consecutive sections into chunks respecting max_chars.
+
+    If a single section exceeds max_chars it is split by paragraphs.
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+
+    for section in sections:
+        sec_len = len(section)
+        if sec_len > max_chars:
+            # Flush buffer first
+            if buf:
+                parts.append("\n\n".join(buf))
+                buf = []
+                buf_len = 0
+            # This section is too large — split it further
+            parts.extend(_split_by_paragraphs(section, max_chars=max_chars))
+        elif buf and buf_len + sec_len + 2 > max_chars:
+            # Would overflow — flush current buffer, start new one
+            parts.append("\n\n".join(buf))
+            buf = [section]
+            buf_len = sec_len
+        else:
+            buf.append(section)
+            buf_len += sec_len + 2
+
+    if buf:
+        parts.append("\n\n".join(buf))
+
+    return parts
+
+
+def _split_by_paragraphs(content: str, *, max_chars: int) -> list[str]:
+    """Split by paragraph boundaries, falling back to character split."""
+    compact = content.strip()
+    if len(compact) <= max_chars:
+        return [compact]
     parts: list[str] = []
     current: list[str] = []
     current_len = 0
@@ -94,12 +182,18 @@ def _split_long_paragraph(paragraph: str, *, max_chars: int) -> list[str]:
 
 def main() -> None:
     from ai_werewolf.config.application import load_application_config
+    from ai_werewolf.llm.model_config import load_llm_config_from_yaml
     from ai_werewolf.llm.strategy_memory.retriever import ChromaStrategyRetriever
 
     package_root = Path(__file__).resolve().parents[2]
     config = load_application_config()
+    llm_config = load_llm_config_from_yaml()
     knowledge_dir = package_root / config.strategy_memory.knowledge_dir
-    retriever = ChromaStrategyRetriever(config=config.strategy_memory, package_root=package_root)
+    retriever = ChromaStrategyRetriever(
+        config=config.strategy_memory,
+        embedding_config=llm_config.embedding,
+        package_root=package_root,
+    )
     count = retriever.ingest_directory(knowledge_dir)
     print(f"ingested {count} strategy chunks into {config.strategy_memory.collection_name}")
 

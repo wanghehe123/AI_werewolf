@@ -10,9 +10,6 @@ def test_strategy_memory_defaults_are_safe():
     assert config.strategy_memory.knowledge_dir == "knowledge"
     assert config.strategy_memory.persist_dir == "data/chroma"
     assert config.strategy_memory.collection_name == "werewolf_strategy"
-    assert config.strategy_memory.embedding_model == "BAAI/bge-m3"
-    assert config.strategy_memory.embedding_base_url == "https://api.siliconflow.cn/v1"
-    assert config.strategy_memory.embedding_api_key_env == "SILICONFLOW_API_KEY"
     assert config.strategy_memory.top_k == 3
     assert config.strategy_memory.max_hint_chars == 1800
     assert config.strategy_memory.fallback_static is True
@@ -30,9 +27,6 @@ app:
     knowledge_dir: custom_knowledge
     persist_dir: custom_chroma
     collection_name: custom_collection
-    embedding_model: custom_embedding
-    embedding_base_url: https://example.test/v1
-    embedding_api_key_env: CUSTOM_KEY
     top_k: 5
     max_hint_chars: 900
     fallback_static: false
@@ -49,9 +43,6 @@ app:
     assert config.strategy_memory.knowledge_dir == "custom_knowledge"
     assert config.strategy_memory.persist_dir == "custom_chroma"
     assert config.strategy_memory.collection_name == "custom_collection"
-    assert config.strategy_memory.embedding_model == "custom_embedding"
-    assert config.strategy_memory.embedding_base_url == "https://example.test/v1"
-    assert config.strategy_memory.embedding_api_key_env == "CUSTOM_KEY"
     assert config.strategy_memory.top_k == 4
     assert config.strategy_memory.max_hint_chars == 1200
     assert config.strategy_memory.fallback_static is False

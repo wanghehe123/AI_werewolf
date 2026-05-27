@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from ai_werewolf.config.application import load_application_config
+from ai_werewolf.llm.model_config import load_llm_config_from_yaml
 from ai_werewolf.llm.strategy_memory.provider import RagStrategyProvider
 from ai_werewolf.llm.strategy_memory.retriever import ChromaStrategyRetriever, NullStrategyRetriever
 from ai_werewolf.llm.strategy_provider import StaticWerewolfStrategyProvider, StrategyProvider
@@ -17,7 +18,13 @@ def build_strategy_provider(*, package_root: Path | None = None) -> StrategyProv
         return StaticWerewolfStrategyProvider()
     root = package_root or Path(__file__).resolve().parents[2]
     try:
-        retriever = ChromaStrategyRetriever(config=config, package_root=root)
+        # 从 llm.yaml 加载 embedding 配置
+        llm_config = load_llm_config_from_yaml()
+        retriever = ChromaStrategyRetriever(
+            config=config,
+            embedding_config=llm_config.embedding,
+            package_root=root,
+        )
     except Exception as exc:
         logger.warning("[STRATEGY_MEMORY_DISABLED] %s", exc)
         if config.fallback_static:

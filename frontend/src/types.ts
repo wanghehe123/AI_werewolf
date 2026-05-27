@@ -156,6 +156,7 @@ export interface GameStateDto {
   winner: string | null;
   public_events: GameEventDto[];
   allowed_actions: PlayerActionOptionDto[];
+  room_token?: string;
 }
 
 export interface CreateGameRequest {

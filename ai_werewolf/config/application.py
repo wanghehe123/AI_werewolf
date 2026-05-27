@@ -93,9 +93,6 @@ class StrategyMemoryConfig(BaseModel):
     knowledge_dir: str = "knowledge"
     persist_dir: str = "data/chroma"
     collection_name: str = "werewolf_strategy"
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_base_url: str = "https://api.siliconflow.cn/v1"
-    embedding_api_key_env: str = "SILICONFLOW_API_KEY"
     top_k: int = 3
     max_hint_chars: int = 1800
     fallback_static: bool = True
@@ -161,9 +158,6 @@ def _apply_env_overrides(config: ApplicationConfig) -> ApplicationConfig:
         "knowledge_dir": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_KNOWLEDGE_DIR"),
         "persist_dir": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_PERSIST_DIR"),
         "collection_name": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_COLLECTION"),
-        "embedding_model": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_EMBEDDING_MODEL"),
-        "embedding_base_url": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_EMBEDDING_BASE_URL"),
-        "embedding_api_key_env": os.getenv("AI_WEREWOLF_STRATEGY_MEMORY_EMBEDDING_API_KEY_ENV"),
     }
     for key, value in strategy_env_map.items():
         if value:
