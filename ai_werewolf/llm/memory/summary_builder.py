@@ -38,13 +38,13 @@ def build_day_summary(session: GameSession) -> DaySummary:
     seer_claim_seats: list[tuple[str, int]] = []  # (check_type, target_seat)
 
     for public_event in day_events:
-        if public_event.get("event_type") != "speech":
+        if public_event.get("event_type") not in {"speech", "sheriff_election_speech"}:
             continue
         actor_id = public_event.get("actor_id")
         if not actor_id:
             continue
         actor = session.state.player_by_id(actor_id)
-        message = public_event.get("payload", {}).get("message", "")
+        message = _event_speech_text(public_event)
 
         # Detect role claims
         claim_match = _CLAIM_PATTERN.search(message)
@@ -93,6 +93,7 @@ def build_day_summary(session: GameSession) -> DaySummary:
             summary_items.append(f"发言较少：{', '.join(labels)}")
 
     vote_summary = _build_vote_summary(session, day_events)
+    detailed_sections = _build_detailed_sections(session, day_events)
     situation_ledger = _build_situation_ledger(
         session=session,
         day_events=day_events,
@@ -113,6 +114,7 @@ def build_day_summary(session: GameSession) -> DaySummary:
         vote_summary=vote_summary,
         low_signal_players=low_signal_players,
         situation_ledger=situation_ledger,
+        detailed_sections=detailed_sections,
     )
 
 
@@ -145,12 +147,86 @@ def build_private_role_memory(
 
 def _current_day_events(session: GameSession) -> list[dict[str, Any]]:
     public_events = [event for event in session.public_events if event.get("public", True)]
+    if session.state.day_count <= 1:
+        return public_events
     start_idx = 0
     for idx in range(len(public_events) - 1, -1, -1):
         if public_events[idx].get("event_type") == "night_result":
             start_idx = idx
             break
     return public_events[start_idx:]
+
+
+def _build_detailed_sections(session: GameSession, day_events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Preserve public day history in prompt-friendly structured sections."""
+    sheriff_candidates = list(session.sheriff_candidates)
+    sheriff_voters = list(session.sheriff_voters)
+    sheriff_speeches: list[dict[str, Any]] = []
+    sheriff_votes: list[dict[str, Any]] = []
+    sheriff_results: list[dict[str, Any]] = []
+    night_results: list[dict[str, Any]] = []
+    day_speeches: list[dict[str, Any]] = []
+    exile_votes: list[dict[str, Any]] = []
+    exile_results: list[dict[str, Any]] = []
+
+    for public_event in day_events:
+        event_type = public_event.get("event_type")
+        actor_id = public_event.get("actor_id")
+        target_id = public_event.get("target_id")
+        payload = public_event.get("payload", {})
+        message = payload.get("message", "")
+
+        if event_type == "sheriff_election" and actor_id:
+            if "不参加" in message:
+                if actor_id not in sheriff_voters:
+                    sheriff_voters.append(actor_id)
+            elif "参加" in message and actor_id not in sheriff_candidates:
+                sheriff_candidates.append(actor_id)
+        elif event_type == "sheriff_election_speech" and actor_id:
+            sheriff_speeches.append({"player_id": actor_id, "text": _event_speech_text(public_event)})
+        elif event_type == "sheriff_vote":
+            sheriff_votes.append({
+                "voter_id": actor_id or payload.get("voter_id"),
+                "target_id": target_id,
+                "message": message,
+            })
+        elif event_type in {"sheriff_elected", "sheriff_tie"}:
+            sheriff_results.append({"winner_id": actor_id, "message": message})
+        elif event_type == "night_result":
+            night_results.append({"target_id": target_id, "message": message})
+        elif event_type == "speech" and actor_id:
+            day_speeches.append({"player_id": actor_id, "text": _event_speech_text(public_event)})
+        elif event_type == "vote":
+            exile_votes.append({"voter_id": actor_id, "target_id": target_id, "message": message})
+        elif event_type == "exile":
+            exile_results.append({"target_id": target_id, "message": message})
+
+    if not any((
+        sheriff_candidates,
+        sheriff_voters,
+        sheriff_speeches,
+        sheriff_votes,
+        sheriff_results,
+        night_results,
+        day_speeches,
+        exile_votes,
+        exile_results,
+    )):
+        return {}
+
+    return {
+        "sheriff_campaign": {
+            "candidates": sheriff_candidates,
+            "voters": sheriff_voters,
+            "speeches": sheriff_speeches,
+        },
+        "sheriff_votes": sheriff_votes,
+        "sheriff_results": sheriff_results,
+        "night_results": night_results,
+        "day_speeches": day_speeches,
+        "exile_votes": exile_votes,
+        "exile_results": exile_results,
+    }
 
 
 def _build_vote_summary(session: GameSession, day_events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -328,6 +404,15 @@ def _looks_like_self_forced_by_check(message: str) -> bool:
 
 def _seat_labels_from_ids(session: GameSession, player_ids: list[str]) -> list[str]:
     return [f"{session.state.player_by_id(player_id).seat}号" for player_id in player_ids]
+
+
+def _event_speech_text(public_event: dict[str, Any]) -> str:
+    payload = public_event.get("payload", {})
+    speech = payload.get("speech")
+    if speech:
+        return speech
+    message = payload.get("message", "")
+    return message.split("：", 1)[1] if "：" in message else message
 
 
 def _looks_low_signal(message: str) -> bool:

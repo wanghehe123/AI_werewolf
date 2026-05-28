@@ -90,6 +90,53 @@ def test_day_summary_builds_situation_ledger_for_claims_votes_and_bad_speech():
     assert ledger["turn_state"]["alive_players"] == 9
 
 
+def test_day_summary_preserves_structured_public_history_for_prompt_memory():
+    session = _session()
+    session.state.day_count = 1
+    session.sheriff_candidates = ["p6", "p11"]
+    session.sheriff_voters = ["p1", "p3", "p4"]
+    session.sheriff_election_votes = {"p1": "p6", "p3": "p11", "p4": "p6"}
+    session.public_events.clear()
+    session.append_public_event("phase_changed", "进入警长竞选阶段，请决定是否参与竞选。", publish_stream=False)
+    session.append_public_event("sheriff_election", "6号 预言家 参加警长竞选。", actor_id="p6", publish_stream=False)
+    session.append_public_event("sheriff_election", "11号 悍跳狼 参加警长竞选。", actor_id="p11", publish_stream=False)
+    session.append_public_event("sheriff_election", "1号 平民 不参加警长竞选。", actor_id="p1", publish_stream=False)
+    session.append_public_event(
+        "sheriff_election_speech",
+        "6号：我是预言家，验4号金水，警徽流留10、2。",
+        actor_id="p6",
+        publish_stream=False,
+    )
+    session.append_public_event(
+        "sheriff_election_speech",
+        "11号：我是预言家，验8号查杀，警徽流留3、7。",
+        actor_id="p11",
+        publish_stream=False,
+    )
+    session.append_public_event("sheriff_vote", "1号 投票给 6号。", actor_id="p1", target_id="p6", publish_stream=False)
+    session.append_public_event("sheriff_vote", "3号 投票给 11号。", actor_id="p3", target_id="p11", publish_stream=False)
+    session.append_public_event("sheriff_vote", "4号 投票给 6号。", actor_id="p4", target_id="p6", publish_stream=False)
+    session.append_public_event("sheriff_elected", "6号 以 2 票当选警长！", actor_id="p6", publish_stream=False)
+    session.append_public_event("night_result", "昨夜，12号出局。", target_id="p12", publish_stream=False)
+    session.append_public_event("speech", "1号：我站边6号，11号像悍跳。", actor_id="p1", publish_stream=False)
+    session.append_public_event("speech", "3号：我投11号是因为他的查杀力度更大。", actor_id="p3", publish_stream=False)
+    session.append_public_event("vote", "1号投票给了11号。", actor_id="p1", target_id="p11", publish_stream=False)
+    session.append_public_event("vote", "3号投票给了11号。", actor_id="p3", target_id="p11", publish_stream=False)
+    session.append_public_event("exile", "11号 被投票放逐。", target_id="p11", publish_stream=False)
+
+    summary = build_day_summary(session)
+
+    details = summary.detailed_sections
+    assert details["sheriff_campaign"]["candidates"] == ["p6", "p11"]
+    assert details["sheriff_campaign"]["voters"] == ["p1", "p3", "p4"]
+    assert details["sheriff_campaign"]["speeches"][0]["text"] == "我是预言家，验4号金水，警徽流留10、2。"
+    assert details["sheriff_votes"][0] == {"voter_id": "p1", "target_id": "p6", "message": "1号 投票给 6号。"}
+    assert details["night_results"] == [{"target_id": "p12", "message": "昨夜，12号出局。"}]
+    assert details["day_speeches"][1]["text"] == "我投11号是因为他的查杀力度更大。"
+    assert details["exile_votes"][1] == {"voter_id": "p3", "target_id": "p11", "message": "3号投票给了11号。"}
+    assert details["exile_results"] == [{"target_id": "p11", "message": "11号 被投票放逐。"}]
+
+
 def test_legacy_day_summary_payload_defaults_empty_situation_ledger():
     summary = DaySummary.model_validate({"game_id": "g", "day": 1, "summary_items": []})
 

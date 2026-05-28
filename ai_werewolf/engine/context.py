@@ -46,18 +46,23 @@ def build_game_context(
         if self_speech_text:
             sections.append(self_speech_text)
 
-    # Recent public events (sliding window of last 20)
-    lines = []
-    for event in session.public_events:
-        if not event.get("public", True):
-            continue
-        etype = event.get("event_type", "")
-        payload = event.get("payload", {})
-        message = payload.get("message", "")
-        lines.append(f"[{etype}] {message}")
-    recent_text = "\n".join(lines[-20:])
-    if recent_text:
-        sections.append(recent_text)
+    if player_id is not None:
+        today_text = _build_today_public_events(session)
+        if today_text:
+            sections.append(today_text)
+    else:
+        # Recent public events (sliding window of last 20)
+        lines = []
+        for event in session.public_events:
+            if not event.get("public", True):
+                continue
+            etype = event.get("event_type", "")
+            payload = event.get("payload", {})
+            message = payload.get("message", "")
+            lines.append(f"[{etype}] {message}")
+        recent_text = "\n".join(lines[-20:])
+        if recent_text:
+            sections.append(recent_text)
 
     return "\n".join(sections)
 
@@ -156,6 +161,8 @@ def _build_day_summary_context(memory_store, session: GameSession) -> str:
 
     lines = ["【历史摘要】"]
     for s in summaries:
+        if _append_detailed_day_summary(lines, s, _seat_label):
+            continue
         lines.append(f"第{s.day}天：")
         for item in s.summary_items:
             lines.append(f"  - {item}")
@@ -180,6 +187,114 @@ def _build_day_summary_context(memory_store, session: GameSession) -> str:
                 else:
                     lines.append(f"  - 被放逐：{exiled_label}")
 
+    return "\n".join(lines)
+
+
+def _append_detailed_day_summary(lines: list[str], summary, seat_label) -> bool:
+    details = getattr(summary, "detailed_sections", None) or {}
+    if not details:
+        return False
+
+    wrote = False
+    sheriff = details.get("sheriff_campaign") or {}
+    sheriff_candidates = list(sheriff.get("candidates") or [])
+    sheriff_voters = list(sheriff.get("voters") or [])
+    sheriff_speeches = list(sheriff.get("speeches") or [])
+    sheriff_votes = list(details.get("sheriff_votes") or [])
+    sheriff_results = list(details.get("sheriff_results") or [])
+    night_results = list(details.get("night_results") or [])
+    day_speeches = list(details.get("day_speeches") or [])
+    exile_votes = list(details.get("exile_votes") or [])
+    exile_results = list(details.get("exile_results") or [])
+    if not any((
+        sheriff_candidates,
+        sheriff_voters,
+        sheriff_speeches,
+        sheriff_votes,
+        sheriff_results,
+        night_results,
+        day_speeches,
+        exile_votes,
+        exile_results,
+    )):
+        return False
+
+    if sheriff_candidates or sheriff_voters or sheriff_speeches or sheriff_votes or sheriff_results:
+        lines.append("## 警长竞选：")
+        lines.append(f"上警玩家：{_format_player_list(sheriff_candidates, seat_label)}")
+        lines.append(f"警下玩家：{_format_player_list(sheriff_voters, seat_label)}")
+        if sheriff_speeches:
+            lines.append("警上发言：")
+            for speech in sheriff_speeches:
+                player_id = speech.get("player_id", "")
+                text = speech.get("text", "")
+                lines.append(f"- {seat_label(player_id)}：「{text}」")
+        if sheriff_votes:
+            lines.append("## 警长投票")
+            for vote in sheriff_votes:
+                voter_id = vote.get("voter_id", "")
+                target_id = vote.get("target_id")
+                target_label = seat_label(target_id) if target_id else "弃票"
+                lines.append(f"- {seat_label(voter_id)} -> {target_label}")
+        for result in sheriff_results:
+            message = result.get("message", "")
+            if message:
+                lines.append(f"警长结果：{message}")
+        wrote = True
+
+    lines.append(f"第{summary.day}天：")
+    if night_results:
+        messages = [result.get("message", "") for result in night_results if result.get("message")]
+        if messages:
+            lines.append(f"夜晚死亡：{'；'.join(messages)}")
+
+    if day_speeches:
+        lines.append("发言环节：")
+        for speech in day_speeches:
+            player_id = speech.get("player_id", "")
+            text = speech.get("text", "")
+            lines.append(f"- {seat_label(player_id)}：「{text}」")
+
+    if exile_votes:
+        lines.append("放逐投票：")
+        for vote in exile_votes:
+            voter_id = vote.get("voter_id", "")
+            target_id = vote.get("target_id")
+            target_label = seat_label(target_id) if target_id else "弃票"
+            lines.append(f"- {seat_label(voter_id)} -> {target_label}")
+
+    for result in exile_results:
+        message = result.get("message", "")
+        if message:
+            lines.append(f"放逐结果：{message}")
+
+    return wrote or bool(night_results or day_speeches or exile_votes or exile_results)
+
+
+def _format_player_list(player_ids: list[str], seat_label) -> str:
+    if not player_ids:
+        return "无"
+    return "、".join(seat_label(player_id) for player_id in player_ids)
+
+
+def _build_today_public_events(session: GameSession) -> str:
+    public_events = [event for event in session.public_events if event.get("public", True)]
+    if not public_events:
+        return ""
+    if session.state.day_count > 1:
+        start_idx = 0
+        for idx in range(len(public_events) - 1, -1, -1):
+            if public_events[idx].get("event_type") == "night_result":
+                start_idx = idx
+                break
+        public_events = public_events[start_idx:]
+
+    lines = ["【今天】"]
+    for event in public_events:
+        etype = event.get("event_type", "")
+        payload = event.get("payload", {})
+        message = payload.get("message", "")
+        lines.append(f"[{etype}] {message}")
     return "\n".join(lines)
 
 

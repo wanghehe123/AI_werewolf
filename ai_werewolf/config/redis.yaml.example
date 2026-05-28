@@ -1,0 +1,16 @@
+# AI 狼人杀 Redis 配置（示例模板）
+# ===================================
+# 复制本文件为 config/redis.yaml 并根据环境修改。
+#
+# 环境变量 AI_WEREWOLF_REDIS_* 会覆盖此文件中的配置。
+# 例如：AI_WEREWOLF_REDIS_HOST=192.168.1.100
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+  password: null
+  socket_timeout: 5
+  socket_connect_timeout: 5
+  pool_size: 10
+  key_prefix: "wolf:"
