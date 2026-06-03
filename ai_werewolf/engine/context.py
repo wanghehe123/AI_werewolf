@@ -74,9 +74,9 @@ def _build_self_speech_history(session: GameSession, player_id: str) -> str:
     Returns a section like::
 
         【你之前的发言】
-        - 警长竞选发言：「...」
-        - 第1天发言：「...」
-        - 第2天发言：「...」
+        - 警长竞选发言：跳预言家报2号金水 | 警徽流4→7
+        - 第1天发言：站边6号 | 归票4号
+        - 第2天发言：…
     """
     # Find day boundaries for labeling.
     # Day 1 starts from game creation (sheriff campaign is part of day 1).
@@ -93,7 +93,12 @@ def _build_self_speech_history(session: GameSession, player_id: str) -> str:
         # (night_result and 天亮了 appear in the same phase; 天亮了 comes first)
         day_for_event[idx] = current_day
 
-    own_events: list[tuple[int, str, str]] = []  # (event_index, label, speech_text)
+    own_events: list[tuple[int, str, str, str]] = []  # (event_index, label, speech_text, compressed)
+
+    # Lazy import to avoid circular dependency with summary_builder
+    from ai_werewolf.llm.memory.summary_builder import _compress_speech
+
+    player = session.state.player_by_id(player_id)
 
     for idx, event in enumerate(session.public_events):
         if not event.get("public", True):
@@ -109,18 +114,25 @@ def _build_self_speech_history(session: GameSession, player_id: str) -> str:
             # Extract just the speech part (after "2号 小灰：")
             speech_only = message.split("：", 1)[1] if "：" in message else message
             day = day_for_event.get(idx, 1)
-            own_events.append((idx, f"第{day}天警长竞选发言", speech_only))
+            label = f"第{day}天警长竞选发言"
+            compressed = _compress_speech(actor=player, text=speech_only) if player else ""
+            own_events.append((idx, label, speech_only, compressed))
         elif etype == "speech":
             speech_only = message.split("：", 1)[1] if "：" in message else message
             day = day_for_event.get(idx, 1)
-            own_events.append((idx, f"第{day}天白天发言", speech_only))
+            label = f"第{day}天白天发言"
+            compressed = _compress_speech(actor=player, text=speech_only) if player else ""
+            own_events.append((idx, label, speech_only, compressed))
 
     if not own_events:
         return ""
 
     lines = ["【你之前的发言】"]
-    for _, label, text in own_events:
-        lines.append(f"- {label}：「{text}」")
+    for _, label, text, compressed in own_events:
+        if compressed:
+            lines.append(f"- {label}：{compressed}")
+        else:
+            lines.append(f"- {label}：「{text}」")
 
     return "\n".join(lines)
 
@@ -219,16 +231,16 @@ def _append_detailed_day_summary(lines: list[str], summary, seat_label) -> bool:
     )):
         return False
 
-    if sheriff_candidates or sheriff_voters or sheriff_speeches or sheriff_votes or sheriff_results:
+    if sheriff_speeches or sheriff_votes or sheriff_results:
         lines.append("## 警长竞选：")
-        lines.append(f"上警玩家：{_format_player_list(sheriff_candidates, seat_label)}")
-        lines.append(f"警下玩家：{_format_player_list(sheriff_voters, seat_label)}")
+        if sheriff_candidates or sheriff_voters:
+            lines.append(f"上警玩家：{_format_player_list(sheriff_candidates, seat_label)}")
+            lines.append(f"警下玩家：{_format_player_list(sheriff_voters, seat_label)}")
         if sheriff_speeches:
             lines.append("警上发言：")
             for speech in sheriff_speeches:
                 player_id = speech.get("player_id", "")
-                text = speech.get("text", "")
-                lines.append(f"- {seat_label(player_id)}：「{text}」")
+                _render_speech_line(lines, speech, seat_label, player_id)
         if sheriff_votes:
             lines.append("## 警长投票")
             for vote in sheriff_votes:
@@ -252,8 +264,7 @@ def _append_detailed_day_summary(lines: list[str], summary, seat_label) -> bool:
         lines.append("发言环节：")
         for speech in day_speeches:
             player_id = speech.get("player_id", "")
-            text = speech.get("text", "")
-            lines.append(f"- {seat_label(player_id)}：「{text}」")
+            _render_speech_line(lines, speech, seat_label, player_id)
 
     if exile_votes:
         lines.append("放逐投票：")
@@ -275,6 +286,28 @@ def _format_player_list(player_ids: list[str], seat_label) -> str:
     if not player_ids:
         return "无"
     return "、".join(seat_label(player_id) for player_id in player_ids)
+
+
+def _render_speech_line(
+    lines: list[str],
+    speech: dict,
+    seat_label,
+    player_id: str,
+) -> None:
+    """Render one speech line, preferring the ``compressed`` signal summary.
+
+    When ``compressed`` is missing or empty (legacy DaySummary without the
+    field, or speeches the compressor could not summarise), fall back to
+    the full ``text`` wrapped in Chinese quote marks.
+    """
+    label = seat_label(player_id)
+    compressed = (speech.get("compressed") or "").strip()
+    if compressed:
+        lines.append(f"- {label}：{compressed}")
+        return
+    text = speech.get("text", "")
+    if text:
+        lines.append(f"- {label}：「{text}」")
 
 
 def _build_today_public_events(session: GameSession) -> str:
@@ -315,22 +348,29 @@ def build_private_infos(players: list[PlayerState]) -> dict[str, PlayerPrivateIn
 
 def build_speech_progress(session: GameSession) -> str:
     """Build speech progress text showing who has spoken and who hasn't."""
-    players = session.state.players
     # Find speech events in public_events
     spoken_ids: set[str] = set()
     for event in session.public_events:
         if event.get("event_type") == "speech" and event.get("actor_id"):
             spoken_ids.add(event["actor_id"])
 
-    alive = [p for p in players if p.alive]
-    spoken = [p for p in alive if p.player_id in spoken_ids]
-    not_spoken = [p for p in alive if p.player_id not in spoken_ids]
+    alive_ids = {p.player_id for p in session.state.players if p.alive}
+    # Use speech_order if available, otherwise fall back to seat order
+    order_ids = session.speech_order or [p.player_id for p in sorted(session.state.players, key=lambda p: p.seat)]
+    ordered_alive = [pid for pid in order_ids if pid in alive_ids]
+
+    spoken = [pid for pid in ordered_alive if pid in spoken_ids]
+    not_spoken = [pid for pid in ordered_alive if pid not in spoken_ids]
+
+    def _seat_label(pid: str) -> str:
+        p = session.state.player_by_id(pid)
+        return f"{p.seat}号"
 
     lines = [
         "【当前发言进度】",
-        f"- 顺序：{'→'.join(f'{p.seat}号' for p in sorted(alive, key=lambda p: p.seat))}",
-        f"- 已发言：{', '.join(f'{p.seat}号' for p in sorted(spoken, key=lambda p: p.seat)) or '无'}",
-        f"- 待发言：{', '.join(f'{p.seat}号' for p in sorted(not_spoken, key=lambda p: p.seat)) or '无'}",
+        f"- 顺序：{'→'.join(_seat_label(pid) for pid in ordered_alive)}",
+        f"- 已发言：{', '.join(_seat_label(pid) for pid in spoken) or '无'}",
+        f"- 待发言：{', '.join(_seat_label(pid) for pid in not_spoken) or '无'}",
         "",
         "【发言硬约束】",
         "- 你不得评价\"未发言玩家\"的发言内容（他们还没说话）。",

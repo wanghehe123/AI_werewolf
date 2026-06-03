@@ -130,6 +130,14 @@ def allowed_actions(state: GameState, human_player_id: str | None = None, sessio
             _target_action("sheriff_transfer", "移交警徽", targets, session),
             {"action_type": "tear_badge", "label": "撕掉警徽"},
         ]
+    if state.phase == GamePhase.SHERIFF_CHOOSE_DIRECTION:
+        human = _human_player(state, human_player_id)
+        if human is None or not human.alive or not human.sheriff:
+            return []
+        return [
+            {"action_type": "choose_direction_forward", "label": "正序"},
+            {"action_type": "choose_direction_reverse", "label": "倒序"},
+        ]
     if state.phase == GamePhase.NIGHT:
         human = _human_player(state, human_player_id)
         if human is None or not human.alive:
@@ -276,6 +284,7 @@ def frontend_state(session: GameSession, model_registry: Any, role_model_binding
         ],
         "winner": state.winner,
         "public_events": session.public_events,
+        "speech_order": session.speech_order,
         "allowed_actions": actions,
     }
 

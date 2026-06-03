@@ -59,6 +59,8 @@ class GameSession:
     pending_death_trigger_next_phase: str | None = None
     pending_sheriff_transfer_player_id: str | None = None
     pending_hunter_shoot_player_id: str | None = None
+    speech_order: list[str] = field(default_factory=list)
+    pending_speech_start_player_id: str | None = None
     night_pending_kill_target_id: str | None = None
     night_pending_guard_target_id: str | None = None
     night_pre_witch_resolved: bool = False

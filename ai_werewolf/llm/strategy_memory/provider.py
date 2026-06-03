@@ -16,12 +16,14 @@ class RagStrategyProvider:
         self,
         *,
         retriever: StrategyRetriever,
-        top_k: int = 3,
+        top_k: int = 5,
         max_hint_chars: int = 1800,
         fallback: StrategyProvider | None = None,
         include_static: bool = True,
     ) -> None:
         self.retriever = retriever
+        # top_k raised from 3 → 5 so role-specific chunks reliably make
+        # the cut before vector-similarity ranking reduces the pool.
         self.top_k = top_k
         self.max_hint_chars = max_hint_chars
         self.fallback = fallback or StaticWerewolfStrategyProvider()

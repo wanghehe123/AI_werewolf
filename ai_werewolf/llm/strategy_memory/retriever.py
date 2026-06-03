@@ -33,6 +33,7 @@ class InMemoryStrategyRetriever:
         filtered = [
             hit for hit in self._hits
             if _metadata_matches(hit.metadata, query.role_key, query.phase)
+            and _role_key_strict_match(hit.metadata, query.role_key)
         ]
         return filtered[:top_k]
 
@@ -92,6 +93,8 @@ class ChromaStrategyRetriever:
         )
 
     def retrieve(self, query: RagQuery, *, top_k: int) -> list[RagHit]:
+        # Ask ChromaDB for more candidates than we need; we'll filter
+        # aggressively afterwards to keep only role/phase-matching chunks.
         result = self._collection.query(
             query_texts=[query.to_search_text()],
             n_results=max(top_k * 4, top_k),
@@ -103,6 +106,13 @@ class ChromaStrategyRetriever:
         for content, metadata_payload, distance in zip(documents, metadatas, distances, strict=False):
             metadata = StrategyDocumentMetadata.model_validate(metadata_payload)
             if not _metadata_matches(metadata, query.role_key, query.phase):
+                continue
+            # Hard post-filter: a chunk whose role_key doesn't match
+            # (and isn't "any") must never be returned, even if
+            # vector similarity ranked it high. This prevents a seer
+            # strategy chunk from being served to a werewolf player
+            # when the seer-specific pool is empty.
+            if not _role_key_strict_match(metadata, query.role_key):
                 continue
             hits.append(RagHit(content=str(content), metadata=metadata, score=float(distance)))
             if len(hits) >= top_k:
@@ -122,7 +132,29 @@ class ChromaStrategyRetriever:
 
 
 def _metadata_matches(metadata: StrategyDocumentMetadata, role_key: str, phase: str) -> bool:
-    return metadata.role_key in {role_key, "any"} and metadata.phase in {phase, "any"}
+    # A query with role_key="any" means "any role is fine" — match all.
+    if role_key == "any" or metadata.role_key == "any" or metadata.role_key == role_key:
+        role_ok = True
+    else:
+        role_ok = False
+    phase_ok = metadata.phase == "any" or metadata.phase == phase
+    return role_ok and phase_ok
+
+
+def _role_key_strict_match(metadata: StrategyDocumentMetadata, role_key: str) -> bool:
+    """Hard post-filter: only return chunks whose ``role_key`` matches
+    *role_key* or is the universal ``"any"`` fallback. ChromaDB returns
+    vector-similarity-ranked candidates, so a chunk with a mismatching
+    role_key can sneak in when the candidate pool is small; this filter
+    guarantees we never feed another role's strategy into a player's
+    prompt.
+
+    A query with ``role_key="any"`` is treated as "any role is fine" and
+    matches every chunk.
+    """
+    if role_key == "any":
+        return True
+    return metadata.role_key in {role_key, "any"}
 
 
 def _resolve_path(package_root: Path, path: str) -> Path:

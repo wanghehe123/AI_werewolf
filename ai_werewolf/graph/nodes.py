@@ -1,3 +1,5 @@
+import random
+
 from ai_werewolf.domain.agents import AgentProfile
 from ai_werewolf.domain.boards import BoardConfig
 from ai_werewolf.domain.game_state import GamePhase, GameState, PlayerState
@@ -16,30 +18,21 @@ def initialize_game_node(
         raise ValueError("agent count must fill board seats after human player")
 
     player_ids = [human_player_id] + [agent.agent_id for agent in agents]
+    random.shuffle(player_ids)
     fixed_roles = {human_player_id: human_role_key} if human_role_key else None
     assigned = assign_roles(board, player_ids, seed=seed, fixed_roles=fixed_roles)
     players = [
         PlayerState(
-            player_id=human_player_id,
-            agent_id=None,
-            seat=1,
-            role_key=assigned[human_player_id],
+            player_id=pid,
+            agent_id=None if pid == human_player_id else pid,
+            seat=index,
+            role_key=assigned[pid],
             alive=True,
-            is_human=True,
-            display_name=human_display_name,
+            is_human=pid == human_player_id,
+            display_name=human_display_name if pid == human_player_id else None,
         )
+        for index, pid in enumerate(player_ids, start=1)
     ]
-    for index, agent in enumerate(agents, start=2):
-        players.append(
-            PlayerState(
-                player_id=agent.agent_id,
-                agent_id=agent.agent_id,
-                seat=index,
-                role_key=assigned[agent.agent_id],
-                alive=True,
-                is_human=False,
-            )
-        )
 
     return GameState(
         game_id="game_pending",
@@ -63,6 +56,11 @@ def initialize_ai_game_node(
     if len(set(player_ids)) != len(player_ids):
         raise ValueError("player ids must be unique")
 
+    # Shuffle seat order so no player is always in a fixed seat
+    combined = list(zip(player_ids, [a for _, a in players]))
+    random.shuffle(combined)
+    player_ids = [pid for pid, _ in combined]
+
     assigned = assign_roles(board, player_ids, seed=seed)
     return GameState(
         game_id="game_pending",
@@ -71,13 +69,13 @@ def initialize_ai_game_node(
         day_count=0,
         players=[
             PlayerState(
-                player_id=player_id,
+                player_id=pid,
                 agent_id=agent.agent_id,
                 seat=index,
-                role_key=assigned[player_id],
+                role_key=assigned[pid],
                 alive=True,
                 is_human=False,
             )
-            for index, (player_id, agent) in enumerate(players, start=1)
+            for index, (pid, agent) in enumerate(combined, start=1)
         ],
     )

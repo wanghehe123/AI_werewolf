@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from typing import Any
 
 from fastapi import HTTPException
 
+from ai_werewolf.domain.boards import SpeechRule
 from ai_werewolf.domain.game_state import GamePhase, PlayerPrivateInfo
 from ai_werewolf.engine.action_log import log_game_start_roles, log_player_action
 from ai_werewolf.engine.context import build_game_context
@@ -132,6 +134,8 @@ class PhaseOrchestrator:
             self._handle_sheriff_vote(session, action)
         elif state.phase == GamePhase.SHERIFF_TRANSFER and action_type in {"sheriff_transfer", "tear_badge"}:
             self._handle_sheriff_transfer(session, action)
+        elif state.phase == GamePhase.SHERIFF_CHOOSE_DIRECTION and action_type in {"choose_direction_forward", "choose_direction_reverse"}:
+            self._handle_sheriff_choose_direction(session, action)
         elif state.phase == GamePhase.NIGHT and action_type == "night_start":
             self._resolve_night_pre_witch(session, action)
         elif state.phase == GamePhase.NIGHT and action_type in {"skip", "wolf_kill", "seer_check", "guard", "witch_save", "witch_poison", "no_action"}:
@@ -163,11 +167,17 @@ class PhaseOrchestrator:
             self._maybe_open_sheriff_vote(session)
         elif state.phase == GamePhase.SHERIFF_TRANSFER:
             self._auto_resolve_sheriff_transfer(session)
+        elif state.phase == GamePhase.SHERIFF_CHOOSE_DIRECTION:
+            self._auto_resolve_sheriff_direction(session)
         elif state.phase == GamePhase.DAY_ANNOUNCEMENT:
             self._enter_speech(session)
         elif state.phase == GamePhase.DAY_SPEECH:
+            # 全 AI 局也应生成发言，否则投票无依据
+            if not session.speech_order:
+                self._resolve_speech_order(session)
+            self._append_ai_speeches(session)
             session.state.phase = GamePhase.EXILE_VOTE
-            session.append_public_event("phase_changed", "全 AI 评测局跳过人类发言，进入放逐投票。")
+            session.append_public_event("phase_changed", "发言结束，进入放逐投票。")
             self._resolve_vote(session, self._auto_skip_action(session))
         elif state.phase == GamePhase.EXILE_VOTE:
             self._resolve_vote(session, self._auto_skip_action(session))
@@ -1046,35 +1056,153 @@ class PhaseOrchestrator:
         if next_phase:
             session.state.phase = GamePhase(next_phase)
 
-    def _enter_speech(self, session: GameSession) -> None:
+    # ---- Speech order ----
+
+    def _maybe_skip_dead_human_to_vote(self, session: GameSession) -> bool:
+        """If human is dead, skip speech and auto-vote. Returns True if skipped."""
+        human = self._human_player(session)
+        if human is not None and human.alive:
+            return False
+        session.append_public_event("phase_changed", "你已出局，本轮跳过你的发言和投票。")
+        session.state.phase = GamePhase.EXILE_VOTE
+        time.sleep(0.3)
+        self._resolve_vote(session, {
+            "actor_player_id": session.human_player_id,
+            "action_type": "abstain",
+            "target_player_id": None,
+            "content": None,
+            "client_action_id": "auto_dead_human_abstain",
+            "skip_human_vote": True,
+        })
+        return True
+
+    def _resolve_speech_order(self, session: GameSession) -> None:
+        """根据 BoardConfig.speech_rule 计算当天发言顺序，写入 session.speech_order。"""
+        board = session.board_config
+        rule = board.speech_rule if board else SpeechRule.SEAT_ORDER
+        alive = [p for p in session.state.players if p.alive]
+
+        if rule == SpeechRule.SEAT_ORDER:
+            ordered = sorted(alive, key=lambda p: p.seat)
+            if random.random() < 0.5:
+                ordered = list(reversed(ordered))
+            session.speech_order = [p.player_id for p in ordered]
+        elif rule == SpeechRule.REVERSE_SEAT_ORDER:
+            ordered = sorted(alive, key=lambda p: p.seat, reverse=True)
+            session.speech_order = [p.player_id for p in ordered]
+        elif rule == SpeechRule.SHERIFF_SELECT_DIRECTION:
+            # 无警长时 fallback 到随机正/倒序
+            ordered = sorted(alive, key=lambda p: p.seat)
+            if random.random() < 0.5:
+                ordered = list(reversed(ordered))
+            session.speech_order = [p.player_id for p in ordered]
+
+    def _handle_sheriff_choose_direction(self, session: GameSession, action: dict) -> None:
+        """警长选择发言方向（起点由系统随机确定）。"""
+        direction = action["action_type"]
+        start_id = session.pending_speech_start_player_id
+        if not start_id:
+            raise HTTPException(status_code=400, detail="no pending speech start player")
+        alive = sorted([p for p in session.state.players if p.alive], key=lambda p: p.seat)
+        start_idx = next((i for i, p in enumerate(alive) if p.player_id == start_id), None)
+        if start_idx is None:
+            raise HTTPException(status_code=400, detail="start player not alive")
+        if direction == "choose_direction_forward":
+            ordered = alive[start_idx:] + alive[:start_idx]
+        else:
+            rev = list(reversed(alive))
+            start_idx_rev = next(i for i, p in enumerate(rev) if p.player_id == start_id)
+            ordered = rev[start_idx_rev:] + rev[:start_idx_rev]
+        session.speech_order = [p.player_id for p in ordered]
+        session.pending_speech_start_player_id = None
+        direction_text = "正序" if direction == "choose_direction_forward" else "倒序"
+        start_label = player_label(start_id, session)
+        session.append_public_event(
+            "speech_order_chosen",
+            f"发言起点随机为 {start_label}，警长选择了 {direction_text}。",
+        )
         session.state.phase = GamePhase.DAY_SPEECH
         self._append_ai_speeches(session)
-        human = self._human_player(session)
-        if human is None or not human.alive:
-            # Broadcast speeches via SSE before advancing to vote so that
-            # the dead human player can follow along in real-time.  A brief
-            # pause gives the SSE generator a chance to drain in-memory events.
-            session.append_public_event("phase_changed", "你已出局，本轮跳过你的发言和投票。")
-            session.state.phase = GamePhase.EXILE_VOTE
-            # Allow SSE clients a moment to receive the interim events
-            time.sleep(0.3)
-            self._resolve_vote(session, {
-                "actor_player_id": session.human_player_id,
-                "action_type": "abstain",
-                "target_player_id": None,
-                "content": None,
-                "client_action_id": "auto_dead_human_abstain",
-                "skip_human_vote": True,
-            })
+        if self._maybe_skip_dead_human_to_vote(session):
+            return
+        session.append_public_event("phase_changed", "进入白天发言阶段，现在轮到你发言。")
+
+    def _auto_resolve_sheriff_direction(self, session: GameSession) -> None:
+        """AI 警长自动选择发言方向。"""
+        sheriff = next((p for p in session.state.players if p.sheriff and p.alive), None)
+        alive = sorted([p for p in session.state.players if p.alive], key=lambda p: p.seat)
+        if not sheriff:
+            # 无警长，随机正/倒序
+            ordered = alive if random.random() < 0.5 else list(reversed(alive))
+            session.speech_order = [p.player_id for p in ordered]
+            session.append_public_event("speech_order_chosen", "本局无警长，发言顺序随机确定。")
+            session.state.phase = GamePhase.DAY_SPEECH
+            self._append_ai_speeches(session)
+            return
+        start_id = session.pending_speech_start_player_id or random.choice(alive).player_id
+        forward = random.random() < 0.5
+        start_idx = next(i for i, p in enumerate(alive) if p.player_id == start_id)
+        if forward:
+            ordered = alive[start_idx:] + alive[:start_idx]
+        else:
+            rev = list(reversed(alive))
+            start_idx_rev = next(i for i, p in enumerate(rev) if p.player_id == start_id)
+            ordered = rev[start_idx_rev:] + rev[:start_idx_rev]
+        session.speech_order = [p.player_id for p in ordered]
+        session.pending_speech_start_player_id = None
+        direction_text = "正序" if forward else "倒序"
+        start_label = player_label(start_id, session)
+        session.append_public_event(
+            "speech_order_chosen",
+            f"发言起点随机为 {start_label}，警长选择了 {direction_text}。",
+        )
+        session.state.phase = GamePhase.DAY_SPEECH
+        self._append_ai_speeches(session)
+
+    def _enter_speech(self, session: GameSession) -> None:
+        board = session.board_config
+        rule = board.speech_rule if board else SpeechRule.SEAT_ORDER
+
+        if rule == SpeechRule.SHERIFF_SELECT_DIRECTION:
+            sheriff = next((p for p in session.state.players if p.sheriff and p.alive), None)
+            if sheriff:
+                # 随机选起点，进入 SHERIFF_CHOOSE_DIRECTION 等待警长选方向
+                alive = [p for p in session.state.players if p.alive]
+                start = random.choice(alive)
+                session.pending_speech_start_player_id = start.player_id
+                session.state.phase = GamePhase.SHERIFF_CHOOSE_DIRECTION
+                session.append_public_event(
+                    "phase_changed",
+                    f"发言起点随机为 {player_label(start.player_id, session)}，请警长选择发言方向。",
+                )
+                if not sheriff.is_human:
+                    self._auto_resolve_sheriff_direction(session)
+                return
+            # 无警长，fallback 到随机正/倒序
+            self._resolve_speech_order(session)
+        else:
+            self._resolve_speech_order(session)
+
+        session.state.phase = GamePhase.DAY_SPEECH
+        self._append_ai_speeches(session)
+        if self._maybe_skip_dead_human_to_vote(session):
             return
         session.append_public_event("phase_changed", "进入白天发言阶段，现在轮到你发言。")
 
     def _append_ai_speeches(self, session: GameSession) -> None:
-        """Generate AI speeches via LLM."""
-        for player in session.state.players:
+        """Generate AI speeches via LLM in speech_order."""
+        from ai_werewolf.engine.context import build_speech_progress
+
+        order = session.speech_order or [p.player_id for p in session.state.players if p.alive]
+        for player_id in order:
+            player = session.state.player_by_id(player_id)
             if player.is_human or not player.alive:
                 continue
             context = build_game_context(session, player_id=player.player_id, memory_store=self.memory_store)
+            # 注入发言进度约束，防止 AI 引用未发言玩家的内容
+            progress = build_speech_progress(session)
+            if progress:
+                context = context + "\n" + progress if context else progress
             label = player_label(player.player_id, session)
             session.publish_stream_event(
                 "current_speaker_changed",
@@ -1180,6 +1308,8 @@ class PhaseOrchestrator:
         session.state.day_count += 1
         session.state.phase = GamePhase.NIGHT
         session.voted_player_ids.clear()
+        session.speech_order = []
+        session.pending_speech_start_player_id = None
         session.append_public_event("phase_changed", f"第 {session.state.day_count} 夜降临。")
 
     def _end_game(self, session: GameSession, winner: Winner) -> None:

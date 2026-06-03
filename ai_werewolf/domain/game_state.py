@@ -8,6 +8,7 @@ class GamePhase(StrEnum):
     SHERIFF_ELECTION = "sheriff_election"
     SHERIFF_SPEECH = "sheriff_speech"
     SHERIFF_TRANSFER = "sheriff_transfer"
+    SHERIFF_CHOOSE_DIRECTION = "sheriff_choose_direction"
     NIGHT = "night"
     DAY_ANNOUNCEMENT = "day_announcement"
     DAY_SPEECH = "day_speech"
